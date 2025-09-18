@@ -1,0 +1,8 @@
+[workspace]
+members = [
+    "rust/smart_rte_core",
+    "rust/smart_rte_wasm",
+]
+resolver = "2"
+
+
