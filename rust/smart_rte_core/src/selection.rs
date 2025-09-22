@@ -8,7 +8,7 @@ pub enum Anchor {
     TableCell { table_node_index: usize, row: usize, col: usize, char_offset: usize },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SelectionRange {
     pub start: Anchor,
     pub end: Anchor,
@@ -46,6 +46,15 @@ impl SelectionRange {
 
     pub fn map_table_split(&mut self, _table_node_index: usize, _r: usize, _c: usize) {
         // Split does not require adjustment for anchors inside the master cell.
+    }
+}
+
+impl Default for SelectionRange {
+    fn default() -> Self {
+        Self {
+            start: Anchor::Text { node_index: 0, char_offset: 0 },
+            end: Anchor::Text { node_index: 0, char_offset: 0 },
+        }
     }
 }
 

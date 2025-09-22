@@ -2,6 +2,7 @@
 members = [
     "rust/smart_rte_core",
     "rust/smart_rte_wasm",
+    "rust/smart_rte_ffi",
 ]
 resolver = "2"
 

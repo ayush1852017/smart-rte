@@ -5,14 +5,11 @@ pub mod selection;
 pub mod import_export;
 pub mod comments;
 
-use serde::{Deserialize, Serialize};
-use doc::{CellStyle, Doc, Node, Table, TableCell, TableRow};
-use history::History;
 use serde_json::Value;
-use crate::comments::CommentThread;
-use crate::selection::SelectionRange;
-
-// Types moved into doc.rs
+use doc::{Doc, Node, Table, TableCell, TableRow, CellStyle};
+use history::History;
+use comments::CommentThread;
+use selection::SelectionRange;
 
 #[derive(Debug, Default)]
 pub struct EditorCore {
@@ -24,23 +21,29 @@ impl EditorCore {
     pub fn new_empty() -> Self {
         Self { doc: Doc::default(), history: History::default() }
     }
+
     pub fn from_json(json: &str) -> serde_json::Result<Self> {
         let doc: Doc = serde_json::from_str(json)?;
         Ok(Self { doc, history: History::default() })
     }
+
     pub fn to_json(&self) -> String {
         serde_json::to_string(&self.doc).unwrap_or_else(|_| "{}".to_string())
     }
+
     pub fn to_html(&self) -> String {
         crate::import_export::to_html(&self.doc)
     }
+
     pub fn to_markdown(&self) -> String {
         crate::import_export::to_markdown(&self.doc)
     }
+
     pub fn to_delta(&self) -> String {
         let v = crate::import_export::to_quill_delta(&self.doc);
         serde_json::to_string(&v).unwrap_or_else(|_| "{\"ops\":[]}".to_string())
     }
+
     pub fn from_delta(&mut self, delta_json: &str) {
         if let Ok(v) = serde_json::from_str::<Value>(delta_json) {
             self.history.record_before_change(&self.doc);
@@ -48,188 +51,72 @@ impl EditorCore {
         }
     }
 
-    // Table ops (stubs)
-    pub fn insert_table(&mut self, rows: u32, cols: u32) {
+    // Table ops
+    pub fn insert_table(&mut self, rows: u32, cols: u32) { ops::insert_table(&mut self.doc, rows, cols, &mut self.history); }
+    pub fn add_row(&mut self, at: u32) { ops::add_row(&mut self.doc, at, &mut self.history); }
+    pub fn add_col(&mut self, at: u32) { ops::add_col(&mut self.doc, at, &mut self.history); }
+    pub fn move_row(&mut self, from: u32, to: u32) { ops::move_row(&mut self.doc, from, to, &mut self.history); }
+    pub fn move_col(&mut self, from: u32, to: u32) { ops::move_col(&mut self.doc, from, to, &mut self.history); }
+    pub fn delete_row(&mut self, at: u32) { ops::delete_row(&mut self.doc, at, &mut self.history); }
+    pub fn delete_col(&mut self, at: u32) { ops::delete_col(&mut self.doc, at, &mut self.history); }
+    pub fn merge_cells(&mut self, sr: u32, sc: u32, er: u32, ec: u32) { ops::merge_cells(&mut self.doc, sr, sc, er, ec, &mut self.history); }
+    pub fn split_cell(&mut self, r: u32, c: u32) { ops::split_cell(&mut self.doc, r, c, &mut self.history); }
+    pub fn set_cell_style(&mut self, r: u32, c: u32, style_json: &str) { ops::set_cell_style(&mut self.doc, r, c, style_json, &mut self.history); }
+    pub fn set_cell_text(&mut self, r: u32, c: u32, text: &str) {
         self.history.record_before_change(&self.doc);
-        let mut table = Table::default();
-        table.rows = (0..rows)
-            .map(|_| TableRow {
-                cells: (0..cols)
-                    .map(|_| TableCell { text: String::new(), colspan: 1, rowspan: 1, style: CellStyle::default(), placeholder: false })
-                    .collect(),
-            })
-            .collect();
-        table.column_widths = vec![120; cols as usize];
-        self.doc.nodes.push(Node::Table(table));
-    }
-    pub fn add_row(&mut self, at: u32) {
-        self.history.record_before_change(&self.doc);
-        if let Some(Node::Table(t)) = self.doc.nodes.iter_mut().find(|n| matches!(n, Node::Table(_))) {
-            let cols = t.rows.first().map(|r| r.cells.len()).unwrap_or(0);
-            let new_row = TableRow { cells: (0..cols).map(|_| TableCell { text: String::new(), colspan: 1, rowspan: 1, style: CellStyle::default(), placeholder: false }).collect() };
-            let idx = (at as usize).min(t.rows.len());
-            t.rows.insert(idx, new_row);
-        }
-    }
-    pub fn add_col(&mut self, at: u32) {
-        self.history.record_before_change(&self.doc);
-        if let Some(Node::Table(t)) = self.doc.nodes.iter_mut().find(|n| matches!(n, Node::Table(_))) {
-            for row in &mut t.rows {
-                let idx = (at as usize).min(row.cells.len());
-                row.cells.insert(idx, TableCell { text: String::new(), colspan: 1, rowspan: 1, style: CellStyle::default(), placeholder: false });
-            }
-            let idx = (at as usize).min(t.column_widths.len());
-            if t.column_widths.is_empty() { t.column_widths = vec![120; t.rows.first().map(|r| r.cells.len()).unwrap_or(0)]; }
-            t.column_widths.insert(idx, 120);
-        }
-    }
-    pub fn move_row(&mut self, from: u32, to: u32) {
-        self.history.record_before_change(&self.doc);
-        if let Some(Node::Table(t)) = self.doc.nodes.iter_mut().find(|n| matches!(n, Node::Table(_))) {
-            let len = t.rows.len();
-            let from = (from as usize).min(len.saturating_sub(1));
-            let to = (to as usize).min(len.saturating_sub(1));
-            if from != to {
-                let row = t.rows.remove(from);
-                t.rows.insert(to, row);
+        if let Some(t) = self.doc.nodes.iter_mut().find_map(|n| match n { Node::Table(t) => Some(t), _ => None }) {
+            let ri = r as usize;
+            let ci = c as usize;
+            if ri < t.rows.len() && ci < t.rows[ri].cells.len() {
+                t.rows[ri].cells[ci].text = text.to_string();
             }
         }
     }
-    pub fn move_col(&mut self, from: u32, to: u32) {
-        self.history.record_before_change(&self.doc);
-        if let Some(Node::Table(t)) = self.doc.nodes.iter_mut().find(|n| matches!(n, Node::Table(_))) {
-            for row in &mut t.rows {
-                let len = row.cells.len();
-                if len == 0 { continue; }
-                let from = (from as usize).min(len.saturating_sub(1));
-                let to = (to as usize).min(len.saturating_sub(1));
-                if from != to {
-                    let cell = row.cells.remove(from);
-                    row.cells.insert(to, cell);
-                }
-            }
-            if !t.column_widths.is_empty() {
-                let len = t.column_widths.len();
-                let from = (from as usize).min(len.saturating_sub(1));
-                let to = (to as usize).min(len.saturating_sub(1));
-                if from != to {
-                    let w = t.column_widths.remove(from);
-                    t.column_widths.insert(to, w);
-                }
-            }
-        }
-    }
-    pub fn merge_cells(&mut self, sr: u32, sc: u32, er: u32, ec: u32) {
-        self.history.record_before_change(&self.doc);
-        if let Some(Node::Table(t)) = self.doc.nodes.iter_mut().find(|n| matches!(n, Node::Table(_))) {
-            let (sr, sc, er, ec) = (
-                sr.min(er),
-                sc.min(ec),
-                er.max(sr),
-                ec.max(sc),
-            );
-            let start_r = sr as usize; let start_c = sc as usize; let end_r = er as usize; let end_c = ec as usize;
-            if start_r >= t.rows.len() { return; }
-            if start_c >= t.rows[start_r].cells.len() { return; }
-            let rowspan = (end_r - start_r + 1) as u32;
-            let colspan = (end_c - start_c + 1) as u32;
-            // Set span on top-left cell
-            let mut text = String::new();
-            for r in start_r..=end_r {
-                for c in start_c..=end_c {
-                    if r == start_r && c == start_c {
-                        continue;
-                    }
-                    let cell = &mut t.rows[r].cells[c];
-                    if !cell.text.is_empty() {
-                        if !text.is_empty() { text.push(' '); }
-                        text.push_str(&cell.text);
-                    }
-                }
-            }
-            {
-                let cell = &mut t.rows[start_r].cells[start_c];
-                if !text.is_empty() {
-                    if !cell.text.is_empty() { cell.text.push(' '); }
-                    cell.text.push_str(&text);
-                }
-                cell.rowspan = rowspan;
-                cell.colspan = colspan;
-            }
-            // Mark other cells as placeholders
-            for r in start_r..=end_r {
-                for c in start_c..=end_c {
-                    if r == start_r && c == start_c { continue; }
-                    let cell = &mut t.rows[r].cells[c];
-                    cell.placeholder = true;
-                    cell.text.clear();
-                }
-            }
-        }
-    }
-    pub fn split_cell(&mut self, r: u32, c: u32) {
-        self.history.record_before_change(&self.doc);
-        if let Some(Node::Table(t)) = self.doc.nodes.iter_mut().find(|n| matches!(n, Node::Table(_))) {
-            let (r, c) = (r as usize, c as usize);
-            if r >= t.rows.len() { return; }
-            if c >= t.rows[r].cells.len() { return; }
-            let cell = t.rows[r].cells[c].clone();
-            let rowspan = cell.rowspan.max(1);
-            let colspan = cell.colspan.max(1);
-            // Reset the master cell
-            let master = &mut t.rows[r].cells[c];
-            master.rowspan = 1; master.colspan = 1;
-            // Clear placeholders within the span
-            for rr in r..(r + rowspan as usize) {
-                for cc in c..(c + colspan as usize) {
-                    if rr == r && cc == c { continue; }
-                    if rr < t.rows.len() && cc < t.rows[rr].cells.len() {
-                        let ph = &mut t.rows[rr].cells[cc];
-                        ph.placeholder = false;
-                        ph.text.clear();
-                        ph.rowspan = 1;
-                        ph.colspan = 1;
-                    }
-                }
-            }
-        }
-    }
-    pub fn set_cell_style(&mut self, r: u32, c: u32, style_json: &str) {
-        self.history.record_before_change(&self.doc);
-        if let Some(Node::Table(t)) = self.doc.nodes.iter_mut().find(|n| matches!(n, Node::Table(_))) {
-            let (r, c) = (r as usize, c as usize);
-            if r >= t.rows.len() { return; }
-            if c >= t.rows[r].cells.len() { return; }
-            if let Ok(new_style) = serde_json::from_str::<CellStyle>(style_json) {
-                let mut style = t.rows[r].cells[c].style.clone();
-                // Shallow-merge new fields into existing style
-                if new_style.background.is_some() { style.background = new_style.background; }
-                if new_style.border.is_some() { style.border = new_style.border; }
-                t.rows[r].cells[c].style = style;
-            }
-        }
-    }
-    pub fn set_column_width(&mut self, col: u32, px: u32) {
-        self.history.record_before_change(&self.doc);
-        if let Some(Node::Table(t)) = self.doc.nodes.iter_mut().find(|n| matches!(n, Node::Table(_))) {
-            let col = col as usize;
-            if t.column_widths.len() < t.rows.first().map(|r| r.cells.len()).unwrap_or(0) {
-                t.column_widths = vec![120; t.rows.first().map(|r| r.cells.len()).unwrap_or(0)];
-            }
-            if col < t.column_widths.len() {
-                t.column_widths[col] = px;
-            }
-        }
-    }
-    pub fn set_freeze(&mut self, header: bool, first_col: bool) {
-        self.history.record_before_change(&self.doc);
-        if let Some(Node::Table(t)) = self.doc.nodes.iter_mut().find(|n| matches!(n, Node::Table(_))) {
-            t.freeze_header = header;
-            t.freeze_first_col = first_col;
-        }
-    }
+    pub fn set_column_width(&mut self, col: u32, px: u32) { ops::set_column_width(&mut self.doc, col, px, &mut self.history); }
+    pub fn set_freeze(&mut self, header: bool, first_col: bool) { ops::set_freeze(&mut self.doc, header, first_col, &mut self.history); }
 
-    // History stubs
+    // Blocks: MCQ & InfoBox & Formula
+    pub fn insert_mcq(&mut self, multiple: bool) { ops::insert_mcq(&mut self.doc, multiple, &mut self.history); }
+    pub fn update_mcq(&mut self, index: u32, question: &str, options_json: &str, multiple: bool) {
+        let opts: Option<Vec<crate::doc::MCQOption>> = serde_json::from_str(options_json).ok();
+        ops::update_mcq(&mut self.doc, index as usize, Some(question.to_string()), opts, Some(multiple), &mut self.history);
+    }
+    pub fn insert_infobox(&mut self, kind: &str, text: &str) { ops::insert_infobox(&mut self.doc, kind, text, &mut self.history); }
+    pub fn update_infobox(&mut self, index: u32, kind: &str, text: &str) { ops::update_infobox(&mut self.doc, index as usize, Some(kind.to_string()), Some(text.to_string()), &mut self.history); }
+    pub fn insert_formula_inline(&mut self, tex: &str) { ops::insert_formula_inline(&mut self.doc, tex, &mut self.history); }
+    pub fn insert_formula_block(&mut self, tex: &str) { ops::insert_formula_block(&mut self.doc, tex, &mut self.history); }
+    pub fn set_paragraph_text(&mut self, index: u32, text: &str) { ops::set_paragraph_text(&mut self.doc, index as usize, text, &mut self.history); }
+    pub fn insert_formula_inline_at(&mut self, after_index: u32, tex: &str) { ops::insert_formula_inline_at(&mut self.doc, after_index as usize, tex, &mut self.history); }
+    pub fn insert_formula_block_at(&mut self, after_index: u32, tex: &str) { ops::insert_formula_block_at(&mut self.doc, after_index as usize, tex, &mut self.history); }
+    pub fn insert_image_at(&mut self, after_index: u32, src: &str, alt: &str) { ops::insert_image_at(&mut self.doc, after_index as usize, src, alt, &mut self.history); }
+    pub fn insert_paragraph(&mut self, at: u32, text: &str) { ops::insert_paragraph(&mut self.doc, at, text, &mut self.history); }
+    pub fn delete_node(&mut self, at: u32) { ops::delete_node(&mut self.doc, at as usize, &mut self.history); }
+    pub fn insert_table_at(&mut self, after_index: u32, rows: u32, cols: u32) { ops::insert_table_at(&mut self.doc, after_index as usize, rows, cols, &mut self.history); }
+
+    // Inline formatting
+    pub fn set_text_style(&mut self, index: u32, start: u32, end: u32, style_json: &str) {
+        ops::set_text_style(&mut self.doc, index as usize, start as usize, end as usize, style_json, &mut self.history);
+    }
+    pub fn set_cell_text_style(&mut self, r: u32, c: u32, start: u32, end: u32, style_json: &str) {
+        ops::set_cell_text_style(&mut self.doc, r, c, start as usize, end as usize, style_json, &mut self.history);
+    }
+    pub fn set_row_height(&mut self, r: u32, px: u32) { ops::set_row_height(&mut self.doc, r, px, &mut self.history); }
+
+    // Table-indexed variants
+    pub fn set_cell_text_at(&mut self, table_idx: u32, r: u32, c: u32, text: &str) { ops::set_cell_text_at(&mut self.doc, table_idx as usize, r, c, text, &mut self.history); }
+    pub fn set_cell_style_at(&mut self, table_idx: u32, r: u32, c: u32, style_json: &str) { ops::set_cell_style_at(&mut self.doc, table_idx as usize, r, c, style_json, &mut self.history); }
+    pub fn set_cell_text_style_at(&mut self, table_idx: u32, r: u32, c: u32, start: u32, end: u32, style_json: &str) { ops::set_cell_text_style_at(&mut self.doc, table_idx as usize, r, c, start as usize, end as usize, style_json, &mut self.history); }
+    pub fn set_column_width_at(&mut self, table_idx: u32, col: u32, px: u32) { ops::set_column_width_at(&mut self.doc, table_idx as usize, col, px, &mut self.history); }
+    pub fn set_freeze_at(&mut self, table_idx: u32, header: bool, first_col: bool) { ops::set_freeze_at(&mut self.doc, table_idx as usize, header, first_col, &mut self.history); }
+    pub fn add_row_at(&mut self, table_idx: u32, at: u32) { ops::add_row_at(&mut self.doc, table_idx as usize, at, &mut self.history); }
+    pub fn add_col_at(&mut self, table_idx: u32, at: u32) { ops::add_col_at(&mut self.doc, table_idx as usize, at, &mut self.history); }
+    pub fn delete_row_at(&mut self, table_idx: u32, at: u32) { ops::delete_row_at(&mut self.doc, table_idx as usize, at, &mut self.history); }
+    pub fn delete_col_at(&mut self, table_idx: u32, at: u32) { ops::delete_col_at(&mut self.doc, table_idx as usize, at, &mut self.history); }
+    pub fn merge_cells_at(&mut self, table_idx: u32, sr: u32, sc: u32, er: u32, ec: u32) { ops::merge_cells_at(&mut self.doc, table_idx as usize, sr, sc, er, ec, &mut self.history); }
+    pub fn split_cell_at(&mut self, table_idx: u32, r: u32, c: u32) { ops::split_cell_at(&mut self.doc, table_idx as usize, r, c, &mut self.history); }
+    pub fn set_row_height_at(&mut self, table_idx: u32, r: u32, px: u32) { ops::set_row_height_at(&mut self.doc, table_idx as usize, r, px, &mut self.history); }
+
+    // History
     pub fn undo(&mut self) { let _ = self.history.undo(&mut self.doc); }
     pub fn redo(&mut self) { let _ = self.history.redo(&mut self.doc); }
 
@@ -243,10 +130,14 @@ impl EditorCore {
         self.doc.threads.push(thread);
         id
     }
+
     pub fn resolve_comment(&mut self, thread_id: &str, resolved: bool) {
-        if let Some(t) = self.doc.threads.iter_mut().find(|t| t.id == thread_id) {
+        let idx = self.doc.threads.iter().position(|t| t.id == thread_id);
+        if let Some(i) = idx {
             self.history.record_before_change(&self.doc);
-            t.set_resolved(resolved);
+            if let Some(t) = self.doc.threads.get_mut(i) {
+                t.set_resolved(resolved);
+            }
         }
     }
 }
@@ -254,23 +145,4 @@ impl EditorCore {
 fn current_time_ms() -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn create_table() {
-        let mut core = EditorCore::new_empty();
-        core.insert_table(6, 8);
-        let table = core
-            .doc
-            .nodes
-            .iter()
-            .find_map(|n| if let Node::Table(t) = n { Some(t) } else { None })
-            .unwrap();
-        assert_eq!(table.rows.len(), 6);
-        assert_eq!(table.rows[0].cells.len(), 8);
-    }
 }

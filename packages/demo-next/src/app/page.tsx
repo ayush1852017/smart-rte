@@ -15,6 +15,8 @@ export default function Page() {
       setEditor(e);
       setReady(true);
     })();
+    // Avoid calling free() here; Next + StrictMode can double-unmount in dev
+    return () => {};
   }, []);
 
   const storage = undefined as any;

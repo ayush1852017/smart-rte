@@ -20,6 +20,8 @@ pub enum Node {
     Media { key: String, content_type: String },
     FormulaInline { tex: String },
     FormulaBlock { tex: String },
+    MCQBlock(MCQBlock),
+    InfoBox(InfoBox),
     CommentAnchor { thread_id: String },
 }
 
@@ -40,6 +42,15 @@ pub struct InlineStyle {
     #[serde(default)]
     pub code: bool,
     pub link: Option<String>,
+    /// CSS color hex or named color for foreground text color
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+    /// CSS color hex or named color for text highlight (background)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub highlight: Option<String>,
+    /// Optional explicit font size in pixels
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font_size_px: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -62,9 +73,12 @@ pub struct Table {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TableRow {
     pub cells: Vec<TableCell>,
+    /// Optional fixed row height in pixels
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub height_px: Option<u32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TableCell {
     pub text: String,
     pub colspan: u32,
@@ -74,6 +88,22 @@ pub struct TableCell {
     /// The renderer should skip drawing it.
     #[serde(default)]
     pub placeholder: bool,
+    /// Optional inline spans for rich text inside the cell
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub spans: Option<Vec<InlineSpan>>,
+}
+
+impl Default for TableCell {
+    fn default() -> Self {
+        Self {
+            text: String::new(),
+            colspan: 1,
+            rowspan: 1,
+            style: CellStyle::default(),
+            placeholder: false,
+            spans: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -86,4 +116,33 @@ pub struct CellStyle {
 pub struct BorderStyle {
     pub color: String,
     pub width_px: u32,
+}
+
+impl CellStyle {
+    pub fn merge(&mut self, other: &CellStyle) {
+        if other.background.is_some() { self.background = other.background.clone(); }
+        if other.border.is_some() { self.border = other.border.clone(); }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct MCQOption {
+    pub text: String,
+    #[serde(default)]
+    pub correct: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct MCQBlock {
+    pub question: String,
+    #[serde(default)]
+    pub options: Vec<MCQOption>,
+    #[serde(default)]
+    pub multiple: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct InfoBox {
+    pub kind: String, // info, warning, success, danger (blue/yellow/green/red)
+    pub text: String,
 }

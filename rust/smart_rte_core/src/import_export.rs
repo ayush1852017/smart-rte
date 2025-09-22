@@ -13,7 +13,7 @@ pub fn to_html(doc: &Doc) -> String {
                 if let Some(sp) = spans {
                     out.push_str(&render_spans_html(sp));
                 } else {
-                    out.push_str(&html_escape::encode_text(text));
+                    out.push_str(&render_text_with_inline_formulas(text));
                 }
                 out.push_str("</p>\n");
             }
@@ -23,27 +23,26 @@ pub fn to_html(doc: &Doc) -> String {
                 if let Some(sp) = spans {
                     out.push_str(&render_spans_html(sp));
                 } else {
-                    out.push_str(&html_escape::encode_text(text));
+                    out.push_str(&render_text_with_inline_formulas(text));
                 }
                 out.push_str(&format!("</h{lvl}>\n", lvl = lvl));
             }
             Node::Table(t) => {
                 out.push_str("  <table data-smart>\n");
                 for row in &t.rows {
-                    out.push_str("    <tr>\n");
+                    let row_style = row.height_px.map(|h| format!(" style=\"height:{}px\"", h)).unwrap_or_default();
+                    out.push_str(&format!("    <tr{}>\n", row_style));
                     for cell in &row.cells {
                         if cell.placeholder { continue; }
                         let mut attrs = String::new();
                         if cell.colspan > 1 { attrs.push_str(&format!(" colspan=\"{}\"", cell.colspan)); }
                         if cell.rowspan > 1 { attrs.push_str(&format!(" rowspan=\"{}\"", cell.rowspan)); }
-                        if let Some(bg) = &cell.style.background {
-                            attrs.push_str(&format!(" style=\"background:{}\"", html_escape::encode_double_quoted_attribute(bg)));
-                        }
-                        out.push_str(&format!(
-                            "      <td{}>{}</td>\n",
-                            attrs,
-                            html_escape::encode_text(&cell.text)
-                        ));
+                        let mut style_parts: Vec<String> = Vec::new();
+                        if let Some(bg) = &cell.style.background { style_parts.push(format!("background:{}", html_escape::encode_double_quoted_attribute(bg))); }
+                        let style_attr = if style_parts.is_empty() { String::new() } else { format!(" style=\"{}\"", style_parts.join(";")) };
+                        attrs.push_str(&style_attr);
+                        let inner = if let Some(sp) = &cell.spans { render_spans_html(sp) } else { html_escape::encode_text(&cell.text).to_string() };
+                        out.push_str(&format!("      <td{}>{}</td>\n", attrs, inner));
                     }
                     out.push_str("    </tr>\n");
                 }
@@ -75,6 +74,19 @@ pub fn to_html(doc: &Doc) -> String {
                     html_escape::encode_double_quoted_attribute(thread_id)
                 ));
             }
+            Node::MCQBlock(b) => {
+                out.push_str("  <div class=\"mcq\">\n");
+                out.push_str(&format!("    <div class=\"q\">{}</div>\n", html_escape::encode_text(&b.question)));
+                out.push_str("    <ul>\n");
+                for opt in &b.options {
+                    let mark = if opt.correct { " data-correct=\"true\"" } else { "" };
+                    out.push_str(&format!("      <li{}>{}</li>\n", mark, html_escape::encode_text(&opt.text)));
+                }
+                out.push_str("    </ul>\n  </div>\n");
+            }
+            Node::InfoBox(b) => {
+                out.push_str(&format!("  <div class=\"info-box {}\">{}</div>\n", html_escape::encode_double_quoted_attribute(&b.kind), html_escape::encode_text(&b.text)));
+            }
         }
     }
     out.push_str("</div>");
@@ -97,6 +109,14 @@ fn render_spans_html(spans: &Vec<InlineSpan>) -> String {
         if span.style.bold {
             inner = format!("<strong>{}</strong>", inner);
         }
+        // Wrap with span for color/highlight/font-size if present
+        let mut styles: Vec<String> = Vec::new();
+        if let Some(c) = &span.style.color { styles.push(format!("color:{}", html_escape::encode_double_quoted_attribute(c))); }
+        if let Some(h) = &span.style.highlight { styles.push(format!("background:{}", html_escape::encode_double_quoted_attribute(h))); }
+        if let Some(fs) = span.style.font_size_px { styles.push(format!("font-size:{}px", fs)); }
+        if !styles.is_empty() {
+            inner = format!("<span style=\"{}\">{}</span>", styles.join(";"), inner);
+        }
         if let Some(href) = &span.style.link {
             inner = format!(
                 "<a href=\"{}\">{}</a>",
@@ -107,6 +127,33 @@ fn render_spans_html(spans: &Vec<InlineSpan>) -> String {
         s.push_str(&inner);
     }
     s
+}
+
+fn render_text_with_inline_formulas(text: &str) -> String {
+    let mut out = String::new();
+    let mut i = 0usize;
+    let bytes = text.as_bytes();
+    while i < text.len() {
+        let rest = &text[i..];
+        if let Some(pos) = rest.find('$') {
+            // emit text before $
+            if pos > 0 { out.push_str(&html_escape::encode_text(&rest[..pos])); }
+            let after = &rest[pos + 1..];
+            if let Some(end) = after.find('$') {
+                let tex = &after[..end];
+                out.push_str(&format!("<span class=\"formula-inline\">{}</span>", html_escape::encode_text(tex)));
+                i += pos + 1 + end + 1;
+            } else {
+                // unmatched $, emit as plain
+                out.push_str(&html_escape::encode_text(&rest[pos..]));
+                break;
+            }
+        } else {
+            out.push_str(&html_escape::encode_text(rest));
+            break;
+        }
+    }
+    out
 }
 
 pub fn to_markdown(doc: &Doc) -> String {
@@ -127,7 +174,7 @@ pub fn to_markdown(doc: &Doc) -> String {
             Node::Table(t) => {
                 if has_span_cells(t) {
                     // Fallback to HTML if complex spans present
-                    out.push_str(&to_html(&Doc { nodes: vec![n.clone()] }));
+                    out.push_str(&to_html(&Doc { nodes: vec![n.clone()], ..Default::default() }));
                     out.push_str("\n\n");
                 } else {
                     out.push_str(&table_to_gfm(t));
@@ -151,6 +198,18 @@ pub fn to_markdown(doc: &Doc) -> String {
             }
             Node::CommentAnchor { .. } => {
                 // Skip in MD output for now
+            }
+            Node::MCQBlock(b) => {
+                out.push_str(&format!("**MCQ:** {}\n", b.question));
+                for (i, opt) in b.options.iter().enumerate() {
+                    let letter = (b'A' + i as u8) as char;
+                    let mark = if opt.correct { " (✔)" } else { "" };
+                    out.push_str(&format!("- {}. {}{}\n", letter, opt.text, mark));
+                }
+                out.push_str("\n");
+            }
+            Node::InfoBox(b) => {
+                out.push_str(&format!("> [{}] {}\n\n", b.kind, b.text));
             }
         }
         if idx == doc.nodes.len() - 1 {
@@ -247,6 +306,14 @@ fn render_spans_md(spans: &Vec<InlineSpan>) -> String {
             // No native MD underline; use HTML
             wrapped = format!("<u>{}</u>", wrapped);
         }
+        // Color/highlight/font-size via HTML span style in MD
+        let mut styles: Vec<String> = Vec::new();
+        if let Some(c) = &span.style.color { styles.push(format!("color:{}", c)); }
+        if let Some(h) = &span.style.highlight { styles.push(format!("background:{}", h)); }
+        if let Some(fs) = span.style.font_size_px { styles.push(format!("font-size:{}px", fs)); }
+        if !styles.is_empty() {
+            wrapped = format!("<span style=\"{}\">{}</span>", styles.join(";"), wrapped);
+        }
         if let Some(href) = &span.style.link {
             wrapped = format!("[{}]({})", wrapped, href);
         }
@@ -260,7 +327,6 @@ pub fn from_json(json: &str) -> serde_json::Result<Doc> {
 }
 
 pub fn to_quill_delta(doc: &Doc) -> Value {
-    // Delta: array of ops with insert and attributes
     let mut ops: Vec<Value> = Vec::new();
     for n in &doc.nodes {
         match n {
@@ -283,8 +349,28 @@ pub fn to_quill_delta(doc: &Doc) -> Value {
                 ops.push(json!({"insert": {"formula": tex}}));
                 ops.push(json!({"insert":"\n"}));
             }
-            Node::Table(_) | Node::Media { .. } | Node::CommentAnchor { .. } => {
-                // Out of scope for base delta; skip or handle via custom blot in frontends
+            Node::Table(t) => {
+                // Export as a custom table blot
+                ops.push(json!({"insert": { "table": t }}));
+                ops.push(json!({"insert":"\n"}));
+            }
+            Node::Media { key, content_type } => {
+                ops.push(json!({"insert": { "media": {
+                    "key": key,
+                    "content_type": content_type
+                }}}));
+                ops.push(json!({"insert":"\n"}));
+            }
+            Node::CommentAnchor { thread_id } => {
+                ops.push(json!({"insert": { "comment": thread_id }}));
+            }
+            Node::MCQBlock(b) => {
+                ops.push(json!({"insert": {"mcq": b }}));
+                ops.push(json!({"insert":"\n"}));
+            }
+            Node::InfoBox(b) => {
+                ops.push(json!({"insert": {"infobox": b }}));
+                ops.push(json!({"insert":"\n"}));
             }
         }
     }
@@ -302,21 +388,28 @@ pub fn from_quill_delta(delta: &Value) -> Doc {
         if let Some(insert) = op.get("insert") {
             if let Some(obj) = insert.as_object() {
                 if let Some(image) = obj.get("image").and_then(|v| v.as_str()) {
-                    if !current_text.is_empty() || !current_spans.is_empty() {
-                        flush_para_or_heading(&mut nodes, &mut current_text, &mut current_spans, &mut current_header);
-                    }
+                    flush_para_or_heading(&mut nodes, &mut current_text, &mut current_spans, &mut current_header);
                     nodes.push(Node::Image { src: image.to_string(), alt: String::new() });
                 } else if let Some(formula) = obj.get("formula").and_then(|v| v.as_str()) {
-                    if !current_text.is_empty() || !current_spans.is_empty() {
-                        flush_para_or_heading(&mut nodes, &mut current_text, &mut current_spans, &mut current_header);
-                    }
+                    flush_para_or_heading(&mut nodes, &mut current_text, &mut current_spans, &mut current_header);
                     nodes.push(Node::FormulaInline { tex: formula.to_string() });
+                } else if let Some(table) = obj.get("table") {
+                    if let Ok(t) = serde_json::from_value::<Table>(table.clone()) {
+                        flush_para_or_heading(&mut nodes, &mut current_text, &mut current_spans, &mut current_header);
+                        nodes.push(Node::Table(t));
+                    }
+                } else if let Some(media) = obj.get("media") {
+                    if let (Some(key), Some(ct)) = (media.get("key").and_then(|v| v.as_str()), media.get("content_type").and_then(|v| v.as_str())) {
+                        flush_para_or_heading(&mut nodes, &mut current_text, &mut current_spans, &mut current_header);
+                        nodes.push(Node::Media { key: key.to_string(), content_type: ct.to_string() });
+                    }
+                } else if let Some(comment) = obj.get("comment").and_then(|v| v.as_str()) {
+                    nodes.push(Node::CommentAnchor { thread_id: comment.to_string() });
                 }
             } else if let Some(s) = insert.as_str() {
                 // Attributes for text
                 let attrs = op.get("attributes");
                 if s == "\n" {
-                    // Line break flushes paragraph or heading
                     if let Some(header) = attrs.and_then(|a| a.get("header")).and_then(|v| v.as_u64()) {
                         current_header = Some((header as u8).clamp(1, 6));
                     }
@@ -335,13 +428,14 @@ pub fn from_quill_delta(delta: &Value) -> Doc {
             }
         }
     }
-    // Flush remaining content
+
     if !current_text.is_empty() || !current_spans.is_empty() {
         flush_para_or_heading(&mut nodes, &mut current_text, &mut current_spans, &mut current_header);
     }
 
-    Doc { nodes }
+    Doc { nodes, ..Default::default() }
 }
+
 
 fn push_spans_as_delta(ops: &mut Vec<Value>, spans: Option<&[InlineSpan]>, fallback_text: &str) {
     if let Some(sp) = spans {
@@ -352,6 +446,9 @@ fn push_spans_as_delta(ops: &mut Vec<Value>, spans: Option<&[InlineSpan]>, fallb
             if span.style.underline { attributes.insert("underline".into(), json!(true)); }
             if span.style.code { attributes.insert("code".into(), json!(true)); }
             if let Some(link) = &span.style.link { attributes.insert("link".into(), json!(link)); }
+            if let Some(c) = &span.style.color { attributes.insert("color".into(), json!(c)); }
+            if let Some(h) = &span.style.highlight { attributes.insert("background".into(), json!(h)); }
+            if let Some(fs) = span.style.font_size_px { attributes.insert("size".into(), json!(fs)); }
             if attributes.is_empty() {
                 ops.push(json!({"insert": span.text}));
             } else {
