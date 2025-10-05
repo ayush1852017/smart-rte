@@ -1,22 +1,18 @@
 name: smartrte_flutter
-description: Flutter package wrapping Smart RTE Rust FFI
-version: 0.1.0
-publish_to: "none"
+description: Classic HTML editor widget for Flutter (WebView-based)
+version: 0.1.2
+homepage: https://github.com/your-org/smart-rte
+repository: https://github.com/your-org/smart-rte
 environment:
   sdk: ">=3.0.0 <4.0.0"
 dependencies:
   flutter:
     sdk: flutter
-  ffi: ^2.1.0
-  flutter_rust_bridge: ^1.82.0
+  webview_flutter: ^4.8.0
 dev_dependencies:
   flutter_test:
     sdk: flutter
 flutter:
-  plugin:
-    platforms:
-      ios:
-        pluginClass: SmartrteFlutterPlugin
-      android:
-        package: com.smart.rte
-        pluginClass: SmartrteFlutterPlugin
+  assets:
+    - assets/editor/index.html
+    - assets/editor/editor.js
