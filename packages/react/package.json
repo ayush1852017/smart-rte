@@ -1,6 +1,6 @@
 {
-  "name": "@smartrte/react",
-  "version": "0.1.0",
+  "name": "smartrte-react",
+  "version": "0.1.7",
   "type": "module",
   "main": "dist/index.js",
   "module": "dist/index.js",
@@ -11,6 +11,9 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "build:embed": "vite build",
+    "build:all": "pnpm run build && pnpm run build:embed",
+    "prepublishOnly": "pnpm run build:all",
     "dev": "pnpm build",
     "lint": "eslint . || true",
     "test": "vitest run || true",
@@ -18,10 +21,13 @@
     "build-storybook": "storybook build",
     "e2e": "playwright test || true"
   },
+  "publishConfig": {
+    "access": "public"
+  },
+  "sideEffects": false,
   "peerDependencies": {
     "react": ">=18",
-    "react-dom": ">=18",
-    "@smartrte/core-wasm": "^0.1.0"
+    "react-dom": ">=18"
   },
   "devDependencies": {
     "typescript": "^5.6.2",
@@ -34,7 +40,6 @@
     "vite": "^5.4.8",
     "vitest": "^2.1.4",
     "@playwright/test": "^1.48.2",
-    "@smartrte/core-wasm": "workspace:*",
     "react": "18.3.1",
     "react-dom": "18.3.1"
   }

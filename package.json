@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "scripts": {
     "build:core": "cargo build -p smart_rte_core",
-    "build:wasm": "wasm-pack build rust/smart_rte_wasm --target web --out-dir ../../packages/core-wasm/pkg --out-name smart_rte_wasm",
+    "build:wasm": "wasm-pack build rust/smart_rte_wasm --target bundler --out-dir ../../packages/core-wasm/pkg --out-name smart_rte_wasm",
     "build:ts": "pnpm -r --filter ./packages/* run build",
     "build": "pnpm build:wasm && pnpm build:ts",
     "dev": "pnpm build"

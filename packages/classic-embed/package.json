@@ -1,0 +1,14 @@
+{
+  "name": "@smartrte/classic-embed",
+  "version": "0.0.1",
+  "private": false,
+  "type": "module",
+  "main": "dist/editor.js",
+  "files": [
+    "dist/editor.js",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

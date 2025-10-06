@@ -20,7 +20,7 @@ pub fn insert_table(doc: &mut Doc, rows: u32, cols: u32, history: &mut History) 
     history.record_before_change(doc);
     let mut table = Table::default();
     table.rows = (0..rows).map(|_| {
-        TableRow { cells: (0..cols).map(|_| TableCell::default()).collect() }
+        TableRow { cells: (0..cols).map(|_| TableCell::default()).collect(), height_px: None }
     }).collect();
     table.column_widths = vec![120; cols as usize];
     doc.nodes.push(Node::Table(table));
@@ -31,7 +31,7 @@ pub fn insert_table_at(doc: &mut Doc, after_index: usize, rows: u32, cols: u32, 
     history.record_before_change(doc);
     let mut table = Table::default();
     table.rows = (0..rows).map(|_| {
-        TableRow { cells: (0..cols).map(|_| TableCell::default()).collect() }
+        TableRow { cells: (0..cols).map(|_| TableCell::default()).collect(), height_px: None }
     }).collect();
     table.column_widths = vec![120; cols as usize];
     let at = (after_index + 1).min(doc.nodes.len());
@@ -43,7 +43,7 @@ pub fn add_row(doc: &mut Doc, at: u32, history: &mut History) {
     history.record_before_change(doc);
     if let Some(t) = first_table_mut(doc) {
         let cols = t.column_widths.len().max(t.rows.get(0).map(|r| r.cells.len()).unwrap_or(0));
-        let row = TableRow { cells: (0..cols).map(|_| TableCell::default()).collect() };
+        let row = TableRow { cells: (0..cols).map(|_| TableCell::default()).collect(), height_px: None };
         let idx = (at as usize).min(t.rows.len());
         t.rows.insert(idx, row);
     }
@@ -332,10 +332,10 @@ pub fn set_cell_text_style(doc: &mut Doc, r: u32, c: u32, start: usize, end: usi
 
 /// Set row height in pixels (minimum 12)
 pub fn set_row_height(doc: &mut Doc, r: u32, px: u32, history: &mut History) {
+    history.record_before_change(doc);
     if let Some(t) = first_table_mut(doc) {
         let ri = r as usize;
         if ri >= t.rows.len() { return; }
-        history.record_before_change(doc);
         t.rows[ri].height_px = Some(px.max(12));
     }
 }
@@ -461,8 +461,8 @@ pub fn set_cell_text_style_at(doc: &mut Doc, table_node_index: usize, r: u32, c:
 }
 
 pub fn set_column_width_at(doc: &mut Doc, table_node_index: usize, col: u32, px: u32, history: &mut History) {
+    history.record_before_change(doc);
     if let Some(t) = table_mut_at(doc, table_node_index) {
-        history.record_before_change(doc);
         let col = col as usize;
         if col >= t.column_widths.len() { t.column_widths.resize(col + 1, 120); }
         t.column_widths[col] = px.max(20);
@@ -470,8 +470,8 @@ pub fn set_column_width_at(doc: &mut Doc, table_node_index: usize, col: u32, px:
 }
 
 pub fn set_freeze_at(doc: &mut Doc, table_node_index: usize, header: bool, first_col: bool, history: &mut History) {
+    history.record_before_change(doc);
     if let Some(t) = table_mut_at(doc, table_node_index) {
-        history.record_before_change(doc);
         t.freeze_header = header; t.freeze_first_col = first_col;
     }
 }
@@ -539,9 +539,9 @@ pub fn split_cell_at(doc: &mut Doc, table_node_index: usize, r: u32, c: u32, his
 }
 
 pub fn set_row_height_at(doc: &mut Doc, table_node_index: usize, r: u32, px: u32, history: &mut History) {
+    history.record_before_change(doc);
     if let Some(t) = table_mut_at(doc, table_node_index) {
         let ri = r as usize; if ri >= t.rows.len() { return; }
-        history.record_before_change(doc);
         t.rows[ri].height_px = Some(px.max(12));
     }
 }

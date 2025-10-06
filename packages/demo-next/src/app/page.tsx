@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { SmartEditor } from "@smartrte/react";
+import { ClassicEditor } from "smartrte-react";
 import { initSmartRTE, createEditor } from "@smartrte/core-wasm";
 // import { createHttpStorageClient } from "@smartrte/storage-s3";
 
@@ -25,7 +25,7 @@ export default function Page() {
   return (
     <div>
       <h1>SmartRTE Demo</h1>
-      <SmartEditor editor={editor} storage={storage} />
+      <ClassicEditor />
     </div>
   );
 }

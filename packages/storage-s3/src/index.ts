@@ -22,5 +22,3 @@ export function createHttpStorageClient(baseUrl = "/api/media"): StorageClient {
     },
   };
 }
-
-

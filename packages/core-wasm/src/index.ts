@@ -1,29 +1,14 @@
+import initWasm, * as wasmModule from '../pkg/smart_rte_wasm.js'
+
 let _wasm: any | null = null
 let _initialized = false
 const _editors = new Set<any>()
 
 export async function initSmartRTE(): Promise<void> {
   if (_initialized && _wasm) return;
-  // @ts-ignore
-  let jsUrl: any = '../pkg/smart_rte_wasm.js';
-  try {
-    // Ensure dev servers don't cache the JS glue when WASM changes
-    // @ts-ignore
-    const u = new URL('../pkg/smart_rte_wasm.js', import.meta.url);
-    try { u.searchParams.set('t', String(Date.now())); } catch {}
-    jsUrl = u as any;
-  } catch {}
-  // @ts-ignore
-  const mod = await import(/* @vite-ignore */ jsUrl);
-  if (typeof (mod as any).default === 'function') {
-    // Explicitly pass the wasm URL so bundlers serve the asset correctly
-    // @ts-ignore
-    const wasmUrl = new URL('../pkg/smart_rte_wasm_bg.wasm', import.meta.url);
-    // Cache-bust in dev to avoid stale wasm/js mismatch
-    try { wasmUrl.searchParams.set('t', String(Date.now())); } catch {}
-    await (mod as any).default({ module_or_path: wasmUrl });
-  }
-  _wasm = mod;
+  // For wasm-pack --target bundler, calling the default init with no args allows bundlers to resolve the WASM asset
+  await initWasm();
+  _wasm = wasmModule as any;
   _initialized = true;
 }
 

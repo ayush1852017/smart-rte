@@ -1,1 +1,1 @@
-self.__REACT_LOADABLE_MANIFEST="{\"../../core-wasm/dist/index.js -> ../pkg/smart_rte_wasm.js\":{\"id\":\"../../core-wasm/dist/index.js -> ../pkg/smart_rte_wasm.js\",\"files\":[\"static/chunks/_app-pages-browser_core-wasm_pkg_smart_rte_wasm_js.js\"]}}"
+self.__REACT_LOADABLE_MANIFEST="{}";
