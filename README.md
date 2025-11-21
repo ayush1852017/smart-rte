@@ -116,7 +116,7 @@ See the [Flutter README](./dart/smartrte_flutter/README.md) for usage instructio
 1. **Clone the repository**
 
 ```bash
-git clone https://github.com/yourusername/smart-rte.git
+git clone https://github.com/ayush1852017/smart-rte.git
 cd smart-rte
 ```
 
@@ -291,7 +291,7 @@ We welcome contributions! Here's how:
 
 ### Reporting Issues
 
-1. Check [existing issues](https://github.com/yourusername/smart-rte/issues)
+1. Check [existing issues](https://github.com/ayush1852017/smart-rte/issues)
 2. Create a new issue with:
    - Clear description
    - Steps to reproduce
@@ -321,7 +321,7 @@ See the [React Package Contributing Guide](./packages/react/README.md#-contribut
 
 ### Reporting Security Vulnerabilities
 
-Email security issues to [security@yourdomain.com] instead of using the issue tracker.
+Email security issues to [yamhraaj@gmail.com](mailto:yamhraaj@gmail.com) instead of using the issue tracker.
 
 ### Content Safety
 
@@ -338,7 +338,7 @@ Copyright (c) 2025 Smart RTE Contributors
 ## 👥 Authors
 
 - **Smart RTE Team** - Core development and maintenance
-- See [Contributors](https://github.com/yourusername/smart-rte/contributors) for all contributors
+- See [Contributors](https://github.com/ayush1852017/smart-rte/contributors) for all contributors
 
 ## 🙏 Acknowledgments
 
@@ -350,8 +350,8 @@ Copyright (c) 2025 Smart RTE Contributors
 ## 📞 Support & Community
 
 - **Documentation:** Check package-specific READMEs
-- **Issues:** [GitHub Issues](https://github.com/yourusername/smart-rte/issues)
-- **Discussions:** [GitHub Discussions](https://github.com/yourusername/smart-rte/discussions)
+- **Issues:** [GitHub Issues](https://github.com/ayush1852017/smart-rte/issues)
+- **Discussions:** [GitHub Discussions](https://github.com/ayush1852017/smart-rte/discussions)
 
 ## 🗺️ Roadmap
 

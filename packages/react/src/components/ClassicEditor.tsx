@@ -74,6 +74,10 @@ export function ClassicEditor({
     img: HTMLImageElement;
   } | null>(null);
   const [showMediaManager, setShowMediaManager] = useState(false);
+  const [showColorPicker, setShowColorPicker] = useState(false);
+  const [colorPickerType, setColorPickerType] = useState<'text' | 'background'>('text');
+  const savedRangeRef = useRef<Range | null>(null);
+  const [currentFontSize, setCurrentFontSize] = useState<string>("11");
 
   useEffect(() => {
     const el = editableRef.current;
@@ -95,6 +99,25 @@ export function ClassicEditor({
       el.removeEventListener("contextmenu", onCtx, { capture: true } as any);
     };
   }, [value]);
+
+  // Save selection whenever it changes
+  useEffect(() => {
+    const saveSelection = () => {
+      const sel = window.getSelection();
+      if (sel && sel.rangeCount > 0) {
+        const range = sel.getRangeAt(0);
+        const editor = editableRef.current;
+        if (editor && editor.contains(range.commonAncestorContainer)) {
+          savedRangeRef.current = range.cloneRange();
+        }
+      }
+    };
+
+    document.addEventListener('selectionchange', saveSelection);
+    return () => {
+      document.removeEventListener('selectionchange', saveSelection);
+    };
+  }, []);
 
   const exec = (command: string, valueArg?: string) => {
     try {
@@ -120,6 +143,93 @@ export function ClassicEditor({
     if (!url) return;
     exec("createLink", url);
   };
+
+  const applyFontSize = (size: string) => {
+    try {
+      // Update current font size state
+      setCurrentFontSize(size);
+      
+      const editor = editableRef.current;
+      if (!editor) return;
+      
+      editor.focus();
+      
+      // Try to get current selection, or use saved range
+      let range: Range | null = null;
+      const sel = window.getSelection();
+      
+      if (sel && sel.rangeCount > 0) {
+        const currentRange = sel.getRangeAt(0);
+        // Use current range if it's within our editor
+        if (editor.contains(currentRange.commonAncestorContainer)) {
+          range = currentRange;
+        }
+      }
+      
+      // Fallback to saved range if current range is not available
+      if (!range && savedRangeRef.current) {
+        range = savedRangeRef.current.cloneRange();
+      }
+      
+      // If no range at all, just update state for future typing
+      if (!range) return;
+      
+      // If range is collapsed (cursor position, no selection), insert an invisible span
+      if (range.collapsed) {
+        // Create a span with zero-width space that will capture future typing
+        const span = document.createElement('span');
+        span.style.fontSize = size + 'pt';
+        span.textContent = '\u200B'; // Zero-width space
+        
+        range.insertNode(span);
+        
+        // Position cursor inside the span
+        const newRange = document.createRange();
+        newRange.setStart(span.firstChild!, 1);
+        newRange.collapse(true);
+        
+        if (sel) {
+          sel.removeAllRanges();
+          sel.addRange(newRange);
+        }
+        
+        handleInput();
+        return;
+      }
+      
+      // If there's selected text, wrap it
+      const span = document.createElement('span');
+      span.style.fontSize = size + 'pt';
+      
+      // Extract the selected content and wrap it in the span
+      const fragment = range.extractContents();
+      span.appendChild(fragment);
+      
+      // Insert the span at the current position
+      range.insertNode(span);
+      
+      // Update selection to show what was changed
+      if (sel) {
+        range.selectNodeContents(span);
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+      
+      // Trigger change event
+      handleInput();
+    } catch (error) {
+      console.error('Error applying font size:', error);
+    }
+  };
+
+  const applyTextColor = (color: string) => {
+    exec("foreColor", color);
+  };
+
+  const applyBackgroundColor = (color: string) => {
+    exec("hiliteColor", color);
+  };
+
 
   const insertImage = () => {
     if (!media) return;
@@ -844,6 +954,92 @@ export function ClassicEditor({
         >
           S
         </button>
+        <select
+          value={currentFontSize}
+          onMouseDown={() => {
+            // Save selection before dropdown interaction
+            const sel = window.getSelection();
+            if (sel && sel.rangeCount > 0) {
+              const range = sel.getRangeAt(0);
+              const editor = editableRef.current;
+              if (editor && editor.contains(range.commonAncestorContainer) && !range.collapsed) {
+                savedRangeRef.current = range.cloneRange();
+              }
+            }
+          }}
+          onChange={(e) => applyFontSize(e.target.value)}
+          title="Font Size"
+          style={{
+            height: 32,
+            padding: "0 8px",
+            border: "1px solid #e5e7eb",
+            borderRadius: 6,
+            background: "#fff",
+            color: "#111",
+          }}
+        >
+          <option value="8">8</option>
+          <option value="9">9</option>
+          <option value="10">10</option>
+          <option value="11">11</option>
+          <option value="12">12</option>
+          <option value="14">14</option>
+          <option value="18">18</option>
+          <option value="24">24</option>
+          <option value="30">30</option>
+          <option value="36">36</option>
+          <option value="48">48</option>
+          <option value="60">60</option>
+          <option value="72">72</option>
+          <option value="96">96</option>
+        </select>
+        <button
+          title="Text Color"
+          onClick={() => {
+            setColorPickerType('text');
+            setShowColorPicker(true);
+          }}
+          style={{
+            height: 32,
+            minWidth: 32,
+            padding: "0 8px",
+            border: "1px solid #e5e7eb",
+            borderRadius: 6,
+            background: "#fff",
+            color: "#111",
+            position: "relative",
+          }}
+        >
+          <span style={{ fontWeight: 700 }}>A</span>
+          <div style={{ 
+            position: "absolute", 
+            bottom: 4, 
+            left: "50%", 
+            transform: "translateX(-50%)", 
+            width: 16, 
+            height: 3, 
+            background: "#000",
+            borderRadius: 1,
+          }} />
+        </button>
+        <button
+          title="Background Color"
+          onClick={() => {
+            setColorPickerType('background');
+            setShowColorPicker(true);
+          }}
+          style={{
+            height: 32,
+            minWidth: 32,
+            padding: "0 8px",
+            border: "1px solid #e5e7eb",
+            borderRadius: 6,
+            background: "#fff",
+            color: "#111",
+          }}
+        >
+          <span style={{ fontWeight: 700, background: "#ffeb3b", padding: "2px 4px" }}>A</span>
+        </button>
         <button
           title="Bulleted list"
           onClick={() => exec("insertUnorderedList")}
@@ -1194,6 +1390,114 @@ export function ClassicEditor({
                 }}
               >
                 Insert
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {showColorPicker && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.35)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 50,
+          }}
+          onClick={() => setShowColorPicker(false)}
+        >
+          <div
+            style={{
+              background: "#fff",
+              padding: 16,
+              borderRadius: 8,
+              minWidth: 320,
+              color: "#000",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ fontWeight: 600, marginBottom: 12 }}>
+              {colorPickerType === 'text' ? 'Select Text Color' : 'Select Background Color'}
+            </div>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(8, 1fr)",
+                gap: 8,
+                marginBottom: 12,
+              }}
+            >
+              {[
+                '#000000', '#434343', '#666666', '#999999',
+                '#b7b7b7', '#cccccc', '#d9d9d9', '#efefef',
+                '#f3f3f3', '#ffffff', '#980000', '#ff0000',
+                '#ff9900', '#ffff00', '#00ff00', '#00ffff',
+                '#4a86e8', '#0000ff', '#9900ff', '#ff00ff',
+                '#e6b8af', '#f4cccc', '#fce5cd', '#fff2cc',
+                '#d9ead3', '#d0e0e3', '#c9daf8', '#cfe2f3',
+                '#d9d2e9', '#ead1dc', '#dd7e6b', '#ea9999',
+                '#f9cb9c', '#ffe599', '#b6d7a8', '#a2c4c9',
+                '#a4c2f4', '#9fc5e8', '#b4a7d6', '#d5a6bd',
+              ].map((color) => (
+                <button
+                  key={color}
+                  onClick={() => {
+                    if (colorPickerType === 'text') {
+                      applyTextColor(color);
+                    } else {
+                      applyBackgroundColor(color);
+                    }
+                    setShowColorPicker(false);
+                  }}
+                  style={{
+                    width: 32,
+                    height: 32,
+                    border: color === '#ffffff' ? '1px solid #ddd' : 'none',
+                    borderRadius: 4,
+                    background: color,
+                    cursor: 'pointer',
+                  }}
+                  title={color}
+                />
+              ))}
+            </div>
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ display: 'block', marginBottom: 6, fontSize: 12 }}>
+                Custom color:
+              </label>
+              <input
+                type="color"
+                onChange={(e) => {
+                  if (colorPickerType === 'text') {
+                    applyTextColor(e.target.value);
+                  } else {
+                    applyBackgroundColor(e.target.value);
+                  }
+                }}
+                style={{
+                  width: '100%',
+                  height: 40,
+                  border: '1px solid #ddd',
+                  borderRadius: 6,
+                  cursor: 'pointer',
+                }}
+              />
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'end' }}>
+              <button 
+                onClick={() => setShowColorPicker(false)}
+                style={{
+                  padding: '6px 16px',
+                  border: '1px solid #e5e7eb',
+                  borderRadius: 6,
+                  background: '#fff',
+                  color: '#111',
+                  cursor: 'pointer',
+                }}
+              >
+                Close
               </button>
             </div>
           </div>

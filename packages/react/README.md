@@ -338,7 +338,7 @@ The editor comes with built-in styles. You can customize the appearance by wrapp
 1. **Clone the repository**
 
 ```bash
-git clone https://github.com/yourusername/smart-rte.git
+git clone https://github.com/ayush1852017/smart-rte.git
 cd smart-rte
 ```
 
@@ -455,7 +455,7 @@ We welcome contributions! Here's how you can help:
 
 ### Reporting Bugs
 
-1. Check if the bug has already been reported in [Issues](https://github.com/yourusername/smart-rte/issues)
+1. Check if the bug has already been reported in [Issues](https://github.com/ayush1852017/smart-rte/issues)
 2. If not, create a new issue with:
    - Clear title and description
    - Steps to reproduce
@@ -465,7 +465,7 @@ We welcome contributions! Here's how you can help:
 
 ### Suggesting Features
 
-1. Check [existing feature requests](https://github.com/yourusername/smart-rte/issues?q=is%3Aissue+label%3Aenhancement)
+1. Check [existing feature requests](https://github.com/ayush1852017/smart-rte/issues?q=is%3Aissue+label%3Aenhancement)
 2. Create a new issue with:
    - Clear description of the feature
    - Use cases
@@ -611,20 +611,20 @@ SOFTWARE.
 
 - **Smart RTE Team** - Initial work and maintenance
 
-See the list of [contributors](https://github.com/yourusername/smart-rte/contributors) who participated in this project.
+See the list of [contributors](https://github.com/ayush1852017/smart-rte/contributors) who participated in this project.
 
 ## 🙏 Acknowledgments
 
 - [KaTeX](https://katex.org/) - For mathematical formula rendering
 - [React](https://reactjs.org/) - The UI library
 - [Vite](https://vitejs.dev/) - Build tool
-- All our amazing [contributors](https://github.com/yourusername/smart-rte/contributors)
+- All our amazing [contributors](https://github.com/ayush1852017/smart-rte/contributors)
 
 ## 📞 Support
 
 - **Documentation:** You're reading it! 📖
-- **Issues:** [GitHub Issues](https://github.com/yourusername/smart-rte/issues)
-- **Discussions:** [GitHub Discussions](https://github.com/yourusername/smart-rte/discussions)
+- **Issues:** [GitHub Issues](https://github.com/ayush1852017/smart-rte/issues)
+- **Discussions:** [GitHub Discussions](https://github.com/ayush1852017/smart-rte/discussions)
 - **Twitter:** [@smartrte](https://twitter.com/smartrte) (if applicable)
 
 ## 🗺️ Roadmap
@@ -696,4 +696,4 @@ See the list of [contributors](https://github.com/yourusername/smart-rte/contrib
 
 **Happy Editing! 🎉**
 
-If you find this package useful, please consider giving it a ⭐ on [GitHub](https://github.com/yourusername/smart-rte)!
+If you find this package useful, please consider giving it a ⭐ on [GitHub](https://github.com/ayush1852017/smart-rte)!
