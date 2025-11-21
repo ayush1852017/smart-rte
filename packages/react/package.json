@@ -1,6 +1,7 @@
 {
   "name": "smartrte-react",
-  "version": "0.1.7",
+  "version": "0.1.9",
+  "description": "A powerful, feature-rich Rich Text Editor for React with support for tables, mathematical formulas (LaTeX/KaTeX), and media management",
   "type": "module",
   "main": "dist/index.js",
   "module": "dist/index.js",
@@ -9,6 +10,34 @@
     "dist",
     "README.md"
   ],
+  "keywords": [
+    "react",
+    "editor",
+    "rich-text-editor",
+    "wysiwyg",
+    "rte",
+    "text-editor",
+    "contenteditable",
+    "table-editor",
+    "latex",
+    "katex",
+    "formula-editor",
+    "media-manager",
+    "image-editor",
+    "react-component",
+    "typescript"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ayush1852017/smart-rte.git",
+    "directory": "packages/react"
+  },
+  "homepage": "https://github.com/ayush1852017/smart-rte#readme",
+  "bugs": {
+    "url": "https://github.com/ayush1852017/smart-rte/issues"
+  },
+  "author": "Smart RTE Contributors",
+  "license": "MIT",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "build:embed": "vite build",
