@@ -30,6 +30,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       
+      - name: Sync README
+        run: cp README.md packages/react/README.md
+      
       - name: Build
         run: pnpm -r build --filter ./packages/*
       
