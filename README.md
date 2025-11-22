@@ -330,8 +330,6 @@ The editor comes with built-in styles. You can customize the appearance by wrapp
 
 - Node.js 18+ 
 - pnpm 9.10.0+
-- Rust (for WASM compilation)
-- wasm-pack
 
 ### Setting Up Development Environment
 
@@ -351,13 +349,7 @@ pnpm install
 3. **Build the project**
 
 ```bash
-# Build WASM core
-pnpm build:wasm
-
 # Build TypeScript packages
-pnpm build:ts
-
-# Or build everything
 pnpm build
 ```
 
@@ -376,19 +368,17 @@ The playground will be available at `http://localhost:5173`
 ```
 smart-rte/
 ├── packages/
-│   ├── react/              # Main React package (smartrte-react)
-│   │   ├── src/
-│   │   │   ├── components/
-│   │   │   │   ├── ClassicEditor.tsx   # Main editor component
-│   │   │   │   └── MediaManager.tsx    # Media management component
-│   │   │   └── index.ts
-│   │   ├── playground/     # Development playground
-│   │   └── package.json
-│   ├── core-wasm/          # WASM bindings
-│   └── classic-embed/      # Standalone bundle
-├── rust/                   # Rust core
-│   └── smart_rte_core/
-├── apps/                   # Example applications
+│   └── react/              # Main React package (smartrte-react)
+│       ├── src/
+│       │   ├── components/
+│       │   │   ├── ClassicEditor.tsx   # Main editor component
+│       │   │   └── MediaManager.tsx    # Media management component
+│       │   └── index.ts
+│       ├── playground/     # Development playground
+│       └── package.json
+├── dart/                   # Flutter/Dart packages
+│   ├── smartrte_flutter/   # Flutter WebView integration
+│   └── example_app/        # Flutter example
 └── package.json
 ```
 
@@ -658,9 +648,7 @@ See the list of [contributors](https://github.com/ayush1852017/smart-rte/contrib
 
 ## 🔗 Related Packages
 
-- **@smartrte/classic-embed** - Standalone script-tag bundle
-- **smartrte-flutter** - Flutter/Dart implementation
-- **smart-rte-core** - Rust core library
+- **smartrte-flutter** - Flutter/Dart WebView implementation
 
 ## 💡 Tips & Best Practices
 

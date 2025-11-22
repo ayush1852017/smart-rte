@@ -40,9 +40,7 @@
   "license": "MIT",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "build:embed": "vite build",
-    "build:all": "pnpm run build && pnpm run build:embed",
-    "prepublishOnly": "pnpm run build:all",
+    "prepublishOnly": "pnpm run build",
     "dev": "pnpm build",
     "lint": "eslint . || true",
     "test": "vitest run || true",

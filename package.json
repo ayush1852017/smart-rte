@@ -3,10 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "scripts": {
-    "build:core": "cargo build -p smart_rte_core",
-    "build:wasm": "wasm-pack build rust/smart_rte_wasm --target bundler --out-dir ../../packages/core-wasm/pkg --out-name smart_rte_wasm",
-    "build:ts": "pnpm -r --filter ./packages/* run build",
-    "build": "pnpm build:wasm && pnpm build:ts",
+    "build": "pnpm -r --filter ./packages/* run build",
     "dev": "pnpm build"
   },
   "packageManager": "pnpm@9.10.0+sha512.73a29afa36a0d092ece5271de5177ecbf8318d454ecd701343131b8ebc0c1a91c487da46ab77c8e596d6acf1461e3594ced4becedf8921b074fbd8653ed7051c",
