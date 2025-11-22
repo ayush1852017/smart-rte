@@ -1,8 +1,0 @@
-name: smart_rte_flutter_workspace
-description: Workspace file for managing Flutter/Dart packages in this repo
-publish_to: "none"
-version: 0.0.0
-environment:
-  sdk: ">=3.0.0 <4.0.0"
-# This file is a placeholder to help tooling detect a Flutter/Dart workspace.
-# Actual packages live under dart/ (smartrte_flutter, example_app).
