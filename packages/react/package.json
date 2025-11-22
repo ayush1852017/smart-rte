@@ -1,6 +1,7 @@
 {
-  "name": "@smartrte/react",
-  "version": "0.1.0",
+  "name": "smartrte-react",
+  "version": "0.1.10",
+  "description": "A powerful, feature-rich Rich Text Editor for React with support for tables, mathematical formulas (LaTeX/KaTeX), and media management",
   "type": "module",
   "main": "dist/index.js",
   "module": "dist/index.js",
@@ -9,8 +10,37 @@
     "dist",
     "README.md"
   ],
+  "keywords": [
+    "react",
+    "editor",
+    "rich-text-editor",
+    "wysiwyg",
+    "rte",
+    "text-editor",
+    "contenteditable",
+    "table-editor",
+    "latex",
+    "katex",
+    "formula-editor",
+    "media-manager",
+    "image-editor",
+    "react-component",
+    "typescript"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ayush1852017/smart-rte.git",
+    "directory": "packages/react"
+  },
+  "homepage": "https://github.com/ayush1852017/smart-rte#readme",
+  "bugs": {
+    "url": "https://github.com/ayush1852017/smart-rte/issues"
+  },
+  "author": "Smart RTE Contributors",
+  "license": "MIT",
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "prepublishOnly": "pnpm run build",
     "dev": "pnpm build",
     "lint": "eslint . || true",
     "test": "vitest run || true",
@@ -18,10 +48,13 @@
     "build-storybook": "storybook build",
     "e2e": "playwright test || true"
   },
+  "publishConfig": {
+    "access": "public"
+  },
+  "sideEffects": false,
   "peerDependencies": {
     "react": ">=18",
-    "react-dom": ">=18",
-    "@smartrte/core-wasm": "^0.1.0"
+    "react-dom": ">=18"
   },
   "devDependencies": {
     "typescript": "^5.6.2",
@@ -34,7 +67,6 @@
     "vite": "^5.4.8",
     "vitest": "^2.1.4",
     "@playwright/test": "^1.48.2",
-    "@smartrte/core-wasm": "workspace:*",
     "react": "18.3.1",
     "react-dom": "18.3.1"
   }

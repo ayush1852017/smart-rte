@@ -1,0 +1,24 @@
+name: Flutter CI
+
+on:
+  push:
+    branches: [main, develop, custom-implementation]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: "stable"
+      - name: Flutter pub get
+        working-directory: dart/example_app
+        run: flutter pub get
+      - name: Analyze
+        working-directory: dart/example_app
+        run: flutter analyze || true
+      - name: Test
+        working-directory: dart/example_app
+        run: flutter test || true

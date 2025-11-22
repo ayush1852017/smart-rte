@@ -2,3 +2,4 @@ packages:
   - packages/*
   - rust/*
   - dart/*
+  - apps/*
