@@ -2,11 +2,11 @@ name: Publish to NPM
 
 on:
   push:
-    branches:
-      - master
+    tags:
+      - 'v*.*.*'  # Only trigger on version tags like v0.1.13
   release:
     types: [created]
-  workflow_dispatch:
+  workflow_dispatch:  # Manual trigger from GitHub UI
 
 jobs:
   publish:
