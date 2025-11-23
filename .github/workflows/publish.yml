@@ -32,7 +32,7 @@ jobs:
         run: cp README.md packages/react/README.md
       
       - name: Build
-        run: pnpm -r build --filter ./packages/*
+        run: pnpm build
       
       - name: Publish to NPM
         run: |
