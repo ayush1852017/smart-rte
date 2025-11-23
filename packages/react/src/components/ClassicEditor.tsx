@@ -47,6 +47,14 @@ export function ClassicEditor({
     startWidth: number;
   } | null>(null);
   const draggedImageRef = useRef<HTMLImageElement | null>(null);
+  const tableResizeRef = useRef<{
+    type: 'column' | 'row';
+    table: HTMLTableElement;
+    index: number;
+    startPos: number;
+    startSize: number;
+    cells: HTMLTableCellElement[];
+  } | null>(null);
   const [showTableDialog, setShowTableDialog] = useState(false);
   const [tableRows, setTableRows] = useState(3);
   const [tableCols, setTableCols] = useState(3);
@@ -270,6 +278,144 @@ export function ClassicEditor({
     };
   }, []);
 
+  // Table resize event listeners
+  useEffect(() => {
+    const el = editableRef.current;
+    if (!el) return;
+    
+    addTableResizeHandles();
+    
+    const onMouseDown = (e: MouseEvent) => {
+      if (!table) return;
+      
+      const target = e.target as HTMLElement;
+      
+      if (target.tagName === 'TD' || target.tagName === 'TH') {
+        const rect = target.getBoundingClientRect();
+        const rightEdge = rect.right;
+        const clickX = e.clientX;
+        
+        if (Math.abs(clickX - rightEdge) < 5) {
+          e.preventDefault();
+          const tableElem = target.closest('table') as HTMLTableElement;
+          const colIndex = parseInt(target.getAttribute('data-col-index') || '0', 10);
+          if (tableElem) {
+            startColumnResize(tableElem, colIndex, e.clientX);
+          }
+          return;
+        }
+        
+        const bottomEdge = rect.bottom;
+        const clickY = e.clientY;
+        
+        if (Math.abs(clickY - bottomEdge) < 5) {
+          e.preventDefault();
+          const tableElem = target.closest('table') as HTMLTableElement;
+          const row = target.closest('tr') as HTMLTableRowElement;
+          if (tableElem && row) {
+            const rowIndex = parseInt(row.getAttribute('data-row-index') || '0', 10);
+            startRowResize(tableElem, rowIndex, e.clientY);
+          }
+          return;
+        }
+      }
+    };
+    
+    const onMouseMove = (e: MouseEvent) => {
+      if (tableResizeRef.current) {
+        handleTableResizeMove(e);
+        return;
+      }
+      
+      if (!table) return;
+      const target = e.target as HTMLElement;
+      
+      if (target.tagName === 'TD' || target.tagName === 'TH') {
+        const rect = target.getBoundingClientRect();
+        const clickX = e.clientX;
+        const clickY = e.clientY;
+        
+        if (Math.abs(clickX - rect.right) < 5) {
+          el.style.cursor = 'col-resize';
+          return;
+        }
+        
+        if (Math.abs(clickY - rect.bottom) < 5) {
+          el.style.cursor = 'row-resize';
+          return;
+        }
+        
+        if (el.style.cursor === 'col-resize' || el.style.cursor === 'row-resize') {
+          el.style.cursor = '';
+        }
+      }
+    };
+    
+    const onMouseUp = () => {
+      handleTableResizeEnd();
+    };
+    
+    const onTouchStart = (e: TouchEvent) => {
+      if (!table) return;
+      
+      const target = e.target as HTMLElement;
+      if (target.tagName === 'TD' || target.tagName === 'TH') {
+        const rect = target.getBoundingClientRect();
+        const touch = e.touches[0];
+        const clickX = touch.clientX;
+        const clickY = touch.clientY;
+        
+        if (Math.abs(clickX - rect.right) < 15) {
+          e.preventDefault();
+          const tableElem = target.closest('table') as HTMLTableElement;
+          const colIndex = parseInt(target.getAttribute('data-col-index') || '0', 10);
+          if (tableElem) {
+            startColumnResize(tableElem, colIndex, clickX);
+          }
+          return;
+        }
+        
+        if (Math.abs(clickY - rect.bottom) < 15) {
+          e.preventDefault();
+          const tableElem = target.closest('table') as HTMLTableElement;
+          const row = target.closest('tr') as HTMLTableRowElement;
+          if (tableElem && row) {
+            const rowIndex = parseInt(row.getAttribute('data-row-index') || '0', 10);
+            startRowResize(tableElem, rowIndex, clickY);
+          }
+          return;
+        }
+      }
+    };
+    
+    const onTouchMove = (e: TouchEvent) => {
+      if (tableResizeRef.current) {
+        handleTableResizeMove(e);
+      }
+    };
+    
+    const onTouchEnd = () => {
+      handleTableResizeEnd();
+    };
+    
+    el.addEventListener('mousedown', onMouseDown);
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+    el.addEventListener('touchstart', onTouchStart, { passive: false } as any);
+    window.addEventListener('touchmove', onTouchMove, { passive: false } as any);
+    window.addEventListener('touchend', onTouchEnd);
+    
+    return () => {
+      el.removeEventListener('mousedown', onMouseDown);
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+      el.removeEventListener('touchstart', onTouchStart);
+      window.removeEventListener('touchmove', onTouchMove);
+      window.removeEventListener('touchend', onTouchEnd);
+    };
+  }, [table]);
+
+
   const insertImageAtSelection = (src: string) => {
     try {
       const host = editableRef.current;
@@ -465,6 +611,22 @@ export function ClassicEditor({
       const node = wrapper.firstChild as HTMLElement | null;
       if (!node || !range) return;
       range.insertNode(node);
+      
+      // Add resize handles to the new table
+      if (node instanceof HTMLTableElement) {
+        const tbody = node.querySelector('tbody');
+        if (tbody) {
+          const rows = Array.from(tbody.querySelectorAll('tr'));
+          rows.forEach((row, index) => {
+            (row as HTMLElement).setAttribute('data-row-index', String(index));
+            const cells = cellsOfRow(row as HTMLTableRowElement);
+            cells.forEach((cell, cellIndex) => {
+              (cell as HTMLElement).setAttribute('data-col-index', String(cellIndex));
+            });
+          });
+        }
+      }
+      
       // Move caret into first cell
       const firstCell = node.querySelector(
         "td,th"
@@ -815,6 +977,136 @@ export function ClassicEditor({
       applyToggle(fallbackCell);
     }
   };
+
+  // Table column and row resizing functions
+  const getColumnCells = (table: HTMLTableElement, colIndex: number): HTMLTableCellElement[] => {
+    const tbody = table.querySelector('tbody');
+    if (!tbody) return [];
+    const cells: HTMLTableCellElement[] = [];
+    const rows = Array.from(tbody.querySelectorAll('tr'));
+    rows.forEach(row => {
+      const rowCells = cellsOfRow(row as HTMLTableRowElement);
+      if (rowCells[colIndex]) {
+        cells.push(rowCells[colIndex]);
+      }
+    });
+    return cells;
+  };
+
+  const startColumnResize = (table: HTMLTableElement, colIndex: number, clientX: number) => {
+    const cells = getColumnCells(table, colIndex);
+    if (cells.length === 0) return;
+    
+    const firstCell = cells[0];
+    const currentWidth = firstCell.offsetWidth;
+    
+    tableResizeRef.current = {
+      type: 'column',
+      table,
+      index: colIndex,
+      startPos: clientX,
+      startSize: currentWidth,
+      cells,
+    };
+    
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  };
+
+  const startRowResize = (table: HTMLTableElement, rowIndex: number, clientY: number) => {
+    const tbody = table.querySelector('tbody');
+    if (!tbody) return;
+    
+    const rows = Array.from(tbody.querySelectorAll('tr'));
+    const row = rows[rowIndex] as HTMLTableRowElement | undefined;
+    if (!row) return;
+    
+    const cells = cellsOfRow(row);
+    const currentHeight = row.offsetHeight;
+    
+    tableResizeRef.current = {
+      type: 'row',
+      table,
+      index: rowIndex,
+      startPos: clientY,
+      startSize: currentHeight,
+      cells,
+    };
+    
+    document.body.style.cursor = 'row-resize';
+    document.body.style.userSelect = 'none';
+  };
+
+  const handleTableResizeMove = (e: MouseEvent | TouchEvent) => {
+    const resize = tableResizeRef.current;
+    if (!resize) return;
+    
+    e.preventDefault();
+    
+    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+    const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+    
+    if (resize.type === 'column') {
+      const delta = clientX - resize.startPos;
+      const newWidth = Math.max(60, resize.startSize + delta);
+      
+      resize.cells.forEach(cell => {
+        (cell as HTMLElement).style.width = `${newWidth}px`;
+        (cell as HTMLElement).style.minWidth = `${newWidth}px`;
+        (cell as HTMLElement).style.maxWidth = `${newWidth}px`;
+      });
+    } else if (resize.type === 'row') {
+      const delta = clientY - resize.startPos;
+      const newHeight = Math.max(30, resize.startSize + delta);
+      
+      const tbody = resize.table.querySelector('tbody');
+      if (tbody) {
+        const rows = Array.from(tbody.querySelectorAll('tr'));
+        const row = rows[resize.index] as HTMLTableRowElement | undefined;
+        if (row) {
+          (row as HTMLElement).style.height = `${newHeight}px`;
+          resize.cells.forEach(cell => {
+            (cell as HTMLElement).style.height = `${newHeight}px`;
+          });
+        }
+      }
+    }
+  };
+
+  const handleTableResizeEnd = () => {
+    if (tableResizeRef.current) {
+      tableResizeRef.current = null;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      handleInput();
+    }
+  };
+
+  const addTableResizeHandles = () => {
+    if (!table) return;
+    const el = editableRef.current;
+    if (!el) return;
+    
+    const tables = el.querySelectorAll('table');
+    tables.forEach(tableElem => {
+      const tbody = tableElem.querySelector('tbody');
+      if (!tbody) return;
+      
+      const firstRow = tbody.querySelector('tr');
+      if (firstRow) {
+        const cells = cellsOfRow(firstRow as HTMLTableRowElement);
+        cells.forEach((cell, index) => {
+          (cell as HTMLElement).setAttribute('data-col-index', String(index));
+        });
+      }
+      
+      const rows = Array.from(tbody.querySelectorAll('tr'));
+      rows.forEach((row, index) => {
+        (row as HTMLElement).setAttribute('data-row-index', String(index));
+      });
+    });
+  };
+
 
   return (
     <div style={{ border: "1px solid #ddd", borderRadius: 6 }}>

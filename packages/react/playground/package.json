@@ -10,7 +10,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "react": "link:../packages/react",
+    "react": "18.3.1",
     "react-dom": "18.3.1"
   },
   "devDependencies": {
@@ -24,6 +24,6 @@
     "globals": "^16.4.0",
     "typescript": "~5.8.3",
     "typescript-eslint": "^8.43.0",
-    "vite": "^7.1.9"
+    "vite": "^5.4.8"
   }
 }
