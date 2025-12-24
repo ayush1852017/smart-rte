@@ -85,7 +85,7 @@ export function ClassicEditor({
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [colorPickerType, setColorPickerType] = useState<'text' | 'background'>('text');
   const savedRangeRef = useRef<Range | null>(null);
-  const [currentFontSize, setCurrentFontSize] = useState<string>("11");
+  const [currentFontSize, setCurrentFontSize] = useState<string>("");
 
   useEffect(() => {
     const el = editableRef.current;
@@ -93,6 +93,8 @@ export function ClassicEditor({
     // Initialize with provided HTML only when externally controlled value changes
     if (typeof value === "string" && value !== el.innerHTML) {
       el.innerHTML = value || "";
+      fixNegativeMargins(el);
+      ensureTableWrappers(el);
     }
     // Suppress native context menu inside table cells at capture phase
     const onCtx = (evt: Event) => {
@@ -560,10 +562,53 @@ export function ClassicEditor({
     }
   };
 
+  const fixNegativeMargins = (root: HTMLElement) => {
+    try {
+      const nodes = root.querySelectorAll<HTMLElement>('*');
+      for (let i = 0; i < nodes.length; i++) {
+        const node = nodes[i];
+        if (node.style && node.style.marginLeft && node.style.marginLeft.trim().startsWith('-')) {
+          node.style.marginLeft = '0px';
+        }
+      }
+    } catch {}
+  };
+
+  const ensureTableWrappers = (root: HTMLElement) => {
+    try {
+      const tables = root.querySelectorAll('table');
+      tables.forEach((table) => {
+        const parent = table.parentElement;
+        if (parent && parent.getAttribute('data-table-wrapper') !== 'true') {
+          const wrapper = document.createElement('div');
+          wrapper.setAttribute('data-table-wrapper', 'true');
+          wrapper.style.overflowX = 'auto';
+          (wrapper.style as any).webkitOverflowScrolling = 'touch';
+          wrapper.style.width = '100%';
+          wrapper.style.maxWidth = '100%';
+          wrapper.style.display = 'block';
+          // Use insertBefore + appendChild to move element without losing too much state
+          // simpler than replaceChild for wrapping
+          parent.insertBefore(wrapper, table);
+          wrapper.appendChild(table);
+        }
+      });
+    } catch (e) {
+      console.error("Error wrapping tables", e);
+    }
+  };
+
   const handleInput = () => {
     if (isComposingRef.current) return;
     const el = editableRef.current;
-    if (!el || !onChange) return;
+    if (!el) return;
+    
+    // Auto-fix negative margins that might cause visibility issues
+    fixNegativeMargins(el);
+    // Ensure tables are wrapped for horizontal scrolling
+    ensureTableWrappers(el);
+
+    if (!onChange) return;
     const html = el.innerHTML;
     if (html !== lastEmittedRef.current) {
       lastEmittedRef.current = html;
@@ -574,7 +619,7 @@ export function ClassicEditor({
   const buildTableHTML = (rows: number, cols: number) => {
     const safeRows = Math.max(1, Math.min(50, Math.floor(rows) || 1));
     const safeCols = Math.max(1, Math.min(20, Math.floor(cols) || 1));
-    let html = '<table style="border-collapse:collapse;width:100%;"><tbody>';
+    let html = '<div data-table-wrapper="true" style="overflow-x:auto;-webkit-overflow-scrolling:touch;width:100%;max-width:100%;display:block;"><table style="border-collapse:collapse;min-width:100%;background:white;"><tbody>';
     for (let r = 0; r < safeRows; r++) {
       html += "<tr>";
       for (let c = 0; c < safeCols; c++) {
@@ -583,7 +628,7 @@ export function ClassicEditor({
       }
       html += "</tr>";
     }
-    html += "</tbody></table>";
+    html += "</tbody></table></div>";
     return html;
   };
 
@@ -999,6 +1044,10 @@ export function ClassicEditor({
     
     const firstCell = cells[0];
     const currentWidth = firstCell.offsetWidth;
+
+    // Unlock table width so it can grow
+    table.style.width = "max-content";
+    table.style.minWidth = "100%";
     
     tableResizeRef.current = {
       type: 'column',
@@ -1109,11 +1158,22 @@ export function ClassicEditor({
 
 
   return (
-    <div style={{ border: "1px solid #ddd", borderRadius: 6 }}>
+    <div style={{ 
+      border: "1px solid #ddd", 
+      borderRadius: 6, 
+      width: "100%", 
+      maxWidth: "100vw",
+      overflow: "hidden", 
+      display: "flex", 
+      flexDirection: "column", 
+      background: "#fff", 
+      boxSizing: "border-box" 
+    }}>
       <div
         style={{
           display: "flex",
           flexWrap: "wrap",
+          maxWidth: "100%",
           gap: 8,
           padding: 8,
           borderBottom: "1px solid #eee",
@@ -1270,6 +1330,7 @@ export function ClassicEditor({
             color: "#111",
           }}
         >
+          <option value="" disabled>Size</option>
           <option value="8">8</option>
           <option value="9">9</option>
           <option value="10">10</option>
@@ -1303,16 +1364,6 @@ export function ClassicEditor({
           }}
         >
           <span style={{ fontWeight: 700 }}>A</span>
-          <div style={{ 
-            position: "absolute", 
-            bottom: 4, 
-            left: "50%", 
-            transform: "translateX(-50%)", 
-            width: 16, 
-            height: 3, 
-            background: "#000",
-            borderRadius: 1,
-          }} />
         </button>
         <button
           title="Background Color"
@@ -1330,7 +1381,7 @@ export function ClassicEditor({
             color: "#111",
           }}
         >
-          <span style={{ fontWeight: 700, background: "#ffeb3b", padding: "2px 4px" }}>A</span>
+          <span style={{ fontWeight: 700, padding: "2px 4px" }}>A</span>
         </button>
         <button
           title="Bulleted list"
@@ -1706,6 +1757,7 @@ export function ClassicEditor({
               padding: 16,
               borderRadius: 8,
               minWidth: 320,
+              maxWidth: "90vw",
               color: "#000",
             }}
             onClick={(e) => e.stopPropagation()}
@@ -1958,307 +2010,321 @@ export function ClassicEditor({
           </div>
         </div>
       )}
-      <div
-        ref={editableRef}
-        contentEditable={!readOnly}
-        suppressContentEditableWarning
-        onInput={handleInput}
-        onCompositionStart={() => (isComposingRef.current = true)}
-        onCompositionEnd={() => {
-          isComposingRef.current = false;
-          handleInput();
-        }}
-        onPaste={(e) => {
-          const items = e.clipboardData?.files;
-          if (media && items && items.length) {
-            const hasImage = Array.from(items).some((f) =>
-              f.type.startsWith("image/")
-            );
-            if (hasImage) {
-              e.preventDefault();
-              handleLocalImageFiles(items);
-            }
-          }
-        }}
-        onDragOver={(e) => {
-          // Allow dragging images within editor and file drops
-          if (
-            draggedImageRef.current ||
-            e.dataTransfer?.types?.includes("Files")
-          ) {
-            e.preventDefault();
-          }
-        }}
-        onDrop={(e) => {
-          // Move existing dragged image inside editor
-          if (draggedImageRef.current) {
-            e.preventDefault();
-            const x = e.clientX;
-            const y = e.clientY;
-            let range: Range | null = null;
-            // @ts-ignore
-            if (document.caretRangeFromPoint) {
-              // @ts-ignore
-              range = document.caretRangeFromPoint(x, y);
-            } else if ((document as any).caretPositionFromPoint) {
-              const pos = (document as any).caretPositionFromPoint(x, y);
-              if (pos) {
-                range = document.createRange();
-                range.setStart(pos.offsetNode, pos.offset);
-              }
-            }
-            const img = draggedImageRef.current;
-            draggedImageRef.current = null;
-            if (
-              range &&
-              img &&
-              editableRef.current?.contains(range.commonAncestorContainer)
-            ) {
-              // Avoid inserting inside the image itself
-              if (range.startContainer === img || range.endContainer === img)
-                return;
-              // If dropping inside a link, insert right after the link element
-              let container: Node = range.commonAncestorContainer;
-              let linkAncestor: HTMLAnchorElement | null = null;
-              let el: HTMLElement | null = container as HTMLElement;
-              while (el && el !== editableRef.current) {
-                if (el.tagName === "A") {
-                  linkAncestor = el as HTMLAnchorElement;
-                  break;
-                }
-                el = el.parentElement;
-              }
-              if (linkAncestor) {
-                linkAncestor.parentElement?.insertBefore(
-                  img,
-                  linkAncestor.nextSibling
-                );
-              } else {
-                range.insertNode(img);
-              }
-              const r = document.createRange();
-              r.setStartAfter(img);
-              r.collapse(true);
-              safeSelectRange(r);
-              setSelectedImage(img);
-              scheduleImageOverlay();
-              handleInput();
-            }
-            return;
-          }
-          if (media && e.dataTransfer?.files?.length) {
-            e.preventDefault();
-            // Try to move caret to drop point
-            const x = e.clientX;
-            const y = e.clientY;
-            let range: Range | null = null;
-            // @ts-ignore
-            if (document.caretRangeFromPoint) {
-              // @ts-ignore
-              range = document.caretRangeFromPoint(x, y);
-            } else if ((document as any).caretPositionFromPoint) {
-              const pos = (document as any).caretPositionFromPoint(x, y);
-              if (pos) {
-                range = document.createRange();
-                range.setStart(pos.offsetNode, pos.offset);
-              }
-            }
-            if (range) {
-              const sel = window.getSelection();
-              sel?.removeAllRanges();
-              sel?.addRange(range);
-            }
-            handleLocalImageFiles(e.dataTransfer.files);
-          }
-        }}
-        onClick={(e) => {
-          const t = e.target as HTMLElement;
-          if (t && t.tagName === "IMG") {
-            setSelectedImage(t as HTMLImageElement);
-            scheduleImageOverlay();
-          } else {
-            setSelectedImage(null);
-            setImageOverlay(null);
-          }
-        }}
-        onDragStart={(e) => {
-          const t = e.target as HTMLElement | null;
-          if (t && t.tagName === "IMG") {
-            draggedImageRef.current = t as HTMLImageElement;
-            try {
-              e.dataTransfer?.setData("text/plain", "moving-image");
-              e.dataTransfer!.effectAllowed = "move";
-              // Provide a subtle drag image
-              const dt = e.dataTransfer;
-              if (dt && typeof dt.setDragImage === "function") {
-                const ghost = new Image();
-                ghost.src = (t as HTMLImageElement).src;
-                ghost.width = Math.min(120, (t as HTMLImageElement).width);
-                ghost.height = Math.min(120, (t as HTMLImageElement).height);
-                dt.setDragImage(ghost, 10, 10);
-              }
-            } catch {}
-          } else {
-            draggedImageRef.current = null;
-          }
-        }}
-        onDragEnd={() => {
-          draggedImageRef.current = null;
-        }}
+      <div 
         style={{
-          padding: 12,
-          minHeight:
-            typeof minHeight === "number" ? `${minHeight}px` : minHeight,
-          maxHeight:
-            typeof maxHeight === "number" ? `${maxHeight}px` : maxHeight,
+          width: "100%",
+          maxWidth: "100%",
+          flex: "1 1 auto",
+          minHeight: typeof minHeight === "number" ? `${minHeight}px` : minHeight,
+          maxHeight: typeof maxHeight === "number" ? `${maxHeight}px` : maxHeight,
           overflowY: "auto",
-          outline: "none",
-          lineHeight: 1.6,
+          overflowX: "hidden",
+          boxSizing: "border-box",
+          position: "relative",
+          background: "#fff",
         }}
-        data-placeholder={placeholder}
-        onFocus={(e) => {
-          // Ensure the editor has at least one paragraph to type into
-          const el = e.currentTarget;
-          if (!el.innerHTML || el.innerHTML === "<br>") {
-            el.innerHTML = "<p><br></p>";
-          }
-        }}
-        onKeyDown={(e) => {
-          if (
-            formula &&
-            (e.metaKey || e.ctrlKey) &&
-            String(e.key).toLowerCase() === "m"
-          ) {
-            e.preventDefault();
-            setShowFormulaDialog(true);
-            return;
-          }
-          // Keep Tab for indentation in lists; otherwise insert 2 spaces
-          if (e.key === "Tab") {
-            e.preventDefault();
-            if (
-              document.queryCommandState("insertUnorderedList") ||
-              document.queryCommandState("insertOrderedList")
-            ) {
-              exec(e.shiftKey ? "outdent" : "indent");
-            } else {
-              document.execCommand("insertText", false, "  ");
-            }
-          }
-          // Table navigation with arrows inside cells
-          if (
-            ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)
-          ) {
-            const sel = window.getSelection();
-            const cell = getClosestCell(sel?.anchorNode || null);
-            if (
-              table &&
-              cell &&
-              cell.parentElement &&
-              cell.parentElement.parentElement
-            ) {
-              const row = cell.parentElement as HTMLTableRowElement;
-              const tbody = row.parentElement as HTMLTableSectionElement;
-              const cells = Array.from(row.children).filter(
-                (c) =>
-                  (c as HTMLElement).tagName === "TD" ||
-                  (c as HTMLElement).tagName === "TH"
+      >
+        <div
+          ref={editableRef}
+          contentEditable={!readOnly}
+          suppressContentEditableWarning
+          onInput={handleInput}
+          onCompositionStart={() => (isComposingRef.current = true)}
+          onCompositionEnd={() => {
+            isComposingRef.current = false;
+            handleInput();
+          }}
+          onPaste={(e) => {
+            const items = e.clipboardData?.files;
+            if (media && items && items.length) {
+              const hasImage = Array.from(items).some((f) =>
+                f.type.startsWith("image/")
               );
-              const rows = Array.from(tbody.children) as HTMLTableRowElement[];
-              const rIdx = rows.indexOf(row);
-              const cIdx = cells.indexOf(cell);
-              const atStart = (sel?.anchorOffset || 0) === 0;
-              const cellTextLen = (cell.textContent || "").length;
-              const atEnd = (sel?.anchorOffset || 0) >= cellTextLen;
-              let target: HTMLTableCellElement | null = null;
-              if (e.key === "ArrowLeft" && atStart && cIdx > 0) {
-                target = row.children[cIdx - 1] as HTMLTableCellElement;
-              } else if (
-                e.key === "ArrowRight" &&
-                atEnd &&
-                cIdx < row.children.length - 1
-              ) {
-                target = row.children[cIdx + 1] as HTMLTableCellElement;
-              } else if (e.key === "ArrowUp" && rIdx > 0 && atStart) {
-                target = rows[rIdx - 1].children[cIdx] as HTMLTableCellElement;
-              } else if (
-                e.key === "ArrowDown" &&
-                rIdx < rows.length - 1 &&
-                atEnd
-              ) {
-                target = rows[rIdx + 1].children[cIdx] as HTMLTableCellElement;
-              }
-              if (target) {
+              if (hasImage) {
                 e.preventDefault();
-                moveCaretToCell(
-                  target,
-                  e.key === "ArrowRight" || e.key === "ArrowDown"
-                );
+                handleLocalImageFiles(items);
               }
             }
-          }
-        }}
-        onMouseDown={(e) => {
-          const cell = getClosestCell(e.target as Node);
-          if (!cell) {
-            clearSelectionDecor();
-            return;
-          }
-          const pos = getCellPosition(cell);
-          if (!pos) return;
-          selectingRef.current = { tbody: pos.tbody, start: cell };
-          const onMove = (ev: MouseEvent) => {
-            const under = document.elementFromPoint(ev.clientX, ev.clientY);
-            const overCell = getClosestCell(under);
-            const startInfo = selectingRef.current;
-            if (!overCell || !startInfo) return;
-            const a = getCellPosition(startInfo.start);
-            const b = getCellPosition(overCell);
-            if (!a || !b || a.tbody !== b.tbody) return;
-            const sr = Math.min(a.rIdx, b.rIdx);
-            const sc = Math.min(a.cIdx, b.cIdx);
-            const er = Math.max(a.rIdx, b.rIdx);
-            const ec = Math.max(a.cIdx, b.cIdx);
-            updateSelectionDecor(a.tbody, sr, sc, er, ec);
-          };
-          const onUp = () => {
-            window.removeEventListener("mousemove", onMove);
-            window.removeEventListener("mouseup", onUp);
-            selectingRef.current = null;
-          };
-          window.addEventListener("mousemove", onMove);
-          window.addEventListener("mouseup", onUp);
-        }}
-        onContextMenu={(e) => {
-          const target = e.target as HTMLElement;
-          if (target && target.tagName === "IMG") {
-            e.preventDefault();
-            const vw = window.innerWidth;
-            const vh = window.innerHeight;
-            const menuW = 220;
-            const menuH = 200;
-            const x = Math.max(8, Math.min(e.clientX, vw - menuW - 8));
-            const y = Math.max(8, Math.min(e.clientY, vh - menuH - 8));
-            setImageMenu({ x, y, img: target as HTMLImageElement });
-            setTableMenu(null);
-            return;
-          }
-          const cell = getClosestCell(e.target as Node);
-          if (cell) {
-            e.preventDefault();
-            const vw = window.innerWidth;
-            const vh = window.innerHeight;
-            const menuW = 220;
-            const menuH = 300;
-            const x = Math.max(8, Math.min(e.clientX, vw - menuW - 8));
-            const y = Math.max(8, Math.min(e.clientY, vh - menuH - 8));
-            setTableMenu({ x, y, cell });
-          } else {
-            setTableMenu(null);
-            setImageMenu(null);
-          }
-        }}
-      />
+          }}
+          onDragOver={(e) => {
+            // Allow dragging images within editor and file drops
+            if (
+              draggedImageRef.current ||
+              e.dataTransfer?.types?.includes("Files")
+            ) {
+              e.preventDefault();
+            }
+          }}
+          onDrop={(e) => {
+            // Move existing dragged image inside editor
+            if (draggedImageRef.current) {
+              e.preventDefault();
+              const x = e.clientX;
+              const y = e.clientY;
+              let range: Range | null = null;
+              // @ts-ignore
+              if (document.caretRangeFromPoint) {
+                // @ts-ignore
+                range = document.caretRangeFromPoint(x, y);
+              } else if ((document as any).caretPositionFromPoint) {
+                const pos = (document as any).caretPositionFromPoint(x, y);
+                if (pos) {
+                  range = document.createRange();
+                  range.setStart(pos.offsetNode, pos.offset);
+                }
+              }
+              const img = draggedImageRef.current;
+              draggedImageRef.current = null;
+              if (
+                range &&
+                img &&
+                editableRef.current?.contains(range.commonAncestorContainer)
+              ) {
+                // Avoid inserting inside the image itself
+                if (range.startContainer === img || range.endContainer === img)
+                  return;
+                // If dropping inside a link, insert right after the link element
+                let container: Node = range.commonAncestorContainer;
+                let linkAncestor: HTMLAnchorElement | null = null;
+                let el: HTMLElement | null = container as HTMLElement;
+                while (el && el !== editableRef.current) {
+                  if (el.tagName === "A") {
+                    linkAncestor = el as HTMLAnchorElement;
+                    break;
+                  }
+                  el = el.parentElement;
+                }
+                if (linkAncestor) {
+                  linkAncestor.parentElement?.insertBefore(
+                    img,
+                    linkAncestor.nextSibling
+                  );
+                } else {
+                  range.insertNode(img);
+                }
+                const r = document.createRange();
+                r.setStartAfter(img);
+                r.collapse(true);
+                safeSelectRange(r);
+                setSelectedImage(img);
+                scheduleImageOverlay();
+                handleInput();
+              }
+              return;
+            }
+            if (media && e.dataTransfer?.files?.length) {
+              e.preventDefault();
+              // Try to move caret to drop point
+              const x = e.clientX;
+              const y = e.clientY;
+              let range: Range | null = null;
+              // @ts-ignore
+              if (document.caretRangeFromPoint) {
+                // @ts-ignore
+                range = document.caretRangeFromPoint(x, y);
+              } else if ((document as any).caretPositionFromPoint) {
+                const pos = (document as any).caretPositionFromPoint(x, y);
+                if (pos) {
+                  range = document.createRange();
+                  range.setStart(pos.offsetNode, pos.offset);
+                }
+              }
+              if (range) {
+                const sel = window.getSelection();
+                sel?.removeAllRanges();
+                sel?.addRange(range);
+              }
+              handleLocalImageFiles(e.dataTransfer.files);
+            }
+          }}
+          onClick={(e) => {
+            const t = e.target as HTMLElement;
+            if (t && t.tagName === "IMG") {
+              setSelectedImage(t as HTMLImageElement);
+              scheduleImageOverlay();
+            } else {
+              setSelectedImage(null);
+              setImageOverlay(null);
+            }
+          }}
+          onDragStart={(e) => {
+            const t = e.target as HTMLElement | null;
+            if (t && t.tagName === "IMG") {
+              draggedImageRef.current = t as HTMLImageElement;
+              try {
+                e.dataTransfer?.setData("text/plain", "moving-image");
+                e.dataTransfer!.effectAllowed = "move";
+                // Provide a subtle drag image
+                const dt = e.dataTransfer;
+                if (dt && typeof dt.setDragImage === "function") {
+                  const ghost = new Image();
+                  ghost.src = (t as HTMLImageElement).src;
+                  ghost.width = Math.min(120, (t as HTMLImageElement).width);
+                  ghost.height = Math.min(120, (t as HTMLImageElement).height);
+                  dt.setDragImage(ghost, 10, 10);
+                }
+              } catch {}
+            } else {
+              draggedImageRef.current = null;
+            }
+          }}
+          onDragEnd={() => {
+            draggedImageRef.current = null;
+          }}
+          style={{
+            minHeight: "100%",
+            maxWidth: "100%",
+            overflowX: "hidden",
+            padding: "16px",
+            outline: "none",
+            lineHeight: 1.6,
+            boxSizing: "border-box",
+          }}
+          data-placeholder={placeholder}
+          onFocus={(e) => {
+            // Ensure the editor has at least one paragraph to type into
+            const el = e.currentTarget;
+            if (!el.innerHTML || el.innerHTML === "<br>") {
+              el.innerHTML = "<p><br></p>";
+            }
+          }}
+          onKeyDown={(e) => {
+            if (
+              formula &&
+              (e.metaKey || e.ctrlKey) &&
+              String(e.key).toLowerCase() === "m"
+            ) {
+              e.preventDefault();
+              setShowFormulaDialog(true);
+              return;
+            }
+            // Keep Tab for indentation in lists; otherwise insert 2 spaces
+            if (e.key === "Tab") {
+              e.preventDefault();
+              if (
+                document.queryCommandState("insertUnorderedList") ||
+                document.queryCommandState("insertOrderedList")
+              ) {
+                exec(e.shiftKey ? "outdent" : "indent");
+              } else {
+                document.execCommand("insertText", false, "  ");
+              }
+            }
+            // Table navigation with arrows inside cells
+            if (
+              ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)
+            ) {
+              const sel = window.getSelection();
+              const cell = getClosestCell(sel?.anchorNode || null);
+              if (
+                table &&
+                cell &&
+                cell.parentElement &&
+                cell.parentElement.parentElement
+              ) {
+                const row = cell.parentElement as HTMLTableRowElement;
+                const tbody = row.parentElement as HTMLTableSectionElement;
+                const cells = Array.from(row.children).filter(
+                  (c) =>
+                    (c as HTMLElement).tagName === "TD" ||
+                    (c as HTMLElement).tagName === "TH"
+                );
+                const rows = Array.from(tbody.children) as HTMLTableRowElement[];
+                const rIdx = rows.indexOf(row);
+                const cIdx = cells.indexOf(cell);
+                const atStart = (sel?.anchorOffset || 0) === 0;
+                const cellTextLen = (cell.textContent || "").length;
+                const atEnd = (sel?.anchorOffset || 0) >= cellTextLen;
+                let target: HTMLTableCellElement | null = null;
+                if (e.key === "ArrowLeft" && atStart && cIdx > 0) {
+                  target = row.children[cIdx - 1] as HTMLTableCellElement;
+                } else if (
+                  e.key === "ArrowRight" &&
+                  atEnd &&
+                  cIdx < row.children.length - 1
+                ) {
+                  target = row.children[cIdx + 1] as HTMLTableCellElement;
+                } else if (e.key === "ArrowUp" && rIdx > 0 && atStart) {
+                  target = rows[rIdx - 1].children[cIdx] as HTMLTableCellElement;
+                } else if (
+                  e.key === "ArrowDown" &&
+                  rIdx < rows.length - 1 &&
+                  atEnd
+                ) {
+                  target = rows[rIdx + 1].children[cIdx] as HTMLTableCellElement;
+                }
+                if (target) {
+                  e.preventDefault();
+                  moveCaretToCell(
+                    target,
+                    e.key === "ArrowRight" || e.key === "ArrowDown"
+                  );
+                }
+              }
+            }
+          }}
+          onMouseDown={(e) => {
+            const cell = getClosestCell(e.target as Node);
+            if (!cell) {
+              clearSelectionDecor();
+              return;
+            }
+            const pos = getCellPosition(cell);
+            if (!pos) return;
+            selectingRef.current = { tbody: pos.tbody, start: cell };
+            const onMove = (ev: MouseEvent) => {
+              const under = document.elementFromPoint(ev.clientX, ev.clientY);
+              const overCell = getClosestCell(under);
+              const startInfo = selectingRef.current;
+              if (!overCell || !startInfo) return;
+              const a = getCellPosition(startInfo.start);
+              const b = getCellPosition(overCell);
+              if (!a || !b || a.tbody !== b.tbody) return;
+              const sr = Math.min(a.rIdx, b.rIdx);
+              const sc = Math.min(a.cIdx, b.cIdx);
+              const er = Math.max(a.rIdx, b.rIdx);
+              const ec = Math.max(a.cIdx, b.cIdx);
+              updateSelectionDecor(a.tbody, sr, sc, er, ec);
+            };
+            const onUp = () => {
+              window.removeEventListener("mousemove", onMove);
+              window.removeEventListener("mouseup", onUp);
+              selectingRef.current = null;
+            };
+            window.addEventListener("mousemove", onMove);
+            window.addEventListener("mouseup", onUp);
+          }}
+          onContextMenu={(e) => {
+            const target = e.target as HTMLElement;
+            if (target && target.tagName === "IMG") {
+              e.preventDefault();
+              const vw = window.innerWidth;
+              const vh = window.innerHeight;
+              const menuW = 220;
+              const menuH = 200;
+              const x = Math.max(8, Math.min(e.clientX, vw - menuW - 8));
+              const y = Math.max(8, Math.min(e.clientY, vh - menuH - 8));
+              setImageMenu({ x, y, img: target as HTMLImageElement });
+              setTableMenu(null);
+              return;
+            }
+            const cell = getClosestCell(e.target as Node);
+            if (cell) {
+              e.preventDefault();
+              const vw = window.innerWidth;
+              const vh = window.innerHeight;
+              const menuW = 220;
+              const menuH = 300;
+              const x = Math.max(8, Math.min(e.clientX, vw - menuW - 8));
+              const y = Math.max(8, Math.min(e.clientY, vh - menuH - 8));
+              setTableMenu({ x, y, cell });
+            } else {
+              setTableMenu(null);
+              setImageMenu(null);
+            }
+          }}
+        />
+      </div>
       {selectedImage && imageOverlay && (
         <div
           style={{
