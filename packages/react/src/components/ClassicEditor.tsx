@@ -13,6 +13,18 @@ type ClassicEditorProps = {
   media?: boolean;
   formula?: boolean;
   mediaManager?: MediaManagerAdapter;
+  /**
+   * Optional custom list of fonts to display in the toolbar.
+   * If not provided, a default set of web-safe fonts will be used.
+   * Example: [{ name: 'Robto', value: 'Roboto, sans-serif' }]
+   */
+  fonts?: { name: string; value: string }[];
+  /**
+   * The default font family to apply to the editor content.
+   * This sets the font-family style of the editable area.
+   * Example: "Arial, sans-serif"
+   */
+  defaultFont?: string;
 };
 
 export function ClassicEditor({
@@ -26,6 +38,16 @@ export function ClassicEditor({
   media = true,
   formula = true,
   mediaManager,
+  fonts = [
+    { name: "Arial", value: "Arial, Helvetica, sans-serif" },
+    { name: "Georgia", value: "Georgia, serif" },
+    { name: "Impact", value: "Impact, Charcoal, sans-serif" },
+    { name: "Tahoma", value: "Tahoma, Geneva, sans-serif" },
+    { name: "Times New Roman", value: "'Times New Roman', Times, serif" },
+    { name: "Verdana", value: "Verdana, Geneva, sans-serif" },
+    { name: "Courier New", value: "'Courier New', Courier, monospace" },
+  ],
+  defaultFont,
 }: ClassicEditorProps) {
   const editableRef = useRef<HTMLDivElement | null>(null);
   const lastEmittedRef = useRef<string>("");
@@ -86,6 +108,7 @@ export function ClassicEditor({
   const [colorPickerType, setColorPickerType] = useState<'text' | 'background'>('text');
   const savedRangeRef = useRef<Range | null>(null);
   const [currentFontSize, setCurrentFontSize] = useState<string>("");
+  const [currentFont, setCurrentFont] = useState<string>("");
 
   useEffect(() => {
     const el = editableRef.current;
@@ -229,6 +252,71 @@ export function ClassicEditor({
       handleInput();
     } catch (error) {
       console.error('Error applying font size:', error);
+    }
+  };
+
+  const applyFontFamily = (font: string) => {
+    try {
+      setCurrentFont(font);
+      
+      const editor = editableRef.current;
+      if (!editor) return;
+      
+      editor.focus();
+      
+      let range: Range | null = null;
+      const sel = window.getSelection();
+      
+      if (sel && sel.rangeCount > 0) {
+        const currentRange = sel.getRangeAt(0);
+        if (editor.contains(currentRange.commonAncestorContainer)) {
+          range = currentRange;
+        }
+      }
+      
+      if (!range && savedRangeRef.current) {
+        range = savedRangeRef.current.cloneRange();
+      }
+      
+      if (!range) return;
+      
+      if (range.collapsed) {
+        const span = document.createElement('span');
+        span.style.fontFamily = font;
+        span.textContent = '\u200B';
+        
+        range.insertNode(span);
+        
+        const newRange = document.createRange();
+        newRange.setStart(span.firstChild!, 1);
+        newRange.collapse(true);
+        
+        if (sel) {
+          sel.removeAllRanges();
+          sel.addRange(newRange);
+        }
+        
+        handleInput();
+        return;
+      }
+      
+      const span = document.createElement('span');
+      span.style.fontFamily = font;
+      
+      const fragment = range.extractContents();
+      span.appendChild(fragment);
+      
+      range.insertNode(span);
+      
+      if (sel) {
+        range.selectNodeContents(span);
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+      
+      handleInput();
+    } catch (error) {
+      console.error('Error applying font family:', error);
     }
   };
 
@@ -592,6 +680,15 @@ export function ClassicEditor({
           parent.insertBefore(wrapper, table);
           wrapper.appendChild(table);
         }
+        
+        // Always ensure table takes full width
+        if (table.style.width !== '100%') {
+          table.style.width = '100%';
+        }
+        // Ensure min-width is set
+        if (!table.style.minWidth || table.style.minWidth === '0px') {
+          table.style.minWidth = '100%';
+        }
       });
     } catch (e) {
       console.error("Error wrapping tables", e);
@@ -619,7 +716,7 @@ export function ClassicEditor({
   const buildTableHTML = (rows: number, cols: number) => {
     const safeRows = Math.max(1, Math.min(50, Math.floor(rows) || 1));
     const safeCols = Math.max(1, Math.min(20, Math.floor(cols) || 1));
-    let html = '<div data-table-wrapper="true" style="overflow-x:auto;-webkit-overflow-scrolling:touch;width:100%;max-width:100%;display:block;"><table style="border-collapse:collapse;min-width:100%;background:white;"><tbody>';
+    let html = '<div data-table-wrapper="true" style="overflow-x:auto;-webkit-overflow-scrolling:touch;width:100%;max-width:100%;display:block;"><table style="border-collapse:collapse;min-width:100%;"><tbody>';
     for (let r = 0; r < safeRows; r++) {
       html += "<tr>";
       for (let c = 0; c < safeCols; c++) {
@@ -1177,8 +1274,6 @@ export function ClassicEditor({
           gap: 8,
           padding: 8,
           borderBottom: "1px solid #eee",
-          background: "#fff",
-          color: "#111",
           position: "sticky",
           top: 0,
           zIndex: 1,
@@ -1345,6 +1440,37 @@ export function ClassicEditor({
           <option value="60">60</option>
           <option value="72">72</option>
           <option value="96">96</option>
+        </select>
+        <select
+          value={currentFont}
+          onMouseDown={() => {
+            const sel = window.getSelection();
+            if (sel && sel.rangeCount > 0) {
+              const range = sel.getRangeAt(0);
+              const editor = editableRef.current;
+              if (editor && editor.contains(range.commonAncestorContainer) && !range.collapsed) {
+                savedRangeRef.current = range.cloneRange();
+              }
+            }
+          }}
+          onChange={(e) => applyFontFamily(e.target.value)}
+          title="Font Family"
+          style={{
+            height: 32,
+            padding: "0 8px",
+            border: "1px solid #e5e7eb",
+            borderRadius: 6,
+            background: "#fff",
+            color: "#111",
+            maxWidth: 100,
+          }}
+        >
+          <option value="" disabled>Font</option>
+          {fonts.map((f) => (
+            <option key={f.value} value={f.value}>
+              {f.name}
+            </option>
+          ))}
         </select>
         <button
           title="Text Color"
@@ -2021,7 +2147,6 @@ export function ClassicEditor({
           overflowX: "hidden",
           boxSizing: "border-box",
           position: "relative",
-          background: "#fff",
         }}
       >
         <div
@@ -2179,6 +2304,7 @@ export function ClassicEditor({
             outline: "none",
             lineHeight: 1.6,
             boxSizing: "border-box",
+            fontFamily: defaultFont || "inherit",
           }}
           data-placeholder={placeholder}
           onFocus={(e) => {
