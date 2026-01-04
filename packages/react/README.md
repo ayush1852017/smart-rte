@@ -548,7 +548,7 @@ const ClassicEditor = dynamic(
 
 ### Reporting Security Issues
 
-If you discover a security vulnerability, please email [security@yourdomain.com] instead of using the issue tracker.
+If you discover a security vulnerability, please email [support@openstash.in] instead of using the issue tracker.
 
 ### Content Sanitization
 

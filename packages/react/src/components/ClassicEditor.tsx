@@ -1,5 +1,15 @@
 import React, { useEffect, useRef, useState } from "react";
 import { MediaManager, MediaManagerAdapter, MediaItem } from "./MediaManager";
+import * as pdfjsLib from 'pdfjs-dist';
+import mammoth from 'mammoth';
+
+// Initialize PDF.js worker
+if (typeof window !== 'undefined') {
+  pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+    'pdfjs-dist/build/pdf.worker.min.mjs',
+    import.meta.url
+  ).toString();
+}
 
 type ClassicEditorProps = {
   value?: string;
@@ -53,6 +63,15 @@ export function ClassicEditor({
   const lastEmittedRef = useRef<string>("");
   const isComposingRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const pdfInputRef = useRef<HTMLInputElement | null>(null);
+  const docxInputRef = useRef<HTMLInputElement | null>(null);
+  const [loadingPdf, setLoadingPdf] = useState(false);
+  const [loadingDocx, setLoadingDocx] = useState(false);
+  // State for import confirmation
+  const [pendingImport, setPendingImport] = useState<{
+      file: File;
+      type: 'pdf' | 'docx';
+  } | null>(null);
   const replaceTargetRef = useRef<HTMLImageElement | null>(null);
   const [selectedImage, setSelectedImage] = useState<HTMLImageElement | null>(
     null
@@ -118,6 +137,7 @@ export function ClassicEditor({
       el.innerHTML = value || "";
       fixNegativeMargins(el);
       ensureTableWrappers(el);
+      addTableResizeHandles();
     }
     // Suppress native context menu inside table cells at capture phase
     const onCtx = (evt: Event) => {
@@ -378,17 +398,18 @@ export function ClassicEditor({
     const onMouseDown = (e: MouseEvent) => {
       if (!table) return;
       
-      const target = e.target as HTMLElement;
+      const target = e.target as Node;
+      const cell = getClosestCell(target);
       
-      if (target.tagName === 'TD' || target.tagName === 'TH') {
-        const rect = target.getBoundingClientRect();
+      if (cell) {
+        const rect = cell.getBoundingClientRect();
         const rightEdge = rect.right;
         const clickX = e.clientX;
         
         if (Math.abs(clickX - rightEdge) < 5) {
           e.preventDefault();
-          const tableElem = target.closest('table') as HTMLTableElement;
-          const colIndex = parseInt(target.getAttribute('data-col-index') || '0', 10);
+          const tableElem = cell.closest('table') as HTMLTableElement;
+          const colIndex = parseInt(cell.getAttribute('data-col-index') || '0', 10);
           if (tableElem) {
             startColumnResize(tableElem, colIndex, e.clientX);
           }
@@ -400,8 +421,8 @@ export function ClassicEditor({
         
         if (Math.abs(clickY - bottomEdge) < 5) {
           e.preventDefault();
-          const tableElem = target.closest('table') as HTMLTableElement;
-          const row = target.closest('tr') as HTMLTableRowElement;
+          const tableElem = cell.closest('table') as HTMLTableElement;
+          const row = cell.closest('tr') as HTMLTableRowElement;
           if (tableElem && row) {
             const rowIndex = parseInt(row.getAttribute('data-row-index') || '0', 10);
             startRowResize(tableElem, rowIndex, e.clientY);
@@ -418,26 +439,27 @@ export function ClassicEditor({
       }
       
       if (!table) return;
-      const target = e.target as HTMLElement;
       
-      if (target.tagName === 'TD' || target.tagName === 'TH') {
-        const rect = target.getBoundingClientRect();
+      let cursor = '';
+      const target = e.target as Node;
+      const cell = getClosestCell(target);
+      
+      if (cell) {
+        const rect = cell.getBoundingClientRect();
         const clickX = e.clientX;
         const clickY = e.clientY;
         
         if (Math.abs(clickX - rect.right) < 5) {
-          el.style.cursor = 'col-resize';
-          return;
+          cursor = 'col-resize';
+        } else if (Math.abs(clickY - rect.bottom) < 5) {
+          cursor = 'row-resize';
         }
-        
-        if (Math.abs(clickY - rect.bottom) < 5) {
-          el.style.cursor = 'row-resize';
-          return;
-        }
-        
-        if (el.style.cursor === 'col-resize' || el.style.cursor === 'row-resize') {
-          el.style.cursor = '';
-        }
+      }
+      
+      if (cursor) {
+        el.style.cursor = cursor;
+      } else if (el.style.cursor === 'col-resize' || el.style.cursor === 'row-resize') {
+        el.style.cursor = '';
       }
     };
     
@@ -448,17 +470,19 @@ export function ClassicEditor({
     const onTouchStart = (e: TouchEvent) => {
       if (!table) return;
       
-      const target = e.target as HTMLElement;
-      if (target.tagName === 'TD' || target.tagName === 'TH') {
-        const rect = target.getBoundingClientRect();
+      const target = e.target as Node;
+      const cell = getClosestCell(target);
+
+      if (cell) {
+        const rect = cell.getBoundingClientRect();
         const touch = e.touches[0];
         const clickX = touch.clientX;
         const clickY = touch.clientY;
         
         if (Math.abs(clickX - rect.right) < 15) {
           e.preventDefault();
-          const tableElem = target.closest('table') as HTMLTableElement;
-          const colIndex = parseInt(target.getAttribute('data-col-index') || '0', 10);
+          const tableElem = cell.closest('table') as HTMLTableElement;
+          const colIndex = parseInt(cell.getAttribute('data-col-index') || '0', 10);
           if (tableElem) {
             startColumnResize(tableElem, colIndex, clickX);
           }
@@ -467,8 +491,8 @@ export function ClassicEditor({
         
         if (Math.abs(clickY - rect.bottom) < 15) {
           e.preventDefault();
-          const tableElem = target.closest('table') as HTMLTableElement;
-          const row = target.closest('tr') as HTMLTableRowElement;
+          const tableElem = cell.closest('table') as HTMLTableElement;
+          const row = cell.closest('tr') as HTMLTableRowElement;
           if (tableElem && row) {
             const rowIndex = parseInt(row.getAttribute('data-row-index') || '0', 10);
             startRowResize(tableElem, rowIndex, clickY);
@@ -650,6 +674,406 @@ export function ClassicEditor({
     }
   };
 
+  const handlePdfFiles = (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const file = files[0];
+    if (file.type !== 'application/pdf') return;
+
+    // Check if editor has content
+    const el = editableRef.current;
+    const hasContent = el && el.textContent && el.textContent.trim().length > 0;
+    
+    if (hasContent) {
+        setPendingImport({ file, type: 'pdf' });
+    } else {
+        processImport(file, 'pdf', 'replace');
+    }
+  };
+
+  const processImport = async (file: File, type: 'pdf' | 'docx', mode: 'replace' | 'append') => {
+      if (type === 'pdf') {
+          await processPdf(file, mode);
+      } else {
+          await processDocx(file, mode);
+      }
+      setPendingImport(null);
+      // Reset inputs
+      if (pdfInputRef.current) pdfInputRef.current.value = "";
+      if (docxInputRef.current) docxInputRef.current.value = "";
+  };
+
+  const processPdf = async (file: File, mode: 'replace' | 'append') => {
+
+
+    try {
+      setLoadingPdf(true);
+      const arrayBuffer = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      
+      let fullHtml = '';
+
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const textContent = await page.getTextContent();
+        const styles = textContent.styles;
+        
+        // 1. Group items into lines
+        const items = textContent.items as any[];
+        // Calculate base statistics
+        const heights = items.map(item => Math.abs(item.transform[3])).filter(h => h > 0);
+        heights.sort((a,b) => a-b);
+        const medianHeight = heights[Math.floor(heights.length/2)] || 12;
+
+        // Group by Y (with tolerance)
+        const linesMap = new Map<number, {y: number, items: any[]}>();
+        for (const item of items) {
+            if (!item.str.trim()) continue;
+            // Normalize Y to integer buckets to group roughly
+            // PDF Y is bottom-0, so higher Y is higher on page.
+            const y = item.transform[5];
+            // Find closest existing line
+            let foundKey = -1;
+            for (const key of linesMap.keys()) {
+                if (Math.abs(key - y) < medianHeight * 0.5) {
+                    foundKey = key;
+                    break;
+                }
+            }
+            if (foundKey !== -1) {
+                linesMap.get(foundKey)!.items.push(item);
+            } else {
+                linesMap.set(y, {y, items: [item]});
+            }
+        }
+
+        // Convert map to sorted array (top to bottom)
+        const lines = Array.from(linesMap.values()).sort((a,b) => b.y - a.y);
+        
+        // Sort items within lines (left to right)
+        lines.forEach(line => {
+            line.items.sort((a,b) => a.transform[4] - b.transform[4]);
+        });
+
+        // 2. Identify and Build Structures
+        let html = '';
+        let listStack: string[] = []; // 'ul' or 'ol'
+        let inTable = false;
+        let tableColumns: number[] = []; // X-coordinates of column starts
+        let tableHtml = '';
+
+        const closeList = () => {
+             if (listStack.length > 0) {
+                 html += `</${listStack.pop()}>`;
+             }
+        };
+
+        const closeTable = () => {
+            if (inTable) {
+                html += '<div data-table-wrapper="true" style="overflow-x:auto;width:100%;"><table style="border-collapse:collapse;width:100%;" border="1"><tbody>' + tableHtml + '</tbody></table></div>';
+                tableHtml = '';
+                inTable = false;
+                tableColumns = [];
+            }
+        };
+
+        for (let lIndex = 0; lIndex < lines.length; lIndex++) {
+            const line = lines[lIndex];
+            // Calculate gaps and text
+            let lineText = '';
+            let lineHtmlContent = '';
+            let lastX = -1;
+            let gaps: number[] = [];
+            let itemXs: number[] = []; // Start X of logical items (words or phrases)
+            
+            // Reconstruct text with spacing detection
+            for (let j = 0; j < line.items.length; j++) {
+                const item = line.items[j];
+                const x = item.transform[4];
+                const width = item.width;
+                const fontName = item.fontName;
+                const fontObj = styles[fontName];
+                const isBold = fontObj?.fontFamily?.toLowerCase().includes('bold') || false;
+                // const isItalic = fontObj?.fontFamily?.toLowerCase().includes('italic') || false;
+
+                if (lastX > 0) {
+                    const gap = x - lastX;
+                    if (gap > 2) { // Minimal space threshold
+                         lineText += ' ';
+                         lineHtmlContent += ' ';
+                         if (gap > 20) { // Large gap threshold for table detection
+                             gaps.push(gap);
+                         }
+                    }
+                } else {
+                     // First item
+                }
+                
+                // Track "columns" candidates: items separated by big gaps
+                if (j === 0 || (x - lastX) > 20) {
+                    itemXs.push(x);
+                }
+
+                // Append text style
+                let chunk = item.str;
+                if (isBold) chunk = `<strong>${chunk}</strong>`;
+                // if (isItalic) chunk = `<em>${chunk}</em>`;
+                
+                lineText += item.str;
+                lineHtmlContent += chunk;
+                
+                lastX = x + width;
+            }
+
+            // === Structure Detection ===
+            
+            // Max Font Size in line
+            const maxH = Math.max(...line.items.map((i: any) => Math.abs(i.transform[3])));
+            const isHeader = maxH > medianHeight * 1.2;
+
+            // List Detection
+            const isBullet = /^[•\-\*]\s/.test(lineText);
+            const isNumber = /^\d+[\.\)]\s/.test(lineText);
+            
+            // Table Detection Logic
+            // A line starts a table if it has distinct "columns" (multiple items with large gaps)
+            // Or if we are already in a table and this line aligns with columns
+            
+            let isTableLine = false;
+            
+            // If in table, check alignment
+            if (inTable) {
+                 // Check if items align with known columns
+                 // Simple loose check: do any of the itemXs align with tableColumns?
+                 // Or is the line just sparsely populated but roughly compatible?
+                 // We'll continually simple-add rows for now until a Paragraph break (plain text, no gaps) is found.
+                 
+                 // If line looks like normal paragraph (no large gaps, starts at left margin), close table
+                 const isPlainParagraph = gaps.length === 0 && itemXs[0] < 50 && lineText.length > 50; 
+                 // Allow wrapping text in table cells, which might look like lines with no gaps?
+                 // Table wrapping usually is indented or aligns with a column > 0.
+                 
+                 const alignsWithColumn = itemXs.some(x => tableColumns.some(cx => Math.abs(x - cx) < 20));
+                 
+                 if (alignsWithColumn || (itemXs[0] > 50)) {
+                     isTableLine = true;
+                 } else {
+                     // Maybe a new row starting at col 0?
+                     // If it aligns with col 0.
+                     if (Math.abs(itemXs[0] - tableColumns[0]) < 20) {
+                         isTableLine = true;
+                     }
+                 }
+            } else {
+                // Potential start of table: multiple items separated by gaps, AND next line likely follows suit?
+                // Or simply: It has > 1 column significantly spaced.
+                if (itemXs.length >= 2 && gaps.some(g => g > 30)) {
+                    isTableLine = true;
+                    // Establish columns
+                    tableColumns = [...itemXs];
+                }
+            }
+
+            // --- Apply Logic ---
+
+            if (isTableLine) {
+                closeList();
+                if (!inTable) {
+                    inTable = true;
+                    // Start table
+                }
+                
+                // Build Row
+                // We need to map items to cells based on tableColumns.
+                // Naive approach: Items close to col X go to col X.
+                let rowHtml = '<tr>';
+                
+                // We assume `tableColumns` defines the start of each cell.
+                // We create a cell for each column.
+                // Collect content for each bucket.
+                const cellContents: string[] = new Array(tableColumns.length).fill('');
+                
+                let currentItemHtml = '';
+                let currentItemStart = -1;
+                
+                // process items again to slot them
+                let currentLineX = 0;
+                for (const item of line.items) {
+                    const x = item.transform[4];
+                    const w = item.width;
+                    const txt = item.str;
+                    const fontObj = styles[item.fontName];
+                    const isBold = fontObj?.fontFamily?.toLowerCase().includes('bold');
+                    const styledTxt = isBold ? `<strong>${txt}</strong>` : txt;
+                    
+                    // Decide which column this belongs to
+                    // Find closest column to the left (or close enough)
+                    let colIdx = 0;
+                    let minDiff = 9999;
+                    
+                    for (let c=0; c<tableColumns.length; c++) {
+                        const colX = tableColumns[c];
+                        // If item starts near colX or after it (but before next col)
+                        // Actually, just find the "controlling" column (closest start to the left)
+                        if (x >= colX - 10) {
+                            colIdx = c;
+                        }
+                    }
+                    
+                    // Append space if needed
+                    if (cellContents[colIdx]) cellContents[colIdx] += ' ';
+                    cellContents[colIdx] += styledTxt;
+                }
+                
+                cellContents.forEach(content => {
+                    rowHtml += `<td style="border:1px solid #ddd;padding:8px;vertical-align:top;">${content || '&nbsp;'}</td>`;
+                });
+                
+                rowHtml += '</tr>';
+                tableHtml += rowHtml;
+                
+            } else {
+                closeTable();
+                
+                if (isBullet || isNumber) {
+                    const listType = isBullet ? 'ul' : 'ol';
+                    if (listStack.length === 0 || listStack[listStack.length-1] !== listType) {
+                         if (listStack.length > 0) closeList(); // Close switch
+                         html += `<${listType}>`;
+                         listStack.push(listType);
+                    }
+                    // Strip marker
+                    const content = lineHtmlContent.replace(/^[•\-\*]|\d+[\.\)]/, '').trim();
+                    html += `<li>${content}</li>`;
+                } else {
+                    closeList();
+                    if (isHeader) {
+                        const tag = maxH > medianHeight * 1.5 ? 'h2' : 'h3';
+                        html += `<${tag}>${lineHtmlContent}</${tag}>`;
+                    } else {
+                        html += `<p>${lineHtmlContent}</p>`;
+                    }
+                }
+            }
+        }
+        
+        closeList();
+        closeTable();
+        
+        fullHtml += html;
+      }
+
+      const el = editableRef.current;
+      if (el) {
+        el.focus();
+        if (mode === 'replace') {
+            // Select all and replace
+            const range = document.createRange();
+            range.selectNodeContents(el);
+            const sel = window.getSelection();
+            sel?.removeAllRanges();
+            sel?.addRange(range);
+            exec("delete"); // Clear content safely
+            exec("insertHTML", fullHtml);
+        } else {
+            // Append
+            const range = document.createRange();
+            range.selectNodeContents(el);
+            range.collapse(false); // End
+            const sel = window.getSelection();
+            sel?.removeAllRanges();
+            sel?.addRange(range);
+            exec("insertHTML", "<br>" + fullHtml);
+        }
+      }
+      
+    } catch (error) {
+      console.error('Error reading PDF:', error);
+      // Optional: show user error
+    } finally {
+      setLoadingPdf(false);
+    }
+  };
+
+  const handleDocxFiles = (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const file = files[0];
+    if (!file.name.endsWith('.docx')) return;
+    
+    // Check if editor has content
+    const el = editableRef.current;
+    const hasContent = el && el.textContent && el.textContent.trim().length > 0;
+    
+    if (hasContent) {
+        setPendingImport({ file, type: 'docx' });
+    } else {
+        processImport(file, 'docx', 'replace');
+    }
+  };
+
+  const processDocx = async (file: File, mode: 'replace' | 'append') => {
+
+    try {
+      setLoadingDocx(true);
+      const arrayBuffer = await file.arrayBuffer();
+      const result = await mammoth.convertToHtml({ arrayBuffer });
+      let html = result.value;
+
+      if (html) {
+        // Process HTML to ensure tables have borders and structure
+        const temp = document.createElement('div');
+        temp.innerHTML = html;
+        const tables = temp.querySelectorAll('table');
+        tables.forEach(tbl => {
+            tbl.style.borderCollapse = 'collapse';
+            tbl.style.minWidth = '100%';
+            // Browser parser auto-adds tbody, but we verify styles
+            const cells = tbl.querySelectorAll('td, th');
+            cells.forEach(cell => {
+                (cell as HTMLElement).style.border = '1px solid #000';
+                (cell as HTMLElement).style.padding = '8px';
+                (cell as HTMLElement).style.verticalAlign = 'top';
+            });
+        });
+        html = temp.innerHTML;
+
+        const el = editableRef.current;
+        if (el) {
+           el.focus();
+           if (mode === 'replace') {
+                const range = document.createRange();
+                range.selectNodeContents(el);
+                const sel = window.getSelection();
+                sel?.removeAllRanges();
+                sel?.addRange(range);
+                exec("delete"); 
+                exec("insertHTML", html);
+           } else {
+                const range = document.createRange();
+                range.selectNodeContents(el);
+                range.collapse(false); 
+                const sel = window.getSelection();
+                sel?.removeAllRanges();
+                sel?.addRange(range);
+                exec("insertHTML", "<br>" + html);
+           }
+           
+           // Initialize handlers for the new content
+           // We use setTimeout to let the DOM settle after execCommand
+           setTimeout(() => {
+               ensureTableWrappers(el);
+               addTableResizeHandles();
+               fixNegativeMargins(el);
+               handleInput(); 
+           }, 10);
+        }
+      }
+    } catch (error) {
+      console.error('Error reading DOCX:', error);
+    } finally {
+      setLoadingDocx(false);
+    }
+  };
+
   const fixNegativeMargins = (root: HTMLElement) => {
     try {
       const nodes = root.querySelectorAll<HTMLElement>('*');
@@ -704,6 +1128,8 @@ export function ClassicEditor({
     fixNegativeMargins(el);
     // Ensure tables are wrapped for horizontal scrolling
     ensureTableWrappers(el);
+    // Add resize handles to tables
+    addTableResizeHandles();
 
     if (!onChange) return;
     const html = el.innerHTML;
@@ -1314,6 +1740,26 @@ export function ClassicEditor({
             }}
           />
         )}
+        <input
+          ref={pdfInputRef}
+          type="file"
+          accept="application/pdf"
+          style={{ display: "none" }}
+          onChange={(e) => {
+            handlePdfFiles(e.currentTarget.files);
+            e.currentTarget.value = "";
+          }}
+        />
+        <input
+          ref={docxInputRef}
+          type="file"
+          accept=".docx"
+          style={{ display: "none" }}
+          onChange={(e) => {
+             handleDocxFiles(e.currentTarget.files);
+             e.currentTarget.value = "";
+          }}
+        />
         <select
           defaultValue="p"
           onChange={(e) => {
@@ -1645,6 +2091,38 @@ export function ClassicEditor({
                 📁 Media
               </button>
             )}
+            <button
+              title="Import PDF"
+              onClick={() => pdfInputRef.current?.click()}
+              disabled={loadingPdf}
+              style={{
+                height: 32,
+                padding: "0 10px",
+                border: "1px solid #e5e7eb",
+                borderRadius: 6,
+                background: "#fff",
+                color: "#111",
+                opacity: loadingPdf ? 0.5 : 1,
+              }}
+            >
+              {loadingPdf ? '⌛ Importing...' : '📄 PDF'}
+            </button>
+            <button
+              title="Import DOCX"
+              onClick={() => docxInputRef.current?.click()}
+              disabled={loadingDocx}
+              style={{
+                height: 32,
+                padding: "0 10px",
+                border: "1px solid #e5e7eb",
+                borderRadius: 6,
+                background: "#fff",
+                color: "#111",
+                opacity: loadingDocx ? 0.5 : 1,
+              }}
+            >
+              {loadingDocx ? '⌛ Importing...' : '📝 DOCX'}
+            </button>
             <div
               style={{
                 display: "inline-flex",
@@ -1860,6 +2338,93 @@ export function ClassicEditor({
               >
                 Insert
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {pendingImport && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.5)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 100,
+          }}
+          onClick={() => {
+             setPendingImport(null);
+             if (pdfInputRef.current) pdfInputRef.current.value = "";
+             if (docxInputRef.current) docxInputRef.current.value = "";
+          }}
+        >
+          <div
+            style={{
+              background: "#fff",
+              padding: 20,
+              borderRadius: 8,
+              maxWidth: 400,
+              width: "90%",
+              boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.1)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ margin: "0 0 12px 0", fontSize: 18, fontWeight: 600 }}>
+                Import Content
+            </h3>
+            <p style={{ margin: "0 0 20px 0", color: "#4b5563", fontSize: 14 }}>
+               The editor already contains content. How would you like to handle the imported document?
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <button
+                    onClick={() => processImport(pendingImport.file, pendingImport.type, 'replace')}
+                    style={{
+                        padding: "8px 16px",
+                        background: "#dc2626",
+                        color: "white",
+                        border: "none",
+                        borderRadius: 6,
+                        cursor: "pointer",
+                        fontWeight: 500,
+                        textAlign: "left"
+                    }}
+                >
+                    Replace Check existing content (Overwrite)
+                </button>
+                <button
+                    onClick={() => processImport(pendingImport.file, pendingImport.type, 'append')}
+                    style={{
+                        padding: "8px 16px",
+                        background: "#2563eb",
+                        color: "white",
+                        border: "none",
+                        borderRadius: 6,
+                        cursor: "pointer",
+                        fontWeight: 500,
+                        textAlign: "left"
+                    }}
+                >
+                    Append to bottom
+                </button>
+                <button
+                    onClick={() => {
+                        setPendingImport(null);
+                        if (pdfInputRef.current) pdfInputRef.current.value = "";
+                        if (docxInputRef.current) docxInputRef.current.value = "";
+                    }}
+                    style={{
+                        padding: "8px 16px",
+                        background: "#f3f4f6",
+                        color: "#374151",
+                        border: "1px solid #d1d5db",
+                        borderRadius: 6,
+                        cursor: "pointer",
+                        marginTop: 4
+                    }}
+                >
+                    Cancel
+                </button>
             </div>
           </div>
         </div>

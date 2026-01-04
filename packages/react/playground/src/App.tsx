@@ -1,4 +1,4 @@
-import { ClassicEditor } from "../../src";
+import { ClassicEditor } from "smartrte-react";
 
 function App() {
   return (

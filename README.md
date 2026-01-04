@@ -40,6 +40,13 @@ pnpm add smartrte-react
 
 ## 🚀 Quick Start
 
+### 🎮 Live Demo
+
+Try the editor instantly in your browser:
+
+- **[CodeSandbox Playground](https://codesandbox.io/s/smartrte-react-demo)** (Interactive)
+- **[RunKit Example](https://npm.runkit.com/smartrte-react)** (Node.js import check)
+
 ### Basic Usage
 
 ```tsx
@@ -548,7 +555,7 @@ const ClassicEditor = dynamic(
 
 ### Reporting Security Issues
 
-If you discover a security vulnerability, please email [security@yourdomain.com] instead of using the issue tracker.
+If you discover a security vulnerability, please email [support@openstash.in] instead of using the issue tracker.
 
 ### Content Sanitization
 

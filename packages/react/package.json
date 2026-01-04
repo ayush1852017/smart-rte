@@ -1,6 +1,6 @@
 {
   "name": "smartrte-react",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "description": "A powerful, feature-rich Rich Text Editor for React with support for tables, mathematical formulas (LaTeX/KaTeX), and media management",
   "type": "module",
   "main": "dist/index.js",
@@ -38,6 +38,7 @@
   },
   "author": "Smart RTE Contributors",
   "license": "MIT",
+  "runkitExampleFilename": "runkit-example.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "prepublishOnly": "pnpm run build",
@@ -57,17 +58,22 @@
     "react-dom": ">=18"
   },
   "devDependencies": {
-    "typescript": "^5.6.2",
-    "@types/react": "^18.3.4",
-    "@types/react-dom": "^18.3.0",
+    "@playwright/test": "^1.48.2",
+    "@storybook/addon-essentials": "^8.6.14",
     "@storybook/react": "^8.6.14",
     "@storybook/react-vite": "^8.6.14",
-    "@storybook/addon-essentials": "^8.6.14",
-    "storybook": "^8.6.14",
-    "vite": "^5.4.8",
-    "vitest": "^2.1.4",
-    "@playwright/test": "^1.48.2",
+    "@types/pdfjs-dist": "^2.10.377",
+    "@types/react": "^18.3.4",
+    "@types/react-dom": "^18.3.0",
     "react": "18.3.1",
-    "react-dom": "18.3.1"
+    "react-dom": "18.3.1",
+    "storybook": "^8.6.14",
+    "typescript": "^5.6.2",
+    "vite": "^5.4.8",
+    "vitest": "^2.1.4"
+  },
+  "dependencies": {
+    "mammoth": "^1.11.0",
+    "pdfjs-dist": "^5.4.530"
   }
 }
