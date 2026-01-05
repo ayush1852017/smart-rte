@@ -5,7 +5,8 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
   server: {
-    host: '0.0.0.0', // Required for CodeSandbox to expose the port
+    host: true,
+    strictPort: true,
     port: 5173,
     watch: {
       usePolling: true,
