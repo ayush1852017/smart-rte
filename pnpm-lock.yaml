@@ -73,8 +73,8 @@ importers:
         specifier: 18.3.1
         version: 18.3.1(react@18.3.1)
       smartrte-react:
-        specifier: workspace:*
-        version: link:..
+        specifier: ^0.1.18
+        version: 0.1.18(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
     devDependencies:
       '@eslint/js':
         specifier: ^9.35.0
@@ -1907,6 +1907,12 @@ packages:
   signal-exit@4.1.0:
     resolution: {integrity: sha512-bzyZ1e88w9O1iNJbKnOlvYTrWPDl46O1bG0D3XInv+9tkPrxrN8jUUTiFlDkkmKWgn1M6CfIA13SuGqOa9Korw==}
     engines: {node: '>=14'}
+
+  smartrte-react@0.1.18:
+    resolution: {integrity: sha512-4t1yohWos+A3yxohh8ncdHCdv6EZjieO0i78zMZAvgbs9LttR6/OXnvyx7oFx9QdhgkoWajlp+WtOqYl3+nKlw==}
+    peerDependencies:
+      react: '>=18'
+      react-dom: '>=18'
 
   source-map-js@1.2.1:
     resolution: {integrity: sha512-UXWMKhLOwVKb728IUtQPXxfYU+usdybtUrK/8uGE8CQMvrhOpwvzDBwj0QhSL7MQc7vIsISBG8VQ8+IDQxpfQA==}
@@ -3920,6 +3926,13 @@ snapshots:
   siginfo@2.0.0: {}
 
   signal-exit@4.1.0: {}
+
+  smartrte-react@0.1.18(react-dom@18.3.1(react@18.3.1))(react@18.3.1):
+    dependencies:
+      mammoth: 1.11.0
+      pdfjs-dist: 5.4.530
+      react: 18.3.1
+      react-dom: 18.3.1(react@18.3.1)
 
   source-map-js@1.2.1: {}
 
