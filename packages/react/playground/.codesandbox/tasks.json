@@ -2,7 +2,7 @@
     "setupTasks": [
         {
             "name": "Installation",
-            "command": "npm install"
+            "command": "npm install -g pnpm && pnpm install"
         }
     ],
     "tasks": {
