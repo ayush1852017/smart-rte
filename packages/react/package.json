@@ -1,6 +1,6 @@
 {
   "name": "smartrte-react",
-  "version": "0.1.17",
+  "version": "0.1.18",
   "description": "A powerful, feature-rich Rich Text Editor for React with support for tables, mathematical formulas (LaTeX/KaTeX), and media management",
   "type": "module",
   "main": "dist/index.js",
@@ -38,7 +38,6 @@
   },
   "author": "Smart RTE Contributors",
   "license": "MIT",
-  "runkitExampleFilename": "runkit-example.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "prepublishOnly": "pnpm run build",

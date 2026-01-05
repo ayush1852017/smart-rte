@@ -45,8 +45,7 @@ pnpm add smartrte-react
 Try the editor instantly in your browser:
 
 - **[Live Demo](https://playground-k9l44ah7t-ayush1852017s-projects.vercel.app/)** (Deployed Version)
-- **[CodeSandbox Playground](https://codesandbox.io/s/smartrte-react-demo)** (Interactive)
-- **[RunKit Example](https://npm.runkit.com/smartrte-react)** (Node.js import check)
+- **[CodeSandbox Playground](https://codesandbox.io/s/github/ayush1852017/smart-rte/tree/master/packages/react/playground)** (Interactive)
 
 ### Basic Usage
 
