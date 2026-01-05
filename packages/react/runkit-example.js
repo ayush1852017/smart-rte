@@ -1,17 +1,29 @@
-const { ClassicEditor } = require('smartrte-react');
+// This example validates the package export in a Node.js environment
+// Start with a basic check, using try-catch to handle ESM/CJS interop issues common in RunKit.
 
-// Basic usage demonstration for Node environment
-// Note: ClassicEditor is a React component and requires a DOM environment (like a browser) to fully render.
-// This example demonstrates verifying the module export.
-
-console.log("Smart RTE React Loaded Successfully!");
-console.log("The package exports the following:");
-console.log("- ClassicEditor:", typeof ClassicEditor);
-
-if (typeof ClassicEditor === 'function') {
-    console.log("✅ ClassicEditor component is available.");
-} else {
-    console.error("❌ ClassicEditor component check failed.");
+try {
+    // Attempt standard require
+    var smartRte = require('smartrte-react');
+    console.log("✅ Successfully required 'smartrte-react'");
+    
+    if (smartRte.ClassicEditor) {
+        console.log("✅ ClassicEditor component is exported.");
+    } else {
+        console.log("ℹ️ Package loaded, but ClassicEditor property not found directly on export.");
+        console.log("Export keys:", Object.keys(smartRte));
+    }
+} catch (e) {
+    if (e.code === 'ERR_REQUIRE_ESM') {
+        console.log("⚠️ Package is ESM-only. RunKit primarily uses CommonJS `require`.");
+        console.log("To use this package in a project, use `import` syntax:");
+        console.log("import { ClassicEditor } from 'smartrte-react';");
+    } else {
+        console.error("❌ Error loading package:", e.message);
+    }
 }
 
-console.log("\nTo test the editor interactively, please visit our online playground (link in README) or use CodeSandbox.");
+console.log("\n---------------------------------------------------------");
+console.log("NOTE: This is a React component library.");
+console.log("To see it in action, use the interactive playground:");
+console.log("https://codesandbox.io/s/smartrte-react-demo");
+console.log("---------------------------------------------------------");
