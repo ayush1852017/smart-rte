@@ -12,6 +12,13 @@ export type MediaItem = {
   title?: string;
   alt?: string;
   tags?: string[];
+  license?: {
+    author?: string;
+    licenseType?: string;
+    licenseText?: string;
+    sourceUrl?: string;
+    workName?: string;
+  };
 };
 
 export type MediaSearchQuery = {
@@ -40,15 +47,21 @@ export function MediaManager(props: {
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<MediaItem[]>([]);
+  const [infoItem, setInfoItem] = useState<MediaItem | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (!open) return;
     setError(null);
-    if (activeTab === "library") {
+  }, [open]);
+
+  useEffect(() => {
+    if (!open || activeTab !== "library") return;
+    const timer = window.setTimeout(() => {
       performSearch();
-    }
-  }, [open, activeTab]);
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [open, activeTab, query]);
 
   const performSearch = async () => {
     try {
@@ -119,7 +132,9 @@ export function MediaManager(props: {
       style={{
         position: "fixed",
         inset: 0,
-        background: "rgba(0,0,0,0.35)",
+        background: "var(--srte-modal-backdrop)",
+        backdropFilter: "var(--srte-modal-backdrop-filter)",
+        WebkitBackdropFilter: "var(--srte-modal-backdrop-filter)",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
@@ -129,12 +144,13 @@ export function MediaManager(props: {
     >
       <div
         style={{
-          background: "#fff",
+          background: "var(--srte-modal-bg)",
+          color: "var(--srte-modal-text)",
           width: 820,
           maxWidth: "90vw",
           maxHeight: "86vh",
           borderRadius: 10,
-          boxShadow: "0 12px 32px rgba(0,0,0,0.22)",
+          boxShadow: "var(--srte-menu-shadow)",
           display: "flex",
           flexDirection: "column",
         }}
@@ -146,7 +162,7 @@ export function MediaManager(props: {
             alignItems: "center",
             justifyContent: "space-between",
             padding: "10px 14px",
-            borderBottom: "1px solid #eee",
+            borderBottom: "1px solid var(--srte-border-light)",
           }}
         >
           <div style={{ display: "flex", gap: 8 }}>
@@ -155,8 +171,9 @@ export function MediaManager(props: {
               style={{
                 padding: "6px 10px",
                 borderRadius: 6,
-                border: "1px solid #ddd",
-                background: activeTab === "upload" ? "#f2f2f2" : "#fff",
+                border: "1px solid var(--srte-border)",
+                background: activeTab === "upload" ? "var(--srte-surface-subtle)" : "var(--srte-input-bg)",
+                color: "var(--srte-input-text)",
               }}
             >
               Upload
@@ -166,8 +183,9 @@ export function MediaManager(props: {
               style={{
                 padding: "6px 10px",
                 borderRadius: 6,
-                border: "1px solid #ddd",
-                background: activeTab === "library" ? "#f2f2f2" : "#fff",
+                border: "1px solid var(--srte-border)",
+                background: activeTab === "library" ? "var(--srte-surface-subtle)" : "var(--srte-input-bg)",
+                color: "var(--srte-input-text)",
               }}
             >
               Library
@@ -177,7 +195,7 @@ export function MediaManager(props: {
         </div>
 
         {error && (
-          <div style={{ color: "#b00020", padding: "8px 14px" }}>{error}</div>
+          <div style={{ color: "var(--srte-danger)", padding: "8px 14px" }}>{error}</div>
         )}
 
         {activeTab === "upload" ? (
@@ -200,12 +218,12 @@ export function MediaManager(props: {
                 handleUploadFiles(e.dataTransfer.files);
               }}
               style={{
-                border: "2px dashed #bbb",
+                border: "2px dashed var(--srte-border)",
                 borderRadius: 10,
                 padding: 24,
                 textAlign: "center",
-                color: "#333",
-                background: "#fafafa",
+                color: "var(--srte-text-muted)",
+                background: "var(--srte-surface-subtle)",
                 cursor: uploading ? "default" : "pointer",
                 opacity: uploading ? 0.7 : 1,
               }}
@@ -230,8 +248,10 @@ export function MediaManager(props: {
                 style={{
                   flex: 1,
                   padding: "6px 8px",
-                  border: "1px solid #ddd",
+                  border: "1px solid var(--srte-border)",
                   borderRadius: 6,
+                  background: "var(--srte-input-bg)",
+                  color: "var(--srte-input-text)",
                 }}
               />
               <button onClick={performSearch}>Search</button>
@@ -246,38 +266,144 @@ export function MediaManager(props: {
               }}
             >
               {results.map((it) => (
-                <button
+                <div
                   key={it.id || it.url}
-                  onClick={() => {
-                    onSelect(it);
-                    onClose();
-                  }}
                   title={it.title || it.url}
                   style={{
-                    display: "block",
-                    border: "1px solid #eee",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 6,
+                    border: "1px solid var(--srte-border-light)",
                     borderRadius: 8,
                     padding: 6,
-                    background: "#fff",
-                    textAlign: "center",
+                    background: "var(--srte-input-bg)",
+                    color: "var(--srte-input-text)",
                   }}
                 >
-                  <img
-                    src={it.url}
-                    alt={it.alt || ""}
-                    style={{
-                      maxWidth: "100%",
-                      maxHeight: 100,
-                      display: "block",
-                      margin: "0 auto",
-                      objectFit: "cover",
-                      borderRadius: 6,
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onSelect(it);
+                      onClose();
                     }}
-                  />
-                  <div style={{ fontSize: 11, marginTop: 6, color: "#333" }}>
-                    {it.width && it.height ? `${it.width}×${it.height}` : ""}
+                    style={{
+                      border: "none",
+                      padding: 0,
+                      background: "transparent",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <img
+                      src={it.url}
+                      alt={it.alt || ""}
+                      style={{
+                        maxWidth: "100%",
+                        maxHeight: 100,
+                        display: "block",
+                        margin: "0 auto",
+                        objectFit: "cover",
+                        borderRadius: 6,
+                      }}
+                    />
+                  </button>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
+                    <div style={{ fontSize: 11, color: "var(--srte-text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {it.title || it.alt || (it.width && it.height ? `${it.width}×${it.height}` : "Image")}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setInfoItem(it)}
+                      title="Image info"
+                      style={{
+                        width: 24,
+                        height: 24,
+                        border: "1px solid var(--srte-border)",
+                        borderRadius: 999,
+                        background: "var(--srte-surface-subtle)",
+                        color: "var(--srte-input-text)",
+                        cursor: "pointer",
+                        flex: "0 0 auto",
+                      }}
+                    >
+                      i
+                    </button>
                   </div>
-                </button>
+                  {it.tags && it.tags.length > 0 && (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                      {it.tags.slice(0, 3).map((tag) => (
+                        <span
+                          key={tag}
+                          style={{
+                            fontSize: 10,
+                            padding: "1px 5px",
+                            borderRadius: 999,
+                            background: "var(--srte-surface-subtle)",
+                            color: "var(--srte-text-muted)",
+                          }}
+                        >
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        {infoItem && (
+          <div
+            style={{
+              position: "fixed",
+              inset: 0,
+              background: "var(--srte-modal-backdrop)",
+              backdropFilter: "var(--srte-modal-backdrop-filter)",
+              WebkitBackdropFilter: "var(--srte-modal-backdrop-filter)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              zIndex: 90,
+            }}
+            onClick={() => setInfoItem(null)}
+          >
+            <div
+              style={{
+                width: 420,
+                maxWidth: "90vw",
+                background: "var(--srte-modal-bg)",
+                color: "var(--srte-modal-text)",
+                borderRadius: 10,
+                boxShadow: "var(--srte-menu-shadow)",
+                padding: 16,
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginBottom: 12 }}>
+                <div style={{ fontWeight: 600 }}>Image info</div>
+                <button type="button" onClick={() => setInfoItem(null)}>✕</button>
+              </div>
+              <img
+                src={infoItem.url}
+                alt={infoItem.alt || ""}
+                style={{ maxWidth: "100%", maxHeight: 180, display: "block", margin: "0 auto 12px", borderRadius: 8 }}
+              />
+              {[
+                ["Title", infoItem.title],
+                ["Alt text", infoItem.alt],
+                ["Dimensions", infoItem.width && infoItem.height ? `${infoItem.width}×${infoItem.height}` : undefined],
+                ["MIME type", infoItem.mimeType],
+                ["Size", infoItem.sizeBytes ? `${Math.round(infoItem.sizeBytes / 1024)} KB` : undefined],
+                ["Created", infoItem.createdAt],
+                ["Tags", infoItem.tags?.join(", ")],
+                ["Work", infoItem.license?.workName],
+                ["Author", infoItem.license?.author],
+                ["License", [infoItem.license?.licenseType, infoItem.license?.licenseText].filter(Boolean).join(" - ")],
+                ["Source", infoItem.license?.sourceUrl],
+              ].filter(([, value]) => value).map(([label, value]) => (
+                <div key={label} style={{ display: "grid", gridTemplateColumns: "92px 1fr", gap: 8, fontSize: 12, marginBottom: 6 }}>
+                  <div style={{ color: "var(--srte-text-muted)" }}>{label}</div>
+                  <div style={{ overflowWrap: "anywhere" }}>{value}</div>
+                </div>
               ))}
             </div>
           </div>

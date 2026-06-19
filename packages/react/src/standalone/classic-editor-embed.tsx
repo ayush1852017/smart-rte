@@ -1,7 +1,8 @@
 import React, { useImperativeHandle, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { ClassicEditor as ClassicEditorComponent } from "../components/ClassicEditor";
-import type { MediaManagerAdapter } from "../components/MediaManager";
+import { ClassicEditor as ClassicEditorComponent } from "../components/ClassicEditor.js";
+import type { MediaManagerAdapter } from "../components/MediaManager.js";
+import type { SrteTheme } from "../theme.js";
 
 type InitOptions = {
   target: HTMLElement;
@@ -13,9 +14,12 @@ type InitOptions = {
   table?: boolean;
   media?: boolean;
   formula?: boolean;
+  showFontSize?: boolean;
   // Optional: a callback to receive change events
   onChange?: (html: string) => void;
   mediaManager?: MediaManagerAdapter;
+  theme?: SrteTheme;
+  className?: string;
 };
 
 export type ClassicEditorController = {
@@ -36,8 +40,11 @@ function ClassicEditorHost(
     table?: boolean;
     media?: boolean;
     formula?: boolean;
+    showFontSize?: boolean;
     onChange?: (html: string) => void;
     mediaManager?: MediaManagerAdapter;
+    theme?: SrteTheme;
+    className?: string;
   },
   ref: React.Ref<ClassicEditorController>
 ) {
@@ -98,7 +105,10 @@ function ClassicEditorHost(
         table={props.table}
         media={props.media}
         formula={props.formula}
+        showFontSize={props.showFontSize}
         mediaManager={props.mediaManager}
+        theme={props.theme}
+        className={props.className}
       />
     </div>
   );

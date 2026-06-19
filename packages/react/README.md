@@ -88,6 +88,10 @@ export default App;
 | `media` | `boolean` | `true` | Enable/disable media/image functionality |
 | `formula` | `boolean` | `true` | Enable/disable formula/LaTeX functionality |
 | `mediaManager` | `MediaManagerAdapter` | `undefined` | Custom media manager for handling images |
+| `fonts` | `{ name: string; value: string }[]` | Default web-safe fonts | Custom font list for the toolbar |
+| `defaultFont` | `string` | `undefined` | Default font family for the editor content |
+| `theme` | `"light" \| "dark"` | `"light"` | Built-in theme mode |
+| `className` | `string` | `undefined` | Custom CSS class for theming via CSS variable overrides |
 
 ### Advanced Examples
 
@@ -314,22 +318,86 @@ const myMediaManager: MediaManagerAdapter = {
 };
 ```
 
-## 🎨 Styling
+## 🎨 Theming & Dark Mode
 
-The editor comes with built-in styles. You can customize the appearance by wrapping it in a container:
+The editor uses CSS custom properties (CSS variables) for all colors, making it fully customizable. No hardcoded colors — everything can be themed.
+
+### Quick Start: Dark Mode
 
 ```tsx
-<div style={{
-  border: '1px solid #ddd',
-  borderRadius: '8px',
-  overflow: 'hidden',
-}}>
-  <ClassicEditor
-    value={content}
-    onChange={setContent}
-  />
-</div>
+<ClassicEditor theme="dark" onChange={handleChange} />
 ```
+
+### Custom Themes via CSS
+
+Apply a custom class and override any CSS variables:
+
+```tsx
+<ClassicEditor className="my-theme" onChange={handleChange} />
+```
+
+```css
+.my-theme {
+  --srte-bg: #1a1a2e;
+  --srte-text: #eaeaea;
+  --srte-border: #3a3a5c;
+  /* Override only the variables you need */
+}
+```
+
+### Responding to System Preference
+
+```tsx
+const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+
+<ClassicEditor theme={prefersDark ? 'dark' : 'light'} />
+```
+
+Or purely via CSS (without the `theme` prop):
+
+```css
+@media (prefers-color-scheme: dark) {
+  .srte-editor {
+    --srte-bg: #1e1e1e;
+    --srte-text: #e0e0e0;
+    --srte-border: #3a3a3a;
+    /* ... */
+  }
+}
+```
+
+### Available CSS Custom Properties
+
+| Variable | Default (Light) | Description |
+|---|---|---|
+| `--srte-bg` | `#ffffff` | Editor container & content background |
+| `--srte-text` | `#111111` | Primary UI text color |
+| `--srte-text-muted` | `#4b5563` | Secondary/subtle text |
+| `--srte-border` | `#dddddd` | Standard border color |
+| `--srte-border-light` | `#eeeeee` | Light separator borders |
+| `--srte-toolbar-bg` | `#ffffff` | Toolbar background |
+| `--srte-input-bg` | `#ffffff` | Button, input, select backgrounds |
+| `--srte-input-text` | `#111111` | Button, input, select text |
+| `--srte-input-border` | `#e5e7eb` | Button, input, select borders |
+| `--srte-modal-backdrop` | `rgba(0,0,0,0.35)` | Modal overlay background |
+| `--srte-modal-bg` | `#ffffff` | Modal/dialog background |
+| `--srte-modal-text` | `#000000` | Modal text color |
+| `--srte-menu-bg` | `#ffffff` | Context menu background |
+| `--srte-menu-text` | `#111111` | Context menu text |
+| `--srte-menu-shadow` | `0 8px 24px rgba(0,0,0,0.18)` | Menu box-shadow |
+| `--srte-accent` | `#1e90ff` | Accent/selection color |
+| `--srte-accent-bg` | `rgba(30,144,255,0.15)` | Accent background (translucent) |
+| `--srte-danger` | `#dc2626` | Destructive action color |
+| `--srte-primary` | `#2563eb` | Primary action button color |
+| `--srte-surface-subtle` | `#f3f4f6` | Subtle surface (dropzone, preset buttons) |
+| `--srte-on-primary` | `#ffffff` | Text on primary/danger buttons |
+| `--srte-cancel-bg` | `#f3f4f6` | Cancel button background |
+
+### Important Notes
+
+- **User content colors are preserved** — colors set via the color picker (text/background) are inline styles on content elements and are not affected by theming.
+- **Color picker swatches are not themed** — they display actual color values regardless of theme.
+- **The theme only affects editor chrome** — toolbar, dialogs, menus, and container. User content remains unchanged.
 
 ## 🛠️ Development
 
@@ -626,13 +694,14 @@ See the list of [contributors](https://github.com/ayush1852017/smart-rte/contrib
 
 ## 🗺️ Roadmap
 
-### Current Version (0.1.x)
+### Current Version (0.2.x)
 
 - ✅ Rich text editing
 - ✅ Table support
 - ✅ Formula support (LaTeX/KaTeX)
 - ✅ Media management
 - ✅ TypeScript support
+- ✅ Dark mode & theming (CSS custom properties)
 
 ### Upcoming Features
 
