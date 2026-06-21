@@ -25,6 +25,8 @@ export const SRTE_DEFAULT_CSS = `
   --srte-surface-subtle: #f3f4f6;
   --srte-on-primary: #ffffff;
   --srte-cancel-bg: #f3f4f6;
+  --srte-code-bg: #f6f8fa;
+  --srte-code-text: #24292f;
 }
 .srte-editor.srte-dark {
   --srte-bg: #1e1e1e;
@@ -50,6 +52,8 @@ export const SRTE_DEFAULT_CSS = `
   --srte-surface-subtle: #333333;
   --srte-on-primary: #ffffff;
   --srte-cancel-bg: #333333;
+  --srte-code-bg: #111827;
+  --srte-code-text: #e5e7eb;
 }
 .srte-editor [contenteditable] blockquote {
   border-left: 4px solid var(--srte-accent);
@@ -70,6 +74,9 @@ export const SRTE_DEFAULT_CSS = `
   font-size: 1em;
   font-weight: 400;
   line-height: 1.6;
+}
+.srte-editor [contenteditable] p[data-srte-caret-boundary="true"] {
+  min-height: 1.6em;
 }
 .srte-editor [contenteditable] h1,
 .srte-editor [contenteditable] h2,
@@ -110,6 +117,35 @@ export const SRTE_DEFAULT_CSS = `
 }
 .srte-editor [contenteditable] li::marker {
   color: currentColor;
+}
+.srte-editor [contenteditable] pre {
+  display: block;
+  margin: 0.75em 0;
+  padding: 12px 14px;
+  overflow-x: auto;
+  border: 1px solid var(--srte-border);
+  border-radius: 6px;
+  background: var(--srte-code-bg);
+  color: var(--srte-code-text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.9em;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+.srte-editor [contenteditable] pre code {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+.srte-editor [contenteditable] code:not(pre code) {
+  padding: 0.1em 0.35em;
+  border-radius: 3px;
+  background: var(--srte-code-bg);
+  color: var(--srte-code-text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.9em;
 }
 .srte-editor [contenteditable] a,
 .srte-editor [contenteditable] a:visited {

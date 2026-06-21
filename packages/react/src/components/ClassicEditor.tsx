@@ -231,9 +231,17 @@ export function ClassicEditor({
     if (typeof value === "string" && value !== el.innerHTML) {
       el.innerHTML = value || "";
       fixNegativeMargins(el);
+      normalizeInvalidQuoteNesting(el);
+      normalizeInvalidCodeBlockNesting(el);
+      normalizeInvalidTableNesting(el);
       ensureTableWrappers(el);
+      ensureCaretBoundaryParagraphs(el);
       addTableResizeHandles();
     }
+    normalizeInvalidQuoteNesting(el);
+    normalizeInvalidCodeBlockNesting(el);
+    normalizeInvalidTableNesting(el);
+    ensureCaretBoundaryParagraphs(el);
     // Suppress native context menu inside table cells at capture phase
     const onCtx = (evt: Event) => {
       const target = evt.target as Node | null;
@@ -505,7 +513,9 @@ export function ClassicEditor({
     if (to[to.length - 1] !== currentHtml) to.push(currentHtml);
     editor.innerHTML = html;
     fixNegativeMargins(editor);
+    normalizeInvalidCodeBlockNesting(editor);
     ensureTableWrappers(editor);
+    ensureCaretBoundaryParagraphs(editor);
     addTableResizeHandles();
     clearSelectionDecor();
     setTableMenu(null);
@@ -618,13 +628,20 @@ export function ClassicEditor({
     const blocks = Array.from(editor.querySelectorAll<HTMLElement>(blockSelector))
       .filter((block) => {
         if (block === editor) return false;
-        const parentBlock = block.parentElement?.closest(blockSelector);
-        if (parentBlock && parentBlock !== editor && editor.contains(parentBlock)) return false;
-        try {
-          return range.intersectsNode(block);
-        } catch {
-          return false;
-        }
+      const parentBlock = block.parentElement?.closest(blockSelector);
+      if (parentBlock && parentBlock !== editor && editor.contains(parentBlock)) return false;
+      try {
+          const blockRange = document.createRange();
+          blockRange.selectNodeContents(block);
+          // Range.intersectsNode() includes touching boundaries. That makes a
+          // selection ending at one paragraph also affect the next paragraph.
+          return (
+            range.compareBoundaryPoints(Range.START_TO_END, blockRange) < 0 &&
+            range.compareBoundaryPoints(Range.END_TO_START, blockRange) > 0
+          );
+      } catch {
+        return false;
+      }
       });
 
     if (blocks.length > 0) return blocks;
@@ -914,14 +931,27 @@ export function ClassicEditor({
     });
 
     if (lists.size === 0) {
-      const block = getCurrentBlock();
-      if (!block?.closest("ul,ol")) {
-        toggleList(listTag);
-        const currentList = getCurrentBlock()?.closest(listTag) as HTMLElement | null;
-        if (currentList) currentList.style.listStyleType = styleType;
+      const blocks = range.collapsed
+        ? [getCurrentBlock()].filter((block): block is HTMLElement => Boolean(block))
+        : getSelectedBlocks(range);
+      const convertibleBlocks = blocks.filter((block) =>
+        editableRef.current?.contains(block) &&
+        !block.closest("ul,ol") &&
+        Boolean(block.parentElement)
+      );
+      if (convertibleBlocks.length > 0) {
+        pushEditorHistory();
+        if (convertSelectedBlocksToList(convertibleBlocks, listTag)) {
+          const createdList = getCurrentBlock()?.closest("ul,ol") as HTMLElement | null;
+          if (createdList) createdList.style.listStyleType = styleType;
+        }
         handleInput();
+        requestAnimationFrame(updateActiveState);
         return;
       }
+
+      const block = getCurrentBlock();
+      if (!block?.closest("ul,ol")) return;
       const currentList = block.closest("ul,ol") as HTMLElement | null;
       if (currentList) lists.add(currentList);
     }
@@ -1236,6 +1266,65 @@ export function ClassicEditor({
 
       pushEditorHistory();
       exec("formatBlock", "<blockquote>");
+    } catch {}
+  };
+
+  const toggleCodeBlock = () => {
+    try {
+      if (!restoreSavedSelection()) safeSelectRange(getSelectionRangeInEditor());
+      const editor = editableRef.current;
+      const range = getSelectionRangeInEditor();
+      if (!editor || !range) return;
+
+      const getCodeBlockAtNode = (node: Node) => {
+        const element = node instanceof HTMLElement ? node : node.parentElement;
+        const codeBlock = element?.closest("pre") as HTMLElement | null;
+        return codeBlock && editor.contains(codeBlock) ? codeBlock : null;
+      };
+      const startCodeBlock = getCodeBlockAtNode(range.startContainer);
+      const endCodeBlock = getCodeBlockAtNode(range.endContainer);
+      // Do not let a paragraph selection that touches a neighbouring <pre>
+      // convert that unrelated code block back to normal text.
+      const codeBlocks = startCodeBlock && startCodeBlock === endCodeBlock
+        ? [startCodeBlock]
+        : [];
+
+      if (codeBlocks.length > 0) {
+        pushEditorHistory();
+        let lastParagraph: HTMLElement | null = null;
+        codeBlocks.forEach((codeBlock) => {
+          const paragraph = document.createElement("p");
+          const code = codeBlock.querySelector(":scope > code") as HTMLElement | null;
+          paragraph.innerHTML = code?.innerHTML || codeBlock.innerHTML || "<br>";
+          codeBlock.parentElement?.replaceChild(paragraph, codeBlock);
+          lastParagraph = paragraph;
+        });
+        if (lastParagraph) focusElementEnd(lastParagraph);
+        handleInput();
+        requestAnimationFrame(updateActiveState);
+        return;
+      }
+
+      const blocks = (range.collapsed
+        ? [getCurrentBlock()].filter((block): block is HTMLElement => Boolean(block))
+        : getSelectedBlocks(range)
+      ).filter((block) => {
+        if (!editor.contains(block) || block.tagName.toLowerCase() === "pre") return false;
+        if (block.closest("ul,ol,table")) return false;
+        return Boolean(block.parentElement);
+      });
+      if (blocks.length === 0) return;
+
+      // Do not use execCommand('formatBlock') here. Browser-native formatting
+      // can split a selected paragraph at its boundary and create a blank <pre>.
+      pushEditorHistory();
+      let lastCodeBlock: HTMLElement | null = null;
+      sortInDocumentOrder(blocks).forEach((block) => {
+        lastCodeBlock = replaceBlockTag(block, "pre");
+      });
+      if (lastCodeBlock) focusElementEnd(lastCodeBlock);
+      handleInput();
+      requestAnimationFrame(updateActiveState);
     } catch {}
   };
 
@@ -3173,11 +3262,84 @@ export function ClassicEditor({
     }
   };
 
+  const normalizeInvalidTableNesting = (root: HTMLElement) => {
+    const getOuterList = (item: HTMLElement) => {
+      let list = item.parentElement as HTMLElement | null;
+      while (list?.parentElement?.tagName === "LI") {
+        const parentList = list.parentElement.parentElement as HTMLElement | null;
+        if (!parentList || !["UL", "OL"].includes(parentList.tagName)) break;
+        list = parentList;
+      }
+      return list;
+    };
+
+    root.querySelectorAll("table").forEach((table) => {
+      const tableBlock = (table.closest('[data-table-wrapper="true"]') || table) as HTMLElement;
+      const codeBlock = tableBlock.closest("pre") as HTMLElement | null;
+      if (codeBlock?.parentElement) {
+        codeBlock.parentElement.insertBefore(tableBlock, codeBlock.nextSibling);
+        return;
+      }
+
+      const listItem = tableBlock.closest("li") as HTMLElement | null;
+      if (!listItem) return;
+      const outerList = getOuterList(listItem);
+      if (outerList?.parentElement) {
+        outerList.parentElement.insertBefore(tableBlock, outerList.nextSibling);
+      }
+    });
+  };
+
+  const normalizeInvalidQuoteNesting = (root: HTMLElement) => {
+    root.querySelectorAll("blockquote blockquote").forEach((quote) => {
+      const outerQuote = quote.parentElement?.closest("blockquote") as HTMLElement | null;
+      if (outerQuote?.parentElement) {
+        outerQuote.parentElement.insertBefore(quote, outerQuote.nextSibling);
+      }
+    });
+
+    root.querySelectorAll("p,h1,h2,h3,h4,h5,h6,pre").forEach((container) => {
+      const nestedQuotes = Array.from(container.children).filter(
+        (child) => child.tagName === "BLOCKQUOTE"
+      ) as HTMLElement[];
+      nestedQuotes.forEach((quote) => {
+        container.parentElement?.insertBefore(quote, container.nextSibling);
+      });
+      if (
+        nestedQuotes.length > 0 &&
+        container.tagName === "P" &&
+        !container.textContent?.trim() &&
+        Array.from(container.children).every((child) => child.tagName === "BR")
+      ) {
+        container.remove();
+      }
+    });
+  };
+
+  const normalizeInvalidCodeBlockNesting = (root: HTMLElement) => {
+    root.querySelectorAll("pre pre").forEach((codeBlock) => {
+      const outerCodeBlock = codeBlock.parentElement?.closest("pre") as HTMLElement | null;
+      if (outerCodeBlock?.parentElement) {
+        outerCodeBlock.parentElement.insertBefore(codeBlock, outerCodeBlock.nextSibling);
+      }
+    });
+
+    root.querySelectorAll("p,h1,h2,h3,h4,h5,h6,blockquote").forEach((container) => {
+      const nestedCodeBlocks = Array.from(container.children).filter(
+        (child) => child.tagName === "PRE"
+      ) as HTMLElement[];
+      nestedCodeBlocks.forEach((codeBlock) => {
+        container.parentElement?.insertBefore(codeBlock, container.nextSibling);
+      });
+    });
+  };
+
   const isCaretBoundaryBlock = (node: ChildNode | null) => {
     if (!(node instanceof HTMLElement)) return false;
     const tag = node.tagName.toLowerCase();
     return (
       tag === "blockquote" ||
+      tag === "pre" ||
       tag === "table" ||
       node.getAttribute("data-table-wrapper") === "true"
     );
@@ -3214,6 +3376,12 @@ export function ClassicEditor({
     
     // Auto-fix negative margins that might cause visibility issues
     fixNegativeMargins(el);
+    // Quotes are document blocks and cannot be nested by drag and drop.
+    normalizeInvalidQuoteNesting(el);
+    // Code blocks are document blocks and cannot be nested by drag and drop.
+    normalizeInvalidCodeBlockNesting(el);
+    // Tables are document-level blocks and must not remain inside code or list items.
+    normalizeInvalidTableNesting(el);
     // Ensure tables are wrapped for horizontal scrolling
     ensureTableWrappers(el);
     // Keep a reachable typing position around isolating blocks at document edges
@@ -3849,13 +4017,19 @@ export function ClassicEditor({
       return (image.parentElement?.tagName === "A" ? image.parentElement : image) as HTMLElement;
     }
 
+    const listElement = element.closest("ul,ol");
+    if (listElement && editor.contains(listElement)) return listElement as HTMLElement;
+
     const tableElement = element.closest("table");
     if (tableElement && editor.contains(tableElement)) {
       return (tableElement.closest('[data-table-wrapper="true"]') || tableElement) as HTMLElement;
     }
 
-    const listElement = element.closest("ul,ol");
-    if (listElement && editor.contains(listElement)) return listElement as HTMLElement;
+    const quoteElement = element.closest("blockquote");
+    if (quoteElement && editor.contains(quoteElement)) return quoteElement as HTMLElement;
+
+    const codeBlock = element.closest("pre");
+    if (codeBlock && editor.contains(codeBlock)) return codeBlock as HTMLElement;
 
     const block = element.closest('[data-table-wrapper="true"],blockquote,pre,p,h1,h2,h3,h4,h5,h6,div') as HTMLElement | null;
     if (!block || block === editor || !editor.contains(block)) return null;
@@ -3877,8 +4051,18 @@ export function ClassicEditor({
 
     const targetRect = target.getBoundingClientRect();
     const scrollRect = scroller.getBoundingClientRect();
+    const isTableTarget =
+      target.matches("table,[data-table-wrapper='true']") ||
+      Boolean(target.querySelector("table"));
+    const isListInsideCell =
+      target.matches("ul,ol") &&
+      Boolean(target.closest("td,th"));
     const next = {
-      left: Math.max(4, targetRect.left - scrollRect.left + scroller.scrollLeft - 30),
+      // Table handles sit on the table's left border so nested tables remain reachable.
+      left: Math.max(
+        4,
+        targetRect.left - scrollRect.left + scroller.scrollLeft - (isTableTarget || isListInsideCell ? 12 : 30)
+      ),
       top: targetRect.top - scrollRect.top + scroller.scrollTop,
       height: Math.max(24, targetRect.height),
       target,
@@ -3904,7 +4088,7 @@ export function ClassicEditor({
     dragHandleHideTimerRef.current = window.setTimeout(() => {
       dragHandleHideTimerRef.current = null;
       if (!draggedBlockRef.current) setDragHandle(null);
-    }, 120);
+    }, 350);
   };
 
   const getImageFromMovableBlock = (block: HTMLElement) => {
@@ -3917,6 +4101,46 @@ export function ClassicEditor({
     if (!editor || !editor.contains(block)) return false;
 
     const under = document.elementFromPoint(x, y);
+    const draggedQuote = block.tagName === "BLOCKQUOTE";
+    const draggedCodeBlock = block.tagName === "PRE";
+    if (draggedQuote) {
+      const underElement = under instanceof HTMLElement ? under : under?.parentElement;
+      const quoteTarget = underElement?.closest("blockquote") as HTMLElement | null;
+      if (quoteTarget && quoteTarget !== block) {
+        let rootQuote = quoteTarget;
+        while (rootQuote.parentElement?.closest("blockquote")) {
+          rootQuote = rootQuote.parentElement.closest("blockquote") as HTMLElement;
+        }
+        const parent = rootQuote.parentElement;
+        if (!parent) return false;
+        const rect = rootQuote.getBoundingClientRect();
+        if (rootQuote.contains(block) || y >= rect.top + rect.height / 2) {
+          parent.insertBefore(block, rootQuote.nextSibling);
+        } else {
+          parent.insertBefore(block, rootQuote);
+        }
+        return true;
+      }
+    }
+    if (draggedCodeBlock) {
+      const underElement = under instanceof HTMLElement ? under : under?.parentElement;
+      const codeTarget = underElement?.closest("pre") as HTMLElement | null;
+      if (codeTarget && codeTarget !== block) {
+        let rootCodeBlock = codeTarget;
+        while (rootCodeBlock.parentElement?.closest("pre")) {
+          rootCodeBlock = rootCodeBlock.parentElement.closest("pre") as HTMLElement;
+        }
+        const parent = rootCodeBlock.parentElement;
+        if (!parent) return false;
+        const rect = rootCodeBlock.getBoundingClientRect();
+        if (rootCodeBlock.contains(block) || y >= rect.top + rect.height / 2) {
+          parent.insertBefore(block, rootCodeBlock.nextSibling);
+        } else {
+          parent.insertBefore(block, rootCodeBlock);
+        }
+        return true;
+      }
+    }
     const draggedImage = getImageFromMovableBlock(block);
     const targetCell = draggedImage ? getClosestCell(under) : null;
     if (draggedImage && targetCell && !block.contains(targetCell)) {
@@ -3943,6 +4167,83 @@ export function ClassicEditor({
     const range = getRangeFromPoint(x, y);
     if (range && editor.contains(range.commonAncestorContainer)) {
       if (block.contains(range.commonAncestorContainer)) return false;
+      if (draggedQuote) {
+        const element = range.commonAncestorContainer instanceof HTMLElement
+          ? range.commonAncestorContainer
+          : range.commonAncestorContainer.parentElement;
+        const container = element?.closest("p,h1,h2,h3,h4,h5,h6,pre") as HTMLElement | null;
+        if (container?.parentElement) {
+          const isEmpty =
+            !container.textContent?.trim() &&
+            Array.from(container.children).every((child) => child.tagName === "BR");
+          if (isEmpty) {
+            container.parentElement.insertBefore(block, container);
+            container.remove();
+          } else {
+            const rect = container.getBoundingClientRect();
+            container.parentElement.insertBefore(
+              block,
+              y < rect.top + rect.height / 2 ? container : container.nextSibling
+            );
+          }
+          return true;
+        }
+      }
+      if (draggedCodeBlock) {
+        const element = range.commonAncestorContainer instanceof HTMLElement
+          ? range.commonAncestorContainer
+          : range.commonAncestorContainer.parentElement;
+        const codeTarget = element?.closest("pre") as HTMLElement | null;
+        if (codeTarget?.parentElement) {
+          let rootCodeBlock = codeTarget;
+          while (rootCodeBlock.parentElement?.closest("pre")) {
+            rootCodeBlock = rootCodeBlock.parentElement.closest("pre") as HTMLElement;
+          }
+          rootCodeBlock.parentElement.insertBefore(block, rootCodeBlock.nextSibling);
+          return true;
+        }
+        const container = element?.closest("p,h1,h2,h3,h4,h5,h6,blockquote") as HTMLElement | null;
+        if (container?.parentElement) {
+          const isEmpty =
+            !container.textContent?.trim() &&
+            Array.from(container.children).every((child) => child.tagName === "BR");
+          if (isEmpty) {
+            container.parentElement.insertBefore(block, container);
+            container.remove();
+          } else {
+            const rect = container.getBoundingClientRect();
+            container.parentElement.insertBefore(
+              block,
+              y < rect.top + rect.height / 2 ? container : container.nextSibling
+            );
+          }
+          return true;
+        }
+      }
+      const isTableBlock = block.matches("table,[data-table-wrapper='true']") || Boolean(block.querySelector("table"));
+      if (isTableBlock) {
+        const element = range.commonAncestorContainer instanceof HTMLElement
+          ? range.commonAncestorContainer
+          : range.commonAncestorContainer.parentElement;
+        const codeBlock = element?.closest("pre") as HTMLElement | null;
+        if (codeBlock?.parentElement) {
+          codeBlock.parentElement.insertBefore(block, codeBlock.nextSibling);
+          return true;
+        }
+        const listItem = element?.closest("li") as HTMLElement | null;
+        if (listItem) {
+          let outerList = listItem.parentElement as HTMLElement | null;
+          while (outerList?.parentElement?.tagName === "LI") {
+            const parentList = outerList.parentElement.parentElement as HTMLElement | null;
+            if (!parentList || !["UL", "OL"].includes(parentList.tagName)) break;
+            outerList = parentList;
+          }
+          if (outerList?.parentElement) {
+            outerList.parentElement.insertBefore(block, outerList.nextSibling);
+            return true;
+          }
+        }
+      }
       range.insertNode(block);
       return true;
     }
@@ -4018,14 +4319,68 @@ export function ClassicEditor({
 
   const elementSibling = (element: HTMLElement, direction: "previous" | "next") => {
     let sibling = direction === "previous" ? element.previousSibling : element.nextSibling;
-    while (sibling && sibling.nodeType === Node.TEXT_NODE && !sibling.textContent?.trim()) {
+    while (
+      sibling &&
+      (
+        (sibling.nodeType === Node.TEXT_NODE && !sibling.textContent?.trim()) ||
+        (sibling instanceof HTMLElement && sibling.getAttribute("data-srte-caret-boundary") === "true")
+      )
+    ) {
       sibling = direction === "previous" ? sibling.previousSibling : sibling.nextSibling;
     }
     return sibling;
   };
 
+  const moveSelectedBlocks = (direction: "up" | "down" | "left" | "right") => {
+    const editor = editableRef.current;
+    const range = getSelectionRangeInEditor();
+    if (!editor || !range || range.collapsed) return false;
+
+    const blocks = sortInDocumentOrder(getSelectedBlocks(range)).filter((block) => {
+      if (!editor.contains(block) || !block.parentElement) return false;
+      const parentBlock = block.parentElement.closest(blockSelector);
+      return !parentBlock || parentBlock === editor;
+    });
+    if (blocks.length === 0) return false;
+
+    const parent = blocks[0].parentElement;
+    if (!parent || blocks.some((block) => block.parentElement !== parent)) return false;
+
+    pushEditorHistory();
+    if (direction === "up") {
+      const previous = elementSibling(blocks[0], "previous");
+      if (previous && !blocks.includes(previous as HTMLElement)) {
+        blocks.forEach((block) => parent.insertBefore(block, previous));
+      }
+    } else if (direction === "down") {
+      const next = elementSibling(blocks[blocks.length - 1], "next");
+      if (next && !blocks.includes(next as HTMLElement)) {
+        const afterNext = next.nextSibling;
+        blocks.forEach((block) => parent.insertBefore(block, afterNext));
+      }
+    } else {
+      blocks.forEach((block) => {
+        const current = parseInt(block.style.marginLeft || "0", 10) || 0;
+        const nextMargin = direction === "right"
+          ? Math.min(current + 24, 240)
+          : Math.max(current - 24, 0);
+        block.style.marginLeft = nextMargin ? `${nextMargin}px` : "";
+      });
+    }
+
+    const movedRange = document.createRange();
+    movedRange.setStartBefore(blocks[0]);
+    movedRange.setEndAfter(blocks[blocks.length - 1]);
+    safeSelectRange(movedRange);
+    savedRangeRef.current = movedRange.cloneRange();
+    handleInput();
+    requestAnimationFrame(updateActiveState);
+    return true;
+  };
+
   const moveCurrentElement = (direction: "up" | "down" | "left" | "right") => {
     const editor = editableRef.current;
+    if (moveSelectedBlocks(direction)) return;
     let target = getMoveTarget();
     if (!editor || !target) return;
 
@@ -4509,7 +4864,7 @@ export function ClassicEditor({
         </button>
         <button
           title="Code block"
-          onClick={() => exec("formatBlock", "<pre>")}
+          onClick={toggleCodeBlock}
           aria-pressed={activeState.codeBlock}
           style={activeButtonStyle(activeState.codeBlock, {
             minWidth: 36,
@@ -5468,7 +5823,13 @@ export function ClassicEditor({
             if (draggedBlockRef.current) return;
             updateDragHandleForTarget(getMovableElementFromNode(e.target as Node));
           }}
-          onMouseLeave={() => {
+          onMouseOver={(e) => {
+            if (draggedBlockRef.current) return;
+            updateDragHandleForTarget(getMovableElementFromNode(e.target as Node));
+          }}
+          onMouseLeave={(e) => {
+            const nextTarget = e.relatedTarget as HTMLElement | null;
+            if (nextTarget?.closest("[data-srte-drag-handle]")) return;
             if (!draggedBlockRef.current) scheduleDragHandleHide();
           }}
           onPaste={(e) => {
@@ -5804,6 +6165,7 @@ export function ClassicEditor({
           <button
             type="button"
             draggable
+            data-srte-drag-handle="true"
             title="Drag block"
             aria-label="Drag block"
             onMouseEnter={() => {
