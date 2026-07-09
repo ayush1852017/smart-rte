@@ -1,8 +1,15 @@
 import React, { useEffect, useRef, useState } from "react";
 import { MediaManager, MediaManagerAdapter, MediaItem } from "./MediaManager.js";
+import { LinkEditorPopover, type LinkEditorApplyValue } from "./LinkEditorPopover.js";
 import * as pdfjsLib from 'pdfjs-dist';
 import mammoth from 'mammoth';
 import JSZip from 'jszip';
+import { applyLink, applyTextColor as coreApplyTextColor, markdownToCompatibilityHtml, removeLink, sanitizeLinkHref, toggleBold, toggleItalic, toggleSubscript, toggleSuperscript, toggleUnderline, type SmartCommand, type SmartEditorState } from 'smartrte-core';
+import { restoreSelectionToDom, selectionFromDom } from '../adapters/domSelectionBridge.js';
+import { serializeSmartDocument, smartDocumentFromEditorRoot } from '../adapters/domSmartDocument.js';
+import { isShadowModeEnabled, runShadowCommand } from '../adapters/shadowMode.js';
+import { getCoreInlineMarkResult, isCoreInlineMarkEnabled, type CoreInlineMark } from '../adapters/inlineMarkCoreExecution.js';
+import { closestFromTarget, isNode } from '../adapters/domTargets.js';
 import { ensureStyleSheet, SrteTheme } from '../theme.js';
 
 // Initialize PDF.js worker
@@ -116,6 +123,16 @@ export function ClassicEditor({
     codeBlock: boolean;
   };
 
+  type LinkMenuState = {
+    x: number;
+    y: number;
+    anchor?: HTMLAnchorElement;
+    range: Range | null;
+    initialHref: string;
+    initialText: string;
+    showTextInput: boolean;
+  };
+
   const editableRef = useRef<HTMLDivElement | null>(null);
   const editorScrollRef = useRef<HTMLDivElement | null>(null);
   const lastEmittedRef = useRef<string>("");
@@ -190,6 +207,7 @@ export function ClassicEditor({
     y: number;
     img: HTMLImageElement;
   } | null>(null);
+  const [linkMenu, setLinkMenu] = useState<LinkMenuState | null>(null);
   const [showMediaManager, setShowMediaManager] = useState(false);
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [showSpecialChars, setShowSpecialChars] = useState(false);
@@ -339,6 +357,48 @@ export function ClassicEditor({
         return;
       }
       pushEditorHistory();
+      const editor = editableRef.current;
+      const coreMark = ({ bold: "bold", italic: "italic", underline: "underline", superscript: "superscript", subscript: "subscript" } as Record<string, CoreInlineMark>)[command];
+      if (coreMark && editor && isCoreInlineMarkEnabled(coreMark)) {
+        try {
+          const result = getCoreInlineMarkResult(editor, coreMark);
+          if (result) {
+            editor.innerHTML = result.html;
+            ensureTableWrappers(editor);
+            addTableResizeHandles();
+            if (!restoreSelectionToDom(editor, result.selectionAfter)) {
+              const fallback = document.createRange();
+              fallback.selectNodeContents(editor);
+              fallback.collapse(false);
+              safeSelectRange(fallback);
+              if (isShadowModeEnabled()) console.warn(`[Smart RTE] Core ${coreMark} could not restore its exact selection.`);
+            }
+            handleInput();
+            return;
+          }
+        } catch (error) {
+          if (isShadowModeEnabled()) console.warn(`[Smart RTE] Core ${coreMark} fell back to legacy execution.`, error);
+        }
+      }
+      const shadowCommand = ({
+        bold: toggleBold,
+        italic: toggleItalic,
+        underline: toggleUnderline,
+        superscript: toggleSuperscript,
+        subscript: toggleSubscript,
+        foreColor: coreApplyTextColor,
+        createLink: applyLink,
+        unlink: removeLink,
+      } as Record<string, SmartCommand<any>>)[command];
+      const shadowInput = command === "createLink" ? { href: valueArg || "" } : valueArg;
+      const shadowState = shadowCommand && editor && isShadowModeEnabled()
+        ? (() => {
+            const selection = selectionFromDom(editor, window.getSelection());
+            if (!selection) return null;
+            const { document: coreDocument } = smartDocumentFromEditorRoot(editor);
+            return { document: coreDocument, selection } as SmartEditorState;
+          })()
+        : null;
       const beforeHtml = editableRef.current?.innerHTML || "";
       const ok = document.execCommand(command, false, valueArg);
       const afterHtml = editableRef.current?.innerHTML || "";
@@ -347,6 +407,16 @@ export function ClassicEditor({
         (command === "formatBlock" && beforeHtml === afterHtml);
       if (needsFallback) {
         if (command === "formatBlock" && valueArg) applyFormatBlockFallback(valueArg);
+      }
+      if (shadowCommand && shadowState) {
+        runShadowCommand({
+          command: shadowCommand,
+          context: { document: shadowState.document, selection: shadowState.selection },
+          input: shadowInput,
+          state: shadowState,
+          legacyHtml: afterHtml,
+          serialize: (state) => serializeSmartDocument(state.document),
+        });
       }
       handleInput();
     } catch {}
@@ -568,18 +638,93 @@ export function ClassicEditor({
     }
   };
 
-  const insertLink = () => {
-    const url = window.prompt("Enter URL", "https://");
-    if (!url) return;
-    exec("createLink", url);
+  const escapeAttribute = (value: string) =>
+    value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+  const getSelectedAnchor = () => {
+    const editor = editableRef.current;
+    const range = getSelectionRangeInEditor();
+    if (!editor || !range) return null;
+    const node = range.startContainer.nodeType === Node.TEXT_NODE ? range.startContainer.parentElement : range.startContainer as Element | null;
+    const anchor = node?.closest?.("a") as HTMLAnchorElement | null;
+    return anchor && editor.contains(anchor) ? anchor : null;
+  };
+
+  const selectAnchorContents = (anchor: HTMLAnchorElement) => {
+    const range = document.createRange();
+    range.selectNodeContents(anchor);
+    safeSelectRange(range);
+    savedRangeRef.current = range.cloneRange();
+  };
+
+  const getRangeRect = (range: Range | null) => {
+    if (!range || typeof range.getBoundingClientRect !== "function") return null;
+    const rect = range.getBoundingClientRect();
+    return rect.width || rect.height ? rect : null;
+  };
+
+  const openLinkEditor = (existingAnchor?: HTMLAnchorElement | null) => {
+    const editor = editableRef.current;
+    if (!editor) return;
+    const anchor = existingAnchor || getSelectedAnchor();
+    const range = anchor
+      ? (() => {
+          const anchorRange = document.createRange();
+          anchorRange.selectNodeContents(anchor);
+          return anchorRange;
+        })()
+      : getSelectionRangeInEditor();
+    const rect = anchor?.getBoundingClientRect() || getRangeRect(range) || editor.getBoundingClientRect();
+    setLinkMenu({
+      x: Math.max(8, Math.min(rect.left, window.innerWidth - 320)),
+      y: Math.max(8, Math.min(rect.bottom + 8, window.innerHeight - 180)),
+      anchor: anchor || undefined,
+      range: range ? range.cloneRange() : null,
+      initialHref: anchor?.getAttribute("href") || "",
+      initialText: anchor?.textContent || (range && !range.collapsed ? range.toString() : ""),
+      showTextInput: Boolean(anchor || !range || range.collapsed),
+    });
+  };
+
+  const applyLinkEditorValue = (value: LinkEditorApplyValue) => {
+    const state = linkMenu;
+    if (!state) return;
+    setLinkMenu(null);
+    if (state.anchor) {
+      pushEditorHistory();
+      state.anchor.setAttribute("href", value.href);
+      if (value.text != null && value.text !== state.anchor.textContent) {
+        state.anchor.textContent = value.text;
+      }
+      selectAnchorContents(state.anchor);
+      handleInput();
+      return;
+    }
+
+    if (state.range) safeSelectRange(state.range.cloneRange());
+    if (state.range && !state.range.collapsed) {
+      exec("createLink", value.href);
+      return;
+    }
+
+    if (!value.text) return;
+    pushEditorHistory();
+    document.execCommand("insertHTML", false, `<a href="${escapeAttribute(value.href)}">${escapeAttribute(value.text)}</a>`);
+    handleInput();
+  };
+
+  const removeAnchorLink = (anchor: HTMLAnchorElement) => {
+    selectAnchorContents(anchor);
+    exec("unlink");
+    setLinkMenu(null);
   };
 
   const openEditorLink = (anchor: HTMLAnchorElement) => {
-    const rawHref = anchor.getAttribute("href")?.trim();
-    if (!rawHref) return;
+    const safeHref = sanitizeLinkHref(anchor.getAttribute("href"));
+    if (!safeHref) return;
 
     try {
-      const url = new URL(rawHref, window.location.href);
+      const url = new URL(safeHref, window.location.href);
       if (!["http:", "https:", "mailto:", "tel:"].includes(url.protocol)) return;
 
       const target = anchor.getAttribute("target") || "_blank";
@@ -612,11 +757,18 @@ export function ClassicEditor({
     const editor = editableRef.current;
     const range = getSelectionRangeInEditor();
     if (!editor || !range) return null;
-    let node: Node | null = range.commonAncestorContainer;
+    let node: Node | null = range.startContainer;
     if (node.nodeType === Node.TEXT_NODE) node = node.parentNode;
     const element = node instanceof HTMLElement ? node : null;
+    const cell = element?.closest("td,th") as HTMLTableCellElement | null;
+    if (cell && editor.contains(cell)) {
+      const cellBlock = element?.closest("p,h1,h2,h3,h4,h5,h6,blockquote,pre") as HTMLElement | null;
+      if (cellBlock && cell.contains(cellBlock)) return cellBlock;
+      const directBlock = Array.from(cell.children).find((child) => child.matches("p,h1,h2,h3,h4,h5,h6,blockquote,pre"));
+      if (directBlock instanceof HTMLElement) return directBlock;
+    }
     const block = element?.closest("p,h1,h2,h3,h4,h5,h6,li,blockquote,pre,div") as HTMLElement | null;
-    if (!block || block === editor || !editor.contains(block)) return null;
+    if (!block || block === editor || block.getAttribute("data-table-wrapper") === "true" || !editor.contains(block)) return null;
     return block;
   };
 
@@ -625,11 +777,34 @@ export function ClassicEditor({
   const getSelectedBlocks = (range: Range) => {
     const editor = editableRef.current;
     if (!editor) return [];
+    const startElement = range.startContainer.nodeType === Node.TEXT_NODE ? range.startContainer.parentElement : range.startContainer as Element;
+    const endElement = range.endContainer.nodeType === Node.TEXT_NODE ? range.endContainer.parentElement : range.endContainer as Element;
+    const startCell = startElement?.closest?.("td,th") as HTMLTableCellElement | null;
+    const endCell = endElement?.closest?.("td,th") as HTMLTableCellElement | null;
+    if (startCell && startCell === endCell && editor.contains(startCell)) {
+      const cellBlocks = Array.from(startCell.querySelectorAll<HTMLElement>(":scope > p,:scope > h1,:scope > h2,:scope > h3,:scope > h4,:scope > h5,:scope > h6,:scope > blockquote,:scope > pre"));
+      const selected = cellBlocks.filter((block) => {
+        const blockRange = document.createRange();
+        blockRange.selectNodeContents(block);
+        return range.compareBoundaryPoints(Range.START_TO_END, blockRange) < 0 && range.compareBoundaryPoints(Range.END_TO_START, blockRange) > 0;
+      });
+      if (selected.length > 0) return selected;
+      const current = getCurrentBlock();
+      return current && startCell.contains(current) ? [current] : [];
+    }
     const blocks = Array.from(editor.querySelectorAll<HTMLElement>(blockSelector))
       .filter((block) => {
         if (block === editor) return false;
-      const parentBlock = block.parentElement?.closest(blockSelector);
-      if (parentBlock && parentBlock !== editor && editor.contains(parentBlock)) return false;
+        if (block.getAttribute("data-table-wrapper") === "true") return false;
+        const parentBlock = block.parentElement?.closest(blockSelector);
+      if (
+        parentBlock &&
+        parentBlock !== editor &&
+        parentBlock.getAttribute("data-table-wrapper") !== "true" &&
+        editor.contains(parentBlock)
+      ) {
+        return false;
+      }
       try {
           const blockRange = document.createRange();
           blockRange.selectNodeContents(block);
@@ -1018,6 +1193,40 @@ export function ClassicEditor({
     return true;
   };
 
+  const convertTableCellSelectionToList = (range: Range, listTag: "ul" | "ol") => {
+    if (range.collapsed) return false;
+    const startCell = getClosestCell(range.startContainer);
+    const endCell = getClosestCell(range.endContainer);
+    if (!startCell || startCell !== endCell) return false;
+
+    const fragment = range.extractContents();
+    const parts: DocumentFragment[] = [document.createDocumentFragment()];
+    Array.from(fragment.childNodes).forEach((node) => {
+      if (node instanceof HTMLBRElement) {
+        parts.push(document.createDocumentFragment());
+      } else {
+        parts[parts.length - 1].appendChild(node);
+      }
+    });
+    const nonEmptyParts = parts.filter((part) => part.textContent?.trim() || part.childNodes.length > 0);
+    if (nonEmptyParts.length === 0) {
+      range.insertNode(fragment);
+      return false;
+    }
+
+    const list = document.createElement(listTag);
+    nonEmptyParts.forEach((part) => {
+      const item = document.createElement("li");
+      item.appendChild(part);
+      if (!item.innerHTML.trim()) item.innerHTML = "<br>";
+      list.appendChild(item);
+    });
+    range.insertNode(list);
+    const lastItem = list.lastElementChild as HTMLElement | null;
+    if (lastItem) focusElementEnd(lastItem);
+    return true;
+  };
+
   const transformSelectedListItems = (
     items: HTMLElement[],
     listTag: "ul" | "ol"
@@ -1126,6 +1335,16 @@ export function ClassicEditor({
         handleInput();
         requestAnimationFrame(updateActiveState);
         return;
+      }
+
+      if (blocks.length === 0) {
+        pushEditorHistory();
+        if (convertTableCellSelectionToList(range, listTag)) {
+          setListActiveState(true);
+          handleInput();
+          requestAnimationFrame(updateActiveState);
+          return;
+        }
       }
     }
 
@@ -2569,188 +2788,6 @@ export function ClassicEditor({
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;");
 
-  const escapeHtmlAttribute = (value: string) =>
-    escapeHtml(value).replace(/"/g, "&quot;");
-
-  const markdownToHtml = (markdown: string) => {
-    const lines = markdown.replace(/\r\n/g, "\n").split("\n");
-    let html = "";
-    let listType: "ul" | "ol" | null = null;
-    let paragraph: string[] = [];
-    let codeFence: { lang: string; lines: string[] } | null = null;
-
-    const closeList = () => {
-      if (listType) {
-        html += `</${listType}>`;
-        listType = null;
-      }
-    };
-
-    const inline = (text: string) => {
-      const codeTokens: string[] = [];
-      let value = text.replace(/`([^`]+)`/g, (_match, code) => {
-        const token = `@@SRTE_CODE_${codeTokens.length}@@`;
-        codeTokens.push(`<code>${escapeHtml(code)}</code>`);
-        return token;
-      });
-
-      value = escapeHtml(value)
-        .replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+"([^"]+)")?\)/g, (_match, alt, src, title) => {
-          const titleAttr = title ? ` title="${escapeHtmlAttribute(title)}"` : "";
-          return `<img src="${escapeHtmlAttribute(src)}" alt="${escapeHtmlAttribute(alt)}"${titleAttr}>`;
-        })
-        .replace(/\[([^\]]+)\]\(([^)\s]+)(?:\s+"([^"]+)")?\)/g, (_match, label, href, title) => {
-          const titleAttr = title ? ` title="${escapeHtmlAttribute(title)}"` : "";
-          return `<a href="${escapeHtmlAttribute(href)}"${titleAttr}>${label}</a>`;
-        })
-        .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-        .replace(/__([^_]+)__/g, "<strong>$1</strong>")
-        .replace(/~~([^~]+)~~/g, "<s>$1</s>")
-        .replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>")
-        .replace(/(^|[^_])_([^_\n]+)_/g, "$1<em>$2</em>");
-
-      codeTokens.forEach((replacement, index) => {
-        value = value.replace(`@@SRTE_CODE_${index}@@`, replacement);
-      });
-
-      return value;
-    };
-
-    const closeParagraph = () => {
-      if (!paragraph.length) return;
-      html += `<p>${inline(paragraph.join(" "))}</p>`;
-      paragraph = [];
-    };
-
-    const isTableSeparator = (line: string) =>
-      /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line);
-
-    const parseTableRow = (line: string) => {
-      let value = line.trim();
-      if (value.startsWith("|")) value = value.slice(1);
-      if (value.endsWith("|")) value = value.slice(0, -1);
-      return value.split("|").map((cell) => cell.trim());
-    };
-
-    const renderTable = (startIndex: number) => {
-      const header = parseTableRow(lines[startIndex]);
-      let index = startIndex + 2;
-      const rows: string[][] = [];
-
-      while (index < lines.length && lines[index].includes("|") && lines[index].trim()) {
-        rows.push(parseTableRow(lines[index]));
-        index += 1;
-      }
-
-      const headHtml = `<thead><tr>${header.map((cell) => `<th>${inline(cell)}</th>`).join("")}</tr></thead>`;
-      const bodyHtml = rows.length
-        ? `<tbody>${rows.map((row) => `<tr>${header.map((_cell, cellIndex) => `<td>${inline(row[cellIndex] || "")}</td>`).join("")}</tr>`).join("")}</tbody>`
-        : "";
-      html += `<table style="border-collapse: collapse; width: 100%; margin: 12px 0;">${headHtml}${bodyHtml}</table>`;
-      return index;
-    };
-
-    for (let i = 0; i < lines.length; i += 1) {
-      const line = lines[i];
-      const trimmed = line.trim();
-
-      const fence = /^```([A-Za-z0-9_-]+)?\s*$/.exec(trimmed);
-      if (fence) {
-        closeParagraph();
-        closeList();
-        if (codeFence) {
-          const langClass = codeFence.lang ? ` class="language-${escapeHtmlAttribute(codeFence.lang)}"` : "";
-          html += `<pre><code${langClass}>${escapeHtml(codeFence.lines.join("\n"))}</code></pre>`;
-          codeFence = null;
-        } else {
-          codeFence = { lang: fence[1] || "", lines: [] };
-        }
-        continue;
-      }
-
-      if (codeFence) {
-        codeFence.lines.push(line);
-        continue;
-      }
-
-      if (!trimmed) {
-        closeParagraph();
-        closeList();
-        continue;
-      }
-
-      if (/^(-{3,}|\*{3,}|_{3,})$/.test(trimmed)) {
-        closeParagraph();
-        closeList();
-        html += "<hr>";
-        continue;
-      }
-
-      if (i + 1 < lines.length && trimmed.includes("|") && isTableSeparator(lines[i + 1])) {
-        closeParagraph();
-        closeList();
-        i = renderTable(i) - 1;
-        continue;
-      }
-
-      const heading = /^(#{1,6})\s+(.+)$/.exec(trimmed);
-      if (heading) {
-        closeParagraph();
-        closeList();
-        const level = heading[1].length;
-        html += `<h${level}>${inline(heading[2])}</h${level}>`;
-        continue;
-      }
-
-      const bullet = /^[-*+]\s+(.+)$/.exec(trimmed);
-      if (bullet) {
-        closeParagraph();
-        if (listType !== "ul") {
-          closeList();
-          html += "<ul>";
-          listType = "ul";
-        }
-        html += `<li>${inline(bullet[1])}</li>`;
-        continue;
-      }
-
-      const numbered = /^\d+[.)]\s+(.+)$/.exec(trimmed);
-      if (numbered) {
-        closeParagraph();
-        if (listType !== "ol") {
-          closeList();
-          html += "<ol>";
-          listType = "ol";
-        }
-        html += `<li>${inline(numbered[1])}</li>`;
-        continue;
-      }
-
-      const quote = /^>\s?(.*)$/.exec(trimmed);
-      if (quote) {
-        closeParagraph();
-        closeList();
-        html += `<blockquote>${inline(quote[1]) || "<br>"}</blockquote>`;
-        continue;
-      }
-
-      closeList();
-      paragraph.push(trimmed);
-    }
-
-    if (codeFence) {
-      const langClass = codeFence.lang ? ` class="language-${escapeHtmlAttribute(codeFence.lang)}"` : "";
-      html += `<pre><code${langClass}>${escapeHtml(codeFence.lines.join("\n"))}</code></pre>`;
-    }
-    closeParagraph();
-    closeList();
-
-    const root = document.createElement("div");
-    root.innerHTML = html;
-    enhanceImportedTables(root);
-    return root.innerHTML;
-  };
-
   const htmlToMarkdown = (html: string) => {
     const root = document.createElement("div");
     root.innerHTML = html;
@@ -2782,7 +2819,7 @@ export function ClassicEditor({
     if (!files || files.length === 0) return;
     const file = files[0];
     const text = await file.text();
-    const html = type === "html" ? text : markdownToHtml(text);
+    const html = type === "html" ? text : markdownToCompatibilityHtml(text);
     const el = editableRef.current;
     const hasContent = el && el.textContent && el.textContent.trim().length > 0;
     insertImportedHtml(html, hasContent ? "append" : "replace", {
@@ -4892,7 +4929,7 @@ export function ClassicEditor({
         )}
         <button
           title="Insert link"
-          onClick={insertLink}
+          onClick={() => openLinkEditor()}
           style={{
             height: 32,
             padding: "0 10px",
@@ -5821,15 +5858,14 @@ export function ClassicEditor({
           }}
           onMouseMove={(e) => {
             if (draggedBlockRef.current) return;
-            updateDragHandleForTarget(getMovableElementFromNode(e.target as Node));
+            updateDragHandleForTarget(isNode(e.target) ? getMovableElementFromNode(e.target) : null);
           }}
           onMouseOver={(e) => {
             if (draggedBlockRef.current) return;
-            updateDragHandleForTarget(getMovableElementFromNode(e.target as Node));
+            updateDragHandleForTarget(isNode(e.target) ? getMovableElementFromNode(e.target) : null);
           }}
           onMouseLeave={(e) => {
-            const nextTarget = e.relatedTarget as HTMLElement | null;
-            if (nextTarget?.closest("[data-srte-drag-handle]")) return;
+            if (closestFromTarget(e.relatedTarget, "[data-srte-drag-handle]")) return;
             if (!draggedBlockRef.current) scheduleDragHandleHide();
           }}
           onPaste={(e) => {
@@ -5941,9 +5977,12 @@ export function ClassicEditor({
             if (anchor && editableRef.current?.contains(anchor)) {
               e.preventDefault();
               e.stopPropagation();
-              openEditorLink(anchor as HTMLAnchorElement);
+              openLinkEditor(anchor as HTMLAnchorElement);
+              setTableMenu(null);
+              setImageMenu(null);
               return;
             }
+            setLinkMenu(null);
             if (t && t.tagName === "IMG") {
               setSelectedImage(t as HTMLImageElement);
               scheduleImageOverlay();
@@ -5998,6 +6037,11 @@ export function ClassicEditor({
             updateActiveState();
           }}
           onKeyDown={(e) => {
+            if ((e.metaKey || e.ctrlKey) && String(e.key).toLowerCase() === "k") {
+              e.preventDefault();
+              openLinkEditor();
+              return;
+            }
             if ((e.metaKey || e.ctrlKey) && String(e.key).toLowerCase() === "z") {
               const restored = restoreEditorHistory(e.shiftKey ? "redo" : "undo");
               if (restored) {
@@ -6329,6 +6373,24 @@ export function ClassicEditor({
           </div>
         )}
       </div>
+      {linkMenu && (
+        <LinkEditorPopover
+          x={linkMenu.x}
+          y={linkMenu.y}
+          initialHref={linkMenu.initialHref}
+          initialText={linkMenu.initialText}
+          showTextInput={linkMenu.showTextInput}
+          showOpen={Boolean(linkMenu.anchor)}
+          showRemove={Boolean(linkMenu.anchor)}
+          onApply={applyLinkEditorValue}
+          onOpen={linkMenu.anchor ? () => {
+            openEditorLink(linkMenu.anchor!);
+            setLinkMenu(null);
+          } : undefined}
+          onRemove={linkMenu.anchor ? () => removeAnchorLink(linkMenu.anchor!) : undefined}
+          onCancel={() => setLinkMenu(null)}
+        />
+      )}
       {tableMenu && (
         <div
           style={{

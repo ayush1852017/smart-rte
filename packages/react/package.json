@@ -42,11 +42,11 @@
     "build": "tsc -p tsconfig.json",
     "prepublishOnly": "pnpm run build",
     "dev": "pnpm build",
-    "lint": "eslint . || true",
-    "test": "vitest run || true",
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --passWithNoTests",
     "storybook": "storybook dev -p 6006",
     "build-storybook": "storybook build",
-    "e2e": "playwright test || true"
+    "e2e": "playwright test --pass-with-no-tests"
   },
   "publishConfig": {
     "access": "public"
@@ -66,6 +66,7 @@
     "@types/react-dom": "^18.3.0",
     "react": "18.3.1",
     "react-dom": "18.3.1",
+    "jsdom": "^25.0.1",
     "storybook": "^8.6.14",
     "typescript": "^5.6.2",
     "vite": "^5.4.8",
@@ -74,6 +75,7 @@
   "dependencies": {
     "jszip": "^3.10.1",
     "mammoth": "^1.11.0",
-    "pdfjs-dist": "^5.4.530"
+    "pdfjs-dist": "^5.4.530",
+    "smartrte-core": "workspace:*"
   }
 }
