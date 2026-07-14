@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.2
+
+- Preserve paragraph and heading blocks when creating, restyling, or removing lists.
+- Keep list conversion inside table cells, including legacy cells containing direct text and line breaks.
+- Prevent list elements from being inserted beneath table rows or replacing table cells.
+
 ## 0.3.1
 
 - Make caret-based superscript and subscript toggling deterministic in controlled React applications.

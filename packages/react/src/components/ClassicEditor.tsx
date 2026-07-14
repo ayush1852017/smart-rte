@@ -1252,6 +1252,51 @@ export function ClassicEditor({
     return clone;
   };
 
+  const listItemContentSelector = "p,h1,h2,h3,h4,h5,h6,blockquote,pre";
+
+  const createListItemFromBlock = (block: HTMLElement) => {
+    const item = document.createElement("li");
+    item.style.textAlign = block.style.textAlign;
+    item.appendChild(block);
+    return item;
+  };
+
+  const extractListItemContent = (item: HTMLElement) => {
+    item.querySelectorAll(':scope > [data-srte-check]').forEach((control) => control.remove());
+    const output: Node[] = [];
+    let inlineParagraph: HTMLParagraphElement | null = null;
+    const flushInlineParagraph = () => {
+      if (!inlineParagraph) return;
+      if (!inlineParagraph.childNodes.length) inlineParagraph.innerHTML = "<br>";
+      output.push(inlineParagraph);
+      inlineParagraph = null;
+    };
+
+    Array.from(item.childNodes).forEach((node) => {
+      if (node instanceof HTMLElement && node.matches(listItemContentSelector)) {
+        flushInlineParagraph();
+        output.push(node);
+        return;
+      }
+      if (node instanceof HTMLElement && node.matches("ul,ol")) {
+        flushInlineParagraph();
+        output.push(node);
+        return;
+      }
+      inlineParagraph ||= document.createElement("p");
+      inlineParagraph.appendChild(node);
+    });
+    flushInlineParagraph();
+    if (item.style.textAlign) {
+      output.forEach((node) => {
+        if (node instanceof HTMLElement && node.matches(listItemContentSelector) && !node.style.textAlign) {
+          node.style.textAlign = item.style.textAlign;
+        }
+      });
+    }
+    return output;
+  };
+
   const mergeAdjacentCompatibleLists = (list: HTMLElement) => {
     const isCompatible = (candidate: Element | null) =>
       candidate instanceof HTMLElement &&
@@ -1338,9 +1383,7 @@ export function ClassicEditor({
     const parent = list.parentElement;
     if (!parent) return;
 
-    const paragraph = document.createElement("p");
-    paragraph.innerHTML = li.innerHTML || "<br>";
-    paragraph.style.textAlign = li.style.textAlign;
+    const content = extractListItemContent(li);
 
     const beforeList = cloneListShell(list);
     const afterList = cloneListShell(list);
@@ -1353,11 +1396,12 @@ export function ClassicEditor({
     }
 
     if (beforeList.childNodes.length) parent.insertBefore(beforeList, list);
-    parent.insertBefore(paragraph, list);
+    content.forEach((node) => parent.insertBefore(node, list));
     if (afterList.childNodes.length) parent.insertBefore(afterList, list);
     li.remove();
     if (!list.querySelector("li")) list.remove();
-    focusElementEnd(paragraph);
+    const focusTarget = [...content].reverse().find((node): node is HTMLElement => node instanceof HTMLElement);
+    focusElementEnd(focusTarget || parent);
   };
 
   const convertListTag = (list: HTMLElement, listTag: "ul" | "ol") => {
@@ -1486,6 +1530,65 @@ export function ClassicEditor({
     return lastSelected;
   };
 
+  const getDirectSelectionCell = (range: Range) => {
+    const startCell = getClosestCell(range.startContainer);
+    const endCell = getClosestCell(range.endContainer);
+    if (!startCell || startCell !== endCell) return null;
+    const contentBlock = (node: Node) => {
+      const element = node instanceof HTMLElement ? node : node.parentElement;
+      const block = element?.closest(listItemContentSelector) as HTMLElement | null;
+      return block && startCell.contains(block) ? block : null;
+    };
+    return contentBlock(range.startContainer) || contentBlock(range.endContainer)
+      ? null
+      : startCell;
+  };
+
+  const convertDirectTableCellSelectionToList = (range: Range, listTag: "ul" | "ol") => {
+    const cell = getDirectSelectionCell(range);
+    if (!cell || range.collapsed) return null;
+
+    const fragment = range.extractContents();
+    const parts: DocumentFragment[] = [document.createDocumentFragment()];
+    Array.from(fragment.childNodes).forEach((node) => {
+      if (node instanceof HTMLBRElement) parts.push(document.createDocumentFragment());
+      else parts[parts.length - 1].appendChild(node);
+    });
+    const nonEmptyParts = parts.filter((part) => part.textContent?.trim() || part.childNodes.length > 0);
+    if (nonEmptyParts.length === 0) {
+      range.insertNode(fragment);
+      return null;
+    }
+
+    const list = document.createElement(listTag);
+    nonEmptyParts.forEach((part) => {
+      const paragraph = document.createElement("p");
+      paragraph.appendChild(part);
+      if (!paragraph.innerHTML.trim()) paragraph.innerHTML = "<br>";
+      list.appendChild(createListItemFromBlock(paragraph));
+    });
+    range.insertNode(list);
+    const lastItem = list.lastElementChild as HTMLElement | null;
+    if (lastItem) focusElementEnd(lastItem);
+    return list;
+  };
+
+  const convertDirectTableCellContentsToList = (cell: HTMLTableCellElement, listTag: "ul" | "ol") => {
+    const range = document.createRange();
+    range.selectNodeContents(cell);
+    if (!cell.textContent?.trim() && !cell.querySelector("img,br")) {
+      const list = document.createElement(listTag);
+      const paragraph = document.createElement("p");
+      paragraph.innerHTML = "<br>";
+      const item = createListItemFromBlock(paragraph);
+      list.appendChild(item);
+      cell.replaceChildren(list);
+      focusElementEnd(item);
+      return list;
+    }
+    return convertDirectTableCellSelectionToList(range, listTag);
+  };
+
   const applyListStyle = (value: string) => {
     const listTag = value.startsWith("ordered:") ? "ol" : "ul";
     const styleType = value.replace(/^(ordered|bullet):/, "");
@@ -1493,6 +1596,27 @@ export function ClassicEditor({
 
     const range = getSelectionRangeInEditor();
     if (!range) return;
+    const currentBlock = range.collapsed ? getCurrentBlock() : null;
+    if (currentBlock && ["TD", "TH"].includes(currentBlock.tagName)) {
+      pushEditorHistory();
+      const list = convertDirectTableCellContentsToList(currentBlock as HTMLTableCellElement, listTag);
+      if (list) {
+        list.style.listStyleType = styleType;
+        handleInput();
+        requestAnimationFrame(updateActiveState);
+      }
+      return;
+    }
+    if (!range.collapsed && getDirectSelectionCell(range)) {
+      pushEditorHistory();
+      const list = convertDirectTableCellSelectionToList(range, listTag);
+      if (list) {
+        list.style.listStyleType = styleType;
+        handleInput();
+        requestAnimationFrame(updateActiveState);
+      }
+      return;
+    }
     const selectedBlocks = getSelectedBlocks(range);
     const selectedItems = getSelectedListItems(selectedBlocks);
     const selectedPlainBlocks = selectedBlocks.filter((block) => !block.closest("ul,ol"));
@@ -1646,7 +1770,7 @@ export function ClassicEditor({
     if (!editor || blocks.length === 0) return false;
     const selected = blocks.filter((block) => {
       if (!editor.contains(block)) return false;
-      if (block.tagName.toLowerCase() === "li") return false;
+      if (["li", "td", "th"].includes(block.tagName.toLowerCase())) return false;
       if (block.closest("ul,ol")) return false;
       return block.parentElement;
     });
@@ -1671,51 +1795,14 @@ export function ClassicEditor({
       if (styleType) list.style.listStyleType = styleType;
       parent.insertBefore(list, group[0]);
       group.forEach((block) => {
-        const li = document.createElement("li");
-        li.innerHTML = block.innerHTML || "<br>";
-        li.style.textAlign = block.style.textAlign;
+        const li = createListItemFromBlock(block);
         list.appendChild(li);
-        block.remove();
         lastLi = li;
       });
       mergeAdjacentCompatibleLists(list);
     });
 
     if (lastLi) focusElementEnd(lastLi);
-    return true;
-  };
-
-  const convertTableCellSelectionToList = (range: Range, listTag: "ul" | "ol") => {
-    if (range.collapsed) return false;
-    const startCell = getClosestCell(range.startContainer);
-    const endCell = getClosestCell(range.endContainer);
-    if (!startCell || startCell !== endCell) return false;
-
-    const fragment = range.extractContents();
-    const parts: DocumentFragment[] = [document.createDocumentFragment()];
-    Array.from(fragment.childNodes).forEach((node) => {
-      if (node instanceof HTMLBRElement) {
-        parts.push(document.createDocumentFragment());
-      } else {
-        parts[parts.length - 1].appendChild(node);
-      }
-    });
-    const nonEmptyParts = parts.filter((part) => part.textContent?.trim() || part.childNodes.length > 0);
-    if (nonEmptyParts.length === 0) {
-      range.insertNode(fragment);
-      return false;
-    }
-
-    const list = document.createElement(listTag);
-    nonEmptyParts.forEach((part) => {
-      const item = document.createElement("li");
-      item.appendChild(part);
-      if (!item.innerHTML.trim()) item.innerHTML = "<br>";
-      list.appendChild(item);
-    });
-    range.insertNode(list);
-    const lastItem = list.lastElementChild as HTMLElement | null;
-    if (lastItem) focusElementEnd(lastItem);
     return true;
   };
 
@@ -1831,11 +1918,9 @@ export function ClassicEditor({
 
         if (isSelected && toggleOff) {
           flushPendingList();
-          const paragraph = document.createElement("p");
-          paragraph.innerHTML = child.innerHTML || "<br>";
-          paragraph.style.textAlign = child.style.textAlign;
-          parent.insertBefore(paragraph, list);
-          lastTarget = paragraph;
+          const content = extractListItemContent(child);
+          content.forEach((node) => parent.insertBefore(node, list));
+          lastTarget = [...content].reverse().find((node): node is HTMLElement => node instanceof HTMLElement) || parent;
           child.remove();
           changed = true;
           return;
@@ -1875,6 +1960,15 @@ export function ClassicEditor({
 
     const range = getSelectionRangeInEditor();
     if (range && !range.collapsed) {
+      if (getDirectSelectionCell(range)) {
+        pushEditorHistory();
+        if (convertDirectTableCellSelectionToList(range, listTag)) {
+          setListActiveState(true);
+          handleInput();
+          requestAnimationFrame(updateActiveState);
+        }
+        return;
+      }
       const blocks = getSelectedBlocks(range);
       const selectedListItems = getSelectedListItems(blocks);
       if (selectedListItems.length > 0) {
@@ -1900,12 +1994,6 @@ export function ClassicEditor({
       if (blocks.length === 0) {
         pushEditorHistory();
         if (convertRootLineSelectionToList(range, listTag)) {
-          setListActiveState(true);
-          handleInput();
-          requestAnimationFrame(updateActiveState);
-          return;
-        }
-        if (convertTableCellSelectionToList(range, listTag)) {
           setListActiveState(true);
           handleInput();
           requestAnimationFrame(updateActiveState);
@@ -1942,12 +2030,24 @@ export function ClassicEditor({
       return;
     }
 
+    if (["TD", "TH"].includes(block.tagName)) {
+      pushEditorHistory();
+      if (convertDirectTableCellContentsToList(block as HTMLTableCellElement, listTag)) {
+        setListActiveState(true);
+        handleInput();
+        requestAnimationFrame(updateActiveState);
+      }
+      return;
+    }
+
     pushEditorHistory();
+    const parent = block.parentElement;
+    if (!parent) return;
+    const nextSibling = block.nextSibling;
     const list = document.createElement(listTag);
-    const li = document.createElement("li");
-    li.innerHTML = block.innerHTML || "<br>";
+    const li = createListItemFromBlock(block);
     list.appendChild(li);
-    block.parentElement?.replaceChild(list, block);
+    parent.insertBefore(list, nextSibling);
     focusElementEnd(li);
     setListActiveState(true);
     handleInput();
