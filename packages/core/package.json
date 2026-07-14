@@ -1,0 +1,47 @@
+{
+  "name": "smartrte-core",
+  "version": "0.2.0",
+  "description": "Framework-agnostic document model and editing primitives for Smart RTE",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ayush1852017/smart-rte.git",
+    "directory": "packages/core"
+  },
+  "homepage": "https://github.com/ayush1852017/smart-rte#readme",
+  "bugs": {
+    "url": "https://github.com/ayush1852017/smart-rte/issues"
+  },
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "!dist/**/*.test.js",
+    "!dist/**/*.test.d.ts",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepublishOnly": "npm run build",
+    "test": "vitest run",
+    "lint": "tsc -p tsconfig.json --noEmit"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "parse5": "^7.2.1",
+    "rehype-stringify": "^10.0.1",
+    "remark-gfm": "^4.0.1",
+    "remark-parse": "^11.0.0",
+    "remark-rehype": "^11.1.1",
+    "unified": "^11.0.5"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.2",
+    "vitest": "^2.1.4"
+  }
+}

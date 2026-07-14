@@ -118,6 +118,31 @@ export const SRTE_DEFAULT_CSS = `
 .srte-editor [contenteditable] li::marker {
   color: currentColor;
 }
+.srte-editor [contenteditable] table {
+  width: 100%;
+  margin: 0.75em 0;
+  border-collapse: collapse;
+}
+.srte-editor [contenteditable] th,
+.srte-editor [contenteditable] td {
+  padding: 8px;
+  border: 1px solid var(--srte-border);
+  vertical-align: top;
+}
+.srte-editor [contenteditable] th {
+  background: var(--srte-surface-subtle);
+  font-weight: 600;
+  text-align: left;
+}
+.srte-editor [contenteditable] td > h1,
+.srte-editor [contenteditable] td > h2,
+.srte-editor [contenteditable] td > h3,
+.srte-editor [contenteditable] th > h1,
+.srte-editor [contenteditable] th > h2,
+.srte-editor [contenteditable] th > h3 {
+  margin: 0 0 0.4em;
+  overflow-wrap: anywhere;
+}
 .srte-editor [contenteditable] pre {
   display: block;
   margin: 0.75em 0;
