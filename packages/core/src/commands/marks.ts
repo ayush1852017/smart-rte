@@ -110,6 +110,7 @@ export const toggleSuperscript = toggle("toggle-superscript", "superscript");
 export const toggleSubscript = toggle("toggle-subscript", "subscript");
 export const applyTextColor = createMarkCommand<string>("apply-text-color", (value) => ({ type: "textColor", value }), false);
 export const applyBackgroundColor = createMarkCommand<string>("apply-background-color", (value) => ({ type: "backgroundColor", value }), false);
+export const applyFontSize = createMarkCommand<number>("apply-font-size", (valuePx) => ({ type: "fontSize", valuePx }), false);
 
 type LinkInput = { href: string; target?: string };
 

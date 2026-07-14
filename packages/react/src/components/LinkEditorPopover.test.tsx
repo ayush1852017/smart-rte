@@ -54,9 +54,9 @@ describe("LinkEditorPopover", () => {
     renderPopover({ onApply });
 
     change("[data-srte-link-href-input]", "example.com");
-    click("Save");
+    click("Insert");
 
-    expect(onApply).toHaveBeenCalledWith({ href: "https://example.com", text: undefined });
+    expect(onApply).toHaveBeenCalledWith({ href: "https://example.com", text: undefined, openInNewTab: false });
   });
 
   it("requires display text for collapsed insertion", () => {
@@ -64,7 +64,7 @@ describe("LinkEditorPopover", () => {
     renderPopover({ onApply, showTextInput: true });
 
     change("[data-srte-link-href-input]", "https://example.com");
-    click("Save");
+    click("Insert");
 
     expect(onApply).not.toHaveBeenCalled();
     expect(document.querySelector("[data-srte-link-error]")?.textContent).toContain("display text");
@@ -76,9 +76,9 @@ describe("LinkEditorPopover", () => {
 
     change("[data-srte-link-text-input]", "Example");
     change("[data-srte-link-href-input]", "example.com");
-    click("Save");
+    click("Insert");
 
-    expect(onApply).toHaveBeenCalledWith({ href: "https://example.com", text: "Example" });
+    expect(onApply).toHaveBeenCalledWith({ href: "https://example.com", text: "Example", openInNewTab: false });
   });
 
   it("prefills edit state and supports remove/open/cancel", () => {
@@ -99,7 +99,7 @@ describe("LinkEditorPopover", () => {
     expect((document.querySelector("[data-srte-link-href-input]") as HTMLInputElement).value).toBe("mailto:old@example.test");
     expect((document.querySelector("[data-srte-link-text-input]") as HTMLInputElement).value).toBe("Old");
     click("Open");
-    click("Remove");
+    click("Remove link");
     click("Cancel");
 
     expect(onOpen).toHaveBeenCalledOnce();
@@ -112,7 +112,7 @@ describe("LinkEditorPopover", () => {
     renderPopover({ onApply });
 
     change("[data-srte-link-href-input]", "javascript:alert(1)");
-    click("Save");
+    click("Insert");
 
     expect(onApply).not.toHaveBeenCalled();
     expect(document.querySelector("[data-srte-link-error]")?.textContent).toContain("safe");
@@ -126,8 +126,33 @@ describe("LinkEditorPopover", () => {
     renderPopover({ onApply });
 
     change("[data-srte-link-href-input]", input);
-    click("Save");
+    click("Insert");
 
-    expect(onApply).toHaveBeenCalledWith({ href, text: undefined });
+    expect(onApply).toHaveBeenCalledWith({ href, text: undefined, openInNewTab: false });
+  });
+
+  it("allows normal pointer interaction in link fields", () => {
+    renderPopover({ initialHref: "https://example.com/path" });
+    const input = document.querySelector("[data-srte-link-href-input]") as HTMLInputElement;
+    const event = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+
+    input.dispatchEvent(event);
+
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  it("applies secure new-tab behavior", () => {
+    const onApply = vi.fn();
+    renderPopover({ onApply });
+    change("[data-srte-link-href-input]", "example.com");
+    const checkbox = document.querySelector("[data-srte-link-new-tab-input]") as HTMLInputElement;
+    act(() => checkbox.click());
+    click("Insert");
+
+    expect(onApply).toHaveBeenCalledWith({
+      href: "https://example.com",
+      text: undefined,
+      openInNewTab: true,
+    });
   });
 });

@@ -5,6 +5,7 @@ import {
   type SmartDocument,
   type SmartMark,
   type SmartTextNode,
+  type TextAlignment,
 } from "smartrte-core";
 import { isEditorOnlyElement } from "./domSelectionBridge.js";
 
@@ -51,8 +52,17 @@ const marksFor = (element: Element, inherited: SmartMark[]): SmartMark[] => {
   }
   const color = element.getAttribute("color") || (element as HTMLElement).style.color;
   const backgroundColor = (element as HTMLElement).style.backgroundColor;
+  const fontSize = (element as HTMLElement).style.fontSize;
   if (color) marks = addMark(marks, { type: "textColor", value: color });
   if (backgroundColor) marks = addMark(marks, { type: "backgroundColor", value: backgroundColor });
+  if (fontSize) {
+    const match = /^([\d.]+)(px|pt)?$/i.exec(fontSize.trim());
+    if (match) {
+      const numeric = Number(match[1]);
+      const valuePx = match[2]?.toLowerCase() === "pt" ? numeric * 4 / 3 : numeric;
+      if (Number.isFinite(valuePx) && valuePx > 0) marks = addMark(marks, { type: "fontSize", valuePx });
+    }
+  }
   return marks;
 };
 
@@ -87,7 +97,12 @@ const paragraphFromDirectContent = (element: Element) => {
   const inline = inlineNodes(
     Array.from(element.childNodes).filter((node) => !(node instanceof Element && blockTags.has(node.tagName.toLowerCase()))),
   );
-  return inline.length ? { type: "paragraph" as const, children: inline } : null;
+  return inline.length ? { type: "paragraph" as const, alignment: alignmentFor(element), children: inline } : null;
+};
+
+const alignmentFor = (element: Element): TextAlignment | undefined => {
+  const value = ((element as HTMLElement).style.textAlign || element.getAttribute("align") || "").toLowerCase();
+  return value === "center" || value === "right" || value === "justify" ? value : undefined;
 };
 
 const parseBlocks = (parent: Element): SmartBlockNode[] => directBlockChildren(parent).flatMap(parseBlock);
@@ -99,9 +114,9 @@ const parseList = (element: Element): SmartBlockNode => {
     .map((item) => {
       const content = paragraphFromDirectContent(item);
       const nested = Array.from(item.children)
-        .filter((child) => ["ul", "ol", "blockquote", "pre", "table", "p"].includes(child.tagName.toLowerCase()))
+        .filter((child) => ["ul", "ol", "blockquote", "pre", "table", "p", "h1", "h2", "h3", "h4", "h5", "h6"].includes(child.tagName.toLowerCase()))
         .flatMap(parseBlock);
-      return { type: "listItem" as const, children: [...(content ? [content] : []), ...nested] };
+      return { type: "listItem" as const, alignment: alignmentFor(item), children: [...(content ? [content] : []), ...nested] };
     });
   return { type: "list", style, children: items };
 };
@@ -127,18 +142,18 @@ const parseTable = (element: Element): SmartBlockNode => ({
         type: cell.tagName.toLowerCase() === "th" ? "tableHeaderCell" : "tableCell",
         colspan: Number(cell.getAttribute("colspan")) || undefined,
         rowspan: Number(cell.getAttribute("rowspan")) || undefined,
-        children: parseBlocks(cell).length ? parseBlocks(cell) : [{ type: "paragraph", children: inlineNodes(cell.childNodes) }],
+        children: parseBlocks(cell).length ? parseBlocks(cell) : [{ type: "paragraph", alignment: alignmentFor(cell), children: inlineNodes(cell.childNodes) }],
       })),
   })),
 });
 
 const parseBlock = (element: Element): SmartBlockNode[] => {
   const tag = element.tagName.toLowerCase();
-  if (tag === "p") return [{ type: "paragraph", children: inlineNodes(element.childNodes) }];
-  if (/^h[1-6]$/.test(tag)) return [{ type: "heading", level: Number(tag.slice(1)) as 1 | 2 | 3 | 4 | 5 | 6, children: inlineNodes(element.childNodes) }];
+  if (tag === "p") return [{ type: "paragraph", alignment: alignmentFor(element), children: inlineNodes(element.childNodes) }];
+  if (/^h[1-6]$/.test(tag)) return [{ type: "heading", level: Number(tag.slice(1)) as 1 | 2 | 3 | 4 | 5 | 6, alignment: alignmentFor(element), children: inlineNodes(element.childNodes) }];
   if (tag === "ul" || tag === "ol") return [parseList(element)];
-  if (tag === "blockquote") return [{ type: "blockquote", children: parseBlocks(element) }];
-  if (tag === "pre") return [{ type: "codeBlock", text: element.textContent || "", language: element.querySelector("code")?.className.replace(/^language-/, "") || undefined }];
+  if (tag === "blockquote") return [{ type: "blockquote", alignment: alignmentFor(element), children: parseBlocks(element) }];
+  if (tag === "pre") return [{ type: "codeBlock", alignment: alignmentFor(element), text: element.textContent || "", language: element.querySelector("code")?.className.replace(/^language-/, "") || undefined }];
   if (tag === "table") return [parseTable(element)];
   return [];
 };
@@ -168,19 +183,22 @@ const serializeText = (node: SmartTextNode) => {
     if (mark.type === "code") html = `<code>${html}</code>`;
     if (mark.type === "textColor") html = `<span style="color:${escapeHtml(mark.value)}">${html}</span>`;
     if (mark.type === "backgroundColor") html = `<span style="background-color:${escapeHtml(mark.value)}">${html}</span>`;
+    if (mark.type === "fontSize") html = `<span style="font-size:${mark.valuePx}px">${html}</span>`;
     if (mark.type === "link") html = `<a href="${escapeHtml(mark.href)}"${mark.target ? ` target="${escapeHtml(mark.target)}"` : ""}>${html}</a>`;
   });
   return html;
 };
 
+const alignmentAttribute = (alignment?: TextAlignment) => alignment ? ` style="text-align:${alignment}"` : "";
+
 const serializeBlock = (block: SmartBlockNode): string => {
-  if (block.type === "paragraph") return `<p>${block.children.map(serializeText).join("")}</p>`;
-  if (block.type === "heading") return `<h${block.level}>${block.children.map(serializeText).join("")}</h${block.level}>`;
-  if (block.type === "blockquote") return `<blockquote>${block.children.map(serializeBlock).join("")}</blockquote>`;
-  if (block.type === "codeBlock") return `<pre><code${block.language ? ` class="language-${escapeHtml(block.language)}"` : ""}>${escapeHtml(block.text)}</code></pre>`;
+  if (block.type === "paragraph") return `<p${alignmentAttribute(block.alignment)}>${block.children.map(serializeText).join("")}</p>`;
+  if (block.type === "heading") return `<h${block.level}${alignmentAttribute(block.alignment)}>${block.children.map(serializeText).join("")}</h${block.level}>`;
+  if (block.type === "blockquote") return `<blockquote${alignmentAttribute(block.alignment)}>${block.children.map(serializeBlock).join("")}</blockquote>`;
+  if (block.type === "codeBlock") return `<pre${alignmentAttribute(block.alignment)}><code${block.language ? ` class="language-${escapeHtml(block.language)}"` : ""}>${escapeHtml(block.text)}</code></pre>`;
   if (block.type === "list") {
     const tag = block.style === "decimal" ? "ol" : "ul";
-    return `<${tag}>${block.children.map((item) => `<li>${item.children.map(serializeBlock).join("")}</li>`).join("")}</${tag}>`;
+    return `<${tag}>${block.children.map((item) => `<li${alignmentAttribute(item.alignment)}>${item.children.map(serializeBlock).join("")}</li>`).join("")}</${tag}>`;
   }
   return `<table><tbody>${block.children.map((row) => `<tr>${row.children.map((cell) => `<${cell.type === "tableHeaderCell" ? "th" : "td"}>${cell.children.map(serializeBlock).join("")}</${cell.type === "tableHeaderCell" ? "th" : "td"}>`).join("")}</tr>`).join("")}</tbody></table>`;
 };

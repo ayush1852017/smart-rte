@@ -8,6 +8,7 @@ export * from "./tree.js";
 export * from "./commands/list.js";
 export * from "./commands/code.js";
 export * from "./commands/marks.js";
+export * from "./commands/alignment.js";
 export * from "./html/compatibility.js";
 export * from "./markdown/compatibility.js";
 export * from "./security/urlPolicy.js";

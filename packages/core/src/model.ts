@@ -1,4 +1,5 @@
 export type Path = readonly number[];
+export type TextAlignment = "left" | "center" | "right" | "justify";
 
 export type SmartMark =
   | { type: "bold" }
@@ -10,6 +11,7 @@ export type SmartMark =
   | { type: "code" }
   | { type: "textColor"; value: string }
   | { type: "backgroundColor"; value: string }
+  | { type: "fontSize"; valuePx: number }
   | { type: "link"; href: string; target?: string };
 
 export interface SmartTextNode {
@@ -20,17 +22,20 @@ export interface SmartTextNode {
 
 export interface SmartParagraphNode {
   type: "paragraph";
+  alignment?: TextAlignment;
   children: SmartTextNode[];
 }
 
 export interface SmartHeadingNode {
   type: "heading";
   level: 1 | 2 | 3 | 4 | 5 | 6;
+  alignment?: TextAlignment;
   children: SmartTextNode[];
 }
 
 export interface SmartListItemNode {
   type: "listItem";
+  alignment?: TextAlignment;
   children: SmartBlockNode[];
 }
 
@@ -42,11 +47,13 @@ export interface SmartListNode {
 
 export interface SmartBlockquoteNode {
   type: "blockquote";
+  alignment?: TextAlignment;
   children: SmartBlockNode[];
 }
 
 export interface SmartCodeBlockNode {
   type: "codeBlock";
+  alignment?: TextAlignment;
   text: string;
   language?: string;
 }

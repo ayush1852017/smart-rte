@@ -221,4 +221,38 @@ describe("live SmartDocument adapter", () => {
     expect(getNodeAtPath(smartDocument, [0, 0])).toMatchObject({ type: "text", text: "bad" });
     expect((getNodeAtPath(smartDocument, [0, 0]) as { marks?: unknown[] }).marks).toBeUndefined();
   });
+
+  it("preserves font-size marks and headings inside list items", () => {
+    document.body.innerHTML = '<div id="editor"><ol><li><h3><span style="font-size:24px">Sized heading</span></h3></li></ol></div>';
+    const editor = document.getElementById("editor") as HTMLElement;
+    const { document: smartDocument } = smartDocumentFromEditorRoot(editor);
+
+    expect(getNodeAtPath(smartDocument, [0, 0, 0])).toMatchObject({ type: "heading", level: 3 });
+    expect(getNodeAtPath(smartDocument, [0, 0, 0, 0])).toMatchObject({
+      type: "text",
+      text: "Sized heading",
+      marks: [{ type: "fontSize", valuePx: 24 }],
+    });
+    expect(serializeSmartDocument(smartDocument)).toContain('font-size:24px');
+  });
+
+  it("round-trips block and list-item alignment", () => {
+    document.body.innerHTML = '<div id="editor"><p style="text-align:center">Centered</p><ol><li style="text-align:right">Right</li></ol></div>';
+    const editor = document.getElementById("editor") as HTMLElement;
+    const { document: smartDocument } = smartDocumentFromEditorRoot(editor);
+
+    expect(getNodeAtPath(smartDocument, [0])).toMatchObject({ type: "paragraph", alignment: "center" });
+    expect(getNodeAtPath(smartDocument, [1, 0])).toMatchObject({ type: "listItem", alignment: "right" });
+    expect(serializeSmartDocument(smartDocument)).toContain('<p style="text-align:center">Centered</p>');
+    expect(serializeSmartDocument(smartDocument)).toContain('<li style="text-align:right">');
+  });
+
+  it("round-trips code-block alignment", () => {
+    document.body.innerHTML = '<div id="editor"><pre style="text-align:justify"><code>const value = 1;</code></pre></div>';
+    const editor = document.getElementById("editor") as HTMLElement;
+    const { document: smartDocument } = smartDocumentFromEditorRoot(editor);
+
+    expect(getNodeAtPath(smartDocument, [0])).toMatchObject({ type: "codeBlock", alignment: "justify" });
+    expect(serializeSmartDocument(smartDocument)).toContain('<pre style="text-align:justify"><code>');
+  });
 });

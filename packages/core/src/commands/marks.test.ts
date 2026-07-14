@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyTransaction,
   applyLink,
+  applyFontSize,
   paragraph,
   removeLink,
   toggleBold,
@@ -24,6 +25,16 @@ const stateFor = (document: SmartDocument, path: readonly number[], start: numbe
 });
 
 describe("inline mark commands", () => {
+  it("applies and replaces a font-size mark", () => {
+    const document: SmartDocument = { type: "doc", children: [paragraph("hello")] };
+    const state = stateFor(document, [0, 0], 0, 5);
+    const sized = applyTransaction(state, applyFontSize.execute(state, 24));
+    const resized = applyTransaction(sized, applyFontSize.execute(sized, 18));
+
+    expect((resized.document.children[0] as any).children[0].marks).toEqual([
+      { type: "fontSize", valuePx: 18 },
+    ]);
+  });
   it("marks only the selected text and preserves adjacent text", () => {
     const document: SmartDocument = { type: "doc", children: [paragraph("hello"), paragraph("unchanged")] };
     const state = stateFor(document, [0, 0], 1, 4);
