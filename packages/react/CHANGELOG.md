@@ -5,6 +5,7 @@
 - Preserve paragraph and heading blocks when creating, restyling, or removing lists.
 - Keep list conversion inside table cells, including legacy cells containing direct text and line breaks.
 - Prevent list elements from being inserted beneath table rows or replacing table cells.
+- Make nested-list Tab and Shift+Tab deterministic, depth-aware, selection-preserving, and independently styled.
 
 ## 0.3.1
 

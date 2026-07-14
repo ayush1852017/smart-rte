@@ -285,6 +285,268 @@ describe("ClassicEditor lists", () => {
     expect(editor.querySelector("tr > ul, tbody > ul, table > ul")).toBeNull();
   });
 
+  it("indents and outdents the caret item deterministically while preserving the caret", () => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    act(() => {
+      root = createRoot(host!);
+      root.render(<ClassicEditorComponent value={"<ol><li><p>one</p></li><li><p>two</p></li><li><p>three</p></li></ol>"} />);
+    });
+    const editor = host.querySelector('[contenteditable="true"]') as HTMLElement;
+    const secondText = editor.querySelectorAll("li > p")[1].firstChild!;
+    const range = document.createRange();
+    range.setStart(secondText, 1);
+    range.collapse(true);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+
+    act(() => editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true })));
+    expect(editor.querySelector("ol > li:first-child > ol > li > p")?.textContent).toBe("two");
+    expect(selection.anchorNode?.textContent).toBe("two");
+    expect(selection.anchorOffset).toBe(1);
+
+    act(() => editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true, cancelable: true })));
+    expect(Array.from(editor.querySelectorAll(":scope > ol > li"), (item) => item.textContent)).toEqual(["one", "two", "three"]);
+    expect(editor.querySelector(":scope > ol > li > ol")).toBeNull();
+    expect(selection.anchorNode?.textContent).toBe("two");
+    expect(selection.anchorOffset).toBe(1);
+  });
+
+  it("indents a contiguous multi-item selection as one ordered run", () => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    act(() => {
+      root = createRoot(host!);
+      root.render(<ClassicEditorComponent value={"<ol><li><p>one</p></li><li><h2>two</h2></li><li><p>three</p></li><li><p>four</p></li></ol>"} />);
+    });
+    const editor = host.querySelector('[contenteditable="true"]') as HTMLElement;
+    const items = editor.querySelectorAll(":scope > ol > li");
+    const range = document.createRange();
+    range.setStart(items[1].querySelector("h2")!.firstChild!, 0);
+    range.setEnd(items[2].querySelector("p")!.firstChild!, 5);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+
+    act(() => editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true })));
+
+    const nested = editor.querySelector(":scope > ol > li:first-child > ol")!;
+    expect(Array.from(nested.children, (item) => item.textContent)).toEqual(["two", "three"]);
+    expect(nested.querySelector("li:first-child > h2")?.textContent).toBe("two");
+    expect(Array.from(editor.querySelectorAll(":scope > ol > li"), (item) => item.textContent)).toEqual(["onetwothree", "four"]);
+    expect(selection.toString()).toBe("twothree");
+  });
+
+  it("styles only the selected nested item and leaves its ancestor list unchanged", () => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    act(() => {
+      root = createRoot(host!);
+      root.render(<ClassicEditorComponent value={'<ol style="list-style-type:decimal"><li><p>parent</p><ul style="list-style-type:disc"><li><p>child one</p></li><li><h3>child two</h3></li></ul></li><li><p>outer two</p></li></ol>'} />);
+    });
+    const editor = host.querySelector('[contenteditable="true"]') as HTMLElement;
+    const nestedHeading = editor.querySelector("ul > li:nth-child(2) > h3")!;
+    const range = document.createRange();
+    range.selectNodeContents(nestedHeading);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+    const styles = host.querySelector('select[aria-label="Numbered list styles"]') as HTMLSelectElement;
+
+    act(() => {
+      styles.value = "ordered:lower-roman";
+      styles.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    const outer = editor.querySelector(":scope > ol") as HTMLElement;
+    expect(outer.style.listStyleType).toBe("decimal");
+    expect(outer.querySelector(":scope > li > p")?.textContent).toBe("parent");
+    expect(outer.querySelector('ol[style*="lower-roman"] > li > h3')?.textContent).toBe("child two");
+    expect(outer.querySelector("ul > li > p")?.textContent).toBe("child one");
+  });
+
+  it("does not convert an existing bullet sublist when indenting an ordered item", () => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    act(() => {
+      root = createRoot(host!);
+      root.render(<ClassicEditorComponent value={'<ol><li><p>one</p><ul style="list-style-type:disc"><li><p>existing bullet</p></li></ul></li><li><p>two</p></li></ol>'} />);
+    });
+    const editor = host.querySelector('[contenteditable="true"]') as HTMLElement;
+    const second = editor.querySelector(":scope > ol > li:nth-child(2) > p")!.firstChild!;
+    const range = document.createRange();
+    range.setStart(second, 1);
+    range.collapse(true);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+
+    act(() => editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true })));
+
+    const parent = editor.querySelector(":scope > ol > li")!;
+    expect(parent.querySelector("ul > li")?.textContent).toBe("existing bullet");
+    expect(parent.querySelector("ol > li")?.textContent).toBe("two");
+    expect(parent.querySelector("ul")?.getAttribute("style")).toContain("disc");
+  });
+
+  it("undoes a nested indent in one history step", () => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    act(() => {
+      root = createRoot(host!);
+      root.render(<ClassicEditorComponent value={"<ul><li><p>one</p></li><li><p>two</p></li></ul>"} />);
+    });
+    const editor = host.querySelector('[contenteditable="true"]') as HTMLElement;
+    const second = editor.querySelectorAll("li > p")[1].firstChild!;
+    const range = document.createRange();
+    range.setStart(second, 1);
+    range.collapse(true);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+
+    act(() => editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true })));
+    expect(editor.querySelector("ul > li > ul > li")?.textContent).toBe("two");
+    act(() => editor.dispatchEvent(new KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true, cancelable: true })));
+    expect(Array.from(editor.querySelectorAll(":scope > ul > li"), (item) => item.textContent)).toEqual(["one", "two"]);
+    expect(editor.querySelector(":scope > ul > li > ul")).toBeNull();
+  });
+
+  it("outdents only the selected middle nested item", () => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    act(() => {
+      root = createRoot(host!);
+      root.render(<ClassicEditorComponent value={"<ul><li><p>parent</p><ul><li><p>one</p></li><li><h4>two</h4></li><li><p>three</p></li></ul></li><li><p>outer</p></li></ul>"} />);
+    });
+    const editor = host.querySelector('[contenteditable="true"]') as HTMLElement;
+    const middle = editor.querySelector("ul ul > li:nth-child(2) > h4")!.firstChild!;
+    const range = document.createRange();
+    range.setStart(middle, 1);
+    range.collapse(true);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+
+    act(() => editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true, cancelable: true })));
+
+    const outerItems = editor.querySelectorAll(":scope > ul > li");
+    expect(Array.from(outerItems, (item) => item.querySelector(":scope > p,:scope > h4")?.textContent)).toEqual(["parent", "two", "outer"]);
+    expect(Array.from(outerItems[0].querySelectorAll(":scope > ul > li"), (item) => item.textContent)).toEqual(["one", "three"]);
+    expect(outerItems[1].querySelector(":scope > h4")?.textContent).toBe("two");
+  });
+
+  it("supports deterministic nesting inside a table cell without changing table structure", () => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    act(() => {
+      root = createRoot(host!);
+      root.render(<ClassicEditorComponent value={'<table><tbody><tr><td style="border:1px solid red"><ol><li><p>one</p></li><li><p>two</p></li></ol></td><td>keep</td></tr></tbody></table>'} />);
+    });
+    const editor = host.querySelector('[contenteditable="true"]') as HTMLElement;
+    const cell = editor.querySelector("td") as HTMLElement;
+    const second = cell.querySelectorAll("li > p")[1].firstChild!;
+    const range = document.createRange();
+    range.setStart(second, 1);
+    range.collapse(true);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+
+    act(() => editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true })));
+
+    expect(editor.querySelectorAll("tr > td")).toHaveLength(2);
+    expect(cell.style.border).toContain("red");
+    expect(cell.querySelector("ol > li > ol > li")?.textContent).toBe("two");
+    expect(editor.querySelector("tr > ol, tbody > ol, table > ol")).toBeNull();
+  });
+
+  it("creates and unwinds three list depths without losing block content", () => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    act(() => {
+      root = createRoot(host!);
+      root.render(<ClassicEditorComponent value={"<ol><li><h2>one</h2></li><li><p>two</p></li><li><h3>three</h3></li></ol>"} />);
+    });
+    const editor = host.querySelector('[contenteditable="true"]') as HTMLElement;
+    const texts = () => Array.from(editor.querySelectorAll("h2,p,h3"), (block) => block.firstChild!);
+    const selection = window.getSelection()!;
+    const selectText = (node: Node) => {
+      const range = document.createRange();
+      range.setStart(node, 1);
+      range.collapse(true);
+      selection.removeAllRanges();
+      selection.addRange(range);
+      document.dispatchEvent(new Event("selectionchange"));
+    };
+
+    selectText(texts()[1]);
+    act(() => editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true })));
+    selectText(texts()[2]);
+    act(() => editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true })));
+    act(() => editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true })));
+
+    expect(editor.querySelector("ol > li > ol > li > ol > li > h3")?.textContent).toBe("three");
+    expect(editor.querySelector("ol > li > h2")?.textContent).toBe("one");
+    expect(editor.querySelector("ol > li > ol > li > p")?.textContent).toBe("two");
+
+    act(() => editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true, cancelable: true })));
+    act(() => editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true, cancelable: true })));
+    expect(Array.from(editor.querySelectorAll(":scope > ol > li"), (item) => item.querySelector(":scope > h2,:scope > p,:scope > h3")?.textContent)).toEqual(["one", "three"]);
+  });
+
+  it("uses the same deterministic depth command from the move toolbar", () => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    act(() => {
+      root = createRoot(host!);
+      root.render(<ClassicEditorComponent value={"<ul><li><p>one</p></li><li><p>two</p></li><li><p>three</p></li></ul>"} />);
+    });
+    const editor = host.querySelector('[contenteditable="true"]') as HTMLElement;
+    const items = editor.querySelectorAll(":scope > ul > li");
+    const range = document.createRange();
+    range.setStart(items[1].querySelector("p")!.firstChild!, 0);
+    range.setEnd(items[2].querySelector("p")!.firstChild!, 5);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+
+    act(() => (host!.querySelector('button[title="Move selected block right"]') as HTMLButtonElement).click());
+    expect(Array.from(editor.querySelectorAll(":scope > ul > li:first-child > ul > li"), (item) => item.textContent)).toEqual(["two", "three"]);
+    expect(selection.toString()).toBe("twothree");
+  });
+
+  it("applies code formatting to the selected nested item rather than its ancestor", () => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    act(() => {
+      root = createRoot(host!);
+      root.render(<ClassicEditorComponent value={"<ul><li><p>parent</p><ul><li><p>child</p></li></ul></li></ul>"} />);
+    });
+    const editor = host.querySelector('[contenteditable="true"]') as HTMLElement;
+    const child = editor.querySelector("ul ul > li > p")!.firstChild!;
+    const range = document.createRange();
+    range.selectNodeContents(child);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+
+    act(() => (host!.querySelector('button[title="Code block"]') as HTMLButtonElement).click());
+    expect(editor.querySelector("ul ul > li > pre > code")?.textContent).toBe("child");
+    expect(editor.querySelector(":scope > ul > li > pre")).toBeNull();
+    expect(editor.querySelector(":scope > ul > li > p")?.textContent).toBe("parent");
+  });
+
   it("converts selected checklist items to numbering without checklist controls", () => {
     host = document.createElement("div");
     document.body.appendChild(host);

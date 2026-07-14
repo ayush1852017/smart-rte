@@ -1010,19 +1010,30 @@ export function ClassicEditor({
     return current ? [current] : [];
   };
 
-  const getSelectedListItems = (blocks: HTMLElement[]) => {
-    const seen = new Set<HTMLElement>();
-    const items: HTMLElement[] = [];
-    blocks.forEach((block) => {
-      const li = block.tagName.toLowerCase() === "li"
-        ? block
-        : (block.closest("li") as HTMLElement | null);
-      if (li && editableRef.current?.contains(li) && !seen.has(li)) {
-        seen.add(li);
-        items.push(li);
-      }
-    });
-    return items;
+  const resolveSelectedListItems = (range: Range) => {
+    const editor = editableRef.current;
+    if (!editor) return [];
+    if (range.collapsed) {
+      const element = range.startContainer instanceof HTMLElement
+        ? range.startContainer
+        : range.startContainer.parentElement;
+      const item = element?.closest("li") as HTMLElement | null;
+      return item && editor.contains(item) ? [item] : [];
+    }
+
+    const ownsSelectedContent = (item: HTMLElement) =>
+      Array.from(item.childNodes).some((node) => {
+        if (node instanceof HTMLElement && (node.matches("ul,ol") || node.dataset.srteCheck === "true")) return false;
+        try {
+          return range.intersectsNode(node);
+        } catch {
+          return false;
+        }
+      });
+
+    return sortInDocumentOrder(
+      Array.from(editor.querySelectorAll<HTMLElement>("li")).filter(ownsSelectedContent)
+    );
   };
 
   const getAlignmentTarget = (block: HTMLElement) => {
@@ -1412,74 +1423,150 @@ export function ClassicEditor({
     focusElementEnd(li || replacement);
   };
 
-  const getOrCreateNestedList = (li: HTMLElement, listTag: "ul" | "ol") => {
-    let nested = Array.from(li.children).find((child) => {
-      const tag = child.tagName.toLowerCase();
-      return tag === "ul" || tag === "ol";
-    }) as HTMLElement | undefined;
-
-    if (nested && nested.tagName.toLowerCase() !== listTag) {
-      const replacement = cloneListShell(nested, listTag);
-      replacement.innerHTML = nested.innerHTML;
-      nested.parentElement?.replaceChild(replacement, nested);
-      nested = replacement;
-    }
-
-    if (!nested) {
-      nested = document.createElement(listTag);
-      li.appendChild(nested);
-    }
-
+  const getOrCreateNestedList = (item: HTMLElement, source: HTMLElement) => {
+    const compatible = Array.from(item.children).find((child) =>
+      child instanceof HTMLElement &&
+      ["UL", "OL"].includes(child.tagName) &&
+      child.tagName === source.tagName &&
+      child.style.listStyleType === source.style.listStyleType &&
+      child.dataset.srteChecklist === source.dataset.srteChecklist &&
+      child.dataset.srteChecklistStrike === source.dataset.srteChecklistStrike
+    ) as HTMLElement | undefined;
+    if (compatible) return compatible;
+    const nested = cloneListShell(source);
+    item.appendChild(nested);
     return nested;
   };
 
-  const nestSelectedListItems = (items: HTMLElement[], listTag: "ul" | "ol") => {
-    if (items.length === 0) return false;
-    let changed = false;
-    let lastTargetList: HTMLElement | null = null;
+  const normalizeListItemStructure = (item: HTMLElement | null) => {
+    if (!item || item.tagName !== "LI") return;
+    Array.from(item.children)
+      .filter((child): child is HTMLElement => child instanceof HTMLElement && ["UL", "OL"].includes(child.tagName))
+      .forEach((list) => {
+        if (!list.querySelector(":scope > li")) list.remove();
+        else item.appendChild(list);
+      });
+  };
 
-    items.forEach((li) => {
-      const previous = li.previousElementSibling as HTMLElement | null;
-      if (!previous || previous.tagName.toLowerCase() !== "li") return;
-      const targetList = getOrCreateNestedList(previous, listTag);
-      targetList.appendChild(li);
-      lastTargetList = targetList;
-      changed = true;
+  const captureRangeForListMove = () => {
+    const range = getSelectionRangeInEditor();
+    return range ? {
+      startContainer: range.startContainer,
+      startOffset: range.startOffset,
+      endContainer: range.endContainer,
+      endOffset: range.endOffset,
+    } : null;
+  };
+
+  const restoreRangeAfterListMove = (snapshot: ReturnType<typeof captureRangeForListMove>) => {
+    const editor = editableRef.current;
+    if (!snapshot || !editor || !editor.contains(snapshot.startContainer) || !editor.contains(snapshot.endContainer)) return false;
+    try {
+      const range = document.createRange();
+      range.setStart(snapshot.startContainer, snapshot.startOffset);
+      range.setEnd(snapshot.endContainer, snapshot.endOffset);
+      safeSelectRange(range);
+      savedRangeRef.current = range.cloneRange();
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const nestSelectedListItems = (items: HTMLElement[]) => {
+    if (items.length === 0) return false;
+    const savedRange = captureRangeForListMove();
+    const selected = new Set(items);
+    const sourceLists = Array.from(new Set(items.map((item) => item.parentElement as HTMLElement)));
+    let changed = false;
+    let lastMoved: HTMLElement | null = null;
+
+    sourceLists.forEach((source) => {
+      if (!source || !["UL", "OL"].includes(source.tagName)) return;
+      const sourceItems = Array.from(source.children).filter((child): child is HTMLElement =>
+        child instanceof HTMLElement && child.tagName === "LI"
+      );
+      const runs: HTMLElement[][] = [];
+      sourceItems.forEach((item) => {
+        if (!selected.has(item)) return;
+        const currentRun = runs[runs.length - 1];
+        const previousIndex = currentRun ? sourceItems.indexOf(currentRun[currentRun.length - 1]) : -2;
+        const itemIndex = sourceItems.indexOf(item);
+        if (!currentRun || itemIndex !== previousIndex + 1) runs.push([item]);
+        else currentRun.push(item);
+      });
+
+      runs.forEach((run) => {
+        const previous = run[0].previousElementSibling as HTMLElement | null;
+        if (!previous || previous.tagName !== "LI" || selected.has(previous)) return;
+        const target = getOrCreateNestedList(previous, source);
+        run.forEach((item) => {
+          target.appendChild(item);
+          lastMoved = item;
+          changed = true;
+        });
+        normalizeListItemStructure(previous);
+      });
     });
 
-    if (changed) {
-      const lastItem = lastTargetList?.lastElementChild as HTMLElement | null;
-      if (lastItem) focusElementEnd(lastItem);
-    }
+    if (changed && !restoreRangeAfterListMove(savedRange) && lastMoved) focusElementEnd(lastMoved);
     return changed;
   };
 
-  const nestListSelection = () => {
-    const editor = editableRef.current;
-    if (!editor) return;
-    if (!restoreSavedSelection()) safeSelectRange(getSelectionRangeInEditor());
+  const outdentSelectedListItems = (items: HTMLElement[]) => {
+    if (items.length === 0) return false;
+    const savedRange = captureRangeForListMove();
+    const sourceLists = Array.from(new Set(items.map((item) => item.parentElement as HTMLElement)));
+    const selected = new Set(items);
+    let changed = false;
+    let lastMoved: HTMLElement | null = null;
 
-    const range = getSelectionRangeInEditor();
-    if (!range || range.collapsed) return;
-    const items = sortInDocumentOrder(getSelectedListItems(getSelectedBlocks(range)));
-    const firstList = items[0]?.parentElement;
-    if (
-      items.length === 0 ||
-      !firstList ||
-      !["ul", "ol"].includes(firstList.tagName.toLowerCase())
-    ) {
-      return;
-    }
+    sourceLists.forEach((source) => {
+      const parentItem = source?.parentElement as HTMLElement | null;
+      const outerList = parentItem?.parentElement as HTMLElement | null;
+      if (!source || parentItem?.tagName !== "LI" || !outerList || !["UL", "OL"].includes(outerList.tagName)) return;
+      const moving = Array.from(source.children).filter((child): child is HTMLElement =>
+        child instanceof HTMLElement && child.tagName === "LI" && selected.has(child)
+      );
+      let insertionPoint = parentItem.nextSibling;
+      moving.forEach((item) => {
+        outerList.insertBefore(item, insertionPoint);
+        lastMoved = item;
+        changed = true;
+      });
+      if (!source.querySelector(":scope > li")) source.remove();
+      normalizeListItemStructure(parentItem);
+    });
 
-    const listTag = firstList.tagName.toLowerCase() as "ul" | "ol";
-    const directItems = items.filter((item) => item.parentElement === firstList);
-    if (directItems.length === 0 || !directItems[0].previousElementSibling) return;
+    if (changed && !restoreRangeAfterListMove(savedRange) && lastMoved) focusElementEnd(lastMoved);
+    return changed;
+  };
 
+  const canIndentListItems = (items: HTMLElement[]) => {
+    const selected = new Set(items);
+    return items.some((item) => {
+      const previous = item.previousElementSibling;
+      return previous instanceof HTMLElement && previous.tagName === "LI" && !selected.has(previous);
+    });
+  };
+
+  const canOutdentListItems = (items: HTMLElement[]) => items.some((item) => {
+    const list = item.parentElement;
+    return list?.parentElement?.tagName === "LI" && ["UL", "OL"].includes(list.parentElement.parentElement?.tagName || "");
+  });
+
+  const applyListDepthChange = (items: HTMLElement[], direction: "indent" | "outdent") => {
+    const enabled = direction === "indent" ? canIndentListItems(items) : canOutdentListItems(items);
+    if (!enabled) return false;
     pushEditorHistory();
-    if (nestSelectedListItems(directItems, listTag)) {
+    const changed = direction === "indent"
+      ? nestSelectedListItems(items)
+      : outdentSelectedListItems(items);
+    if (changed) {
       handleInput();
       requestAnimationFrame(updateActiveState);
     }
+    return changed;
   };
 
   const restyleSelectedListItems = (
@@ -1618,7 +1705,7 @@ export function ClassicEditor({
       return;
     }
     const selectedBlocks = getSelectedBlocks(range);
-    const selectedItems = getSelectedListItems(selectedBlocks);
+    const selectedItems = resolveSelectedListItems(range);
     const selectedPlainBlocks = selectedBlocks.filter((block) => !block.closest("ul,ol"));
     if (selectedItems.length > 0) {
       pushEditorHistory();
@@ -1630,7 +1717,7 @@ export function ClassicEditor({
       return;
     }
     const lists = new Set<HTMLElement>();
-    getSelectedListItems(getSelectedBlocks(range)).forEach((item) => {
+    resolveSelectedListItems(range).forEach((item) => {
       const list = item.parentElement;
       if (
         list &&
@@ -1719,7 +1806,7 @@ export function ClassicEditor({
     if (!restoreSavedSelection()) safeSelectRange(getSelectionRangeInEditor());
     const range = getSelectionRangeInEditor();
     if (!range) return;
-    const selectedItems = getSelectedListItems(getSelectedBlocks(range));
+    const selectedItems = resolveSelectedListItems(range);
     const selectedChecklists = selectedItems.filter(
       (item) => item.parentElement?.dataset.srteChecklist === "true"
     );
@@ -1970,7 +2057,7 @@ export function ClassicEditor({
         return;
       }
       const blocks = getSelectedBlocks(range);
-      const selectedListItems = getSelectedListItems(blocks);
+      const selectedListItems = resolveSelectedListItems(range);
       if (selectedListItems.length > 0) {
         pushEditorHistory();
         if (transformSelectedListItems(selectedListItems, listTag)) {
@@ -2119,7 +2206,7 @@ export function ClassicEditor({
           return merged;
         };
 
-        const selectedItems = new Set(getSelectedListItems(selected));
+        const selectedItems = new Set(resolveSelectedListItems(range));
         const sourceLists = Array.from(new Set(Array.from(selectedItems, (item) => item.parentElement as HTMLElement)));
         let lastWrapped: HTMLElement | null = null;
         sourceLists.forEach((source) => {
@@ -2225,7 +2312,7 @@ export function ClassicEditor({
       ).filter((block) => editor.contains(block));
       if (blocks.length === 0) return;
 
-      const listItems = getSelectedListItems(blocks);
+      const listItems = resolveSelectedListItems(range);
       const plainBlocks = blocks.filter((block) => !block.closest("ul,ol") && !block.closest("table"));
       const getItemCode = (item: HTMLElement) =>
         item.querySelector(":scope > pre[data-srte-list-code]") as HTMLElement | null;
@@ -5124,25 +5211,6 @@ export function ClassicEditor({
     return getTopLevelMovableElement();
   };
 
-  const outdentListItem = (item: HTMLElement) => {
-    const list = item.parentElement as HTMLElement | null;
-    const parentItem = list?.parentElement;
-    const outerList = parentItem?.parentElement as HTMLElement | null;
-    if (
-      !list ||
-      !parentItem ||
-      parentItem.tagName.toLowerCase() !== "li" ||
-      !outerList ||
-      !["ul", "ol"].includes(outerList.tagName.toLowerCase())
-    ) {
-      return false;
-    }
-
-    outerList.insertBefore(item, parentItem.nextSibling);
-    if (!list.querySelector("li")) list.remove();
-    return true;
-  };
-
   const elementSibling = (element: HTMLElement, direction: "previous" | "next") => {
     let sibling = direction === "previous" ? element.previousSibling : element.nextSibling;
     while (
@@ -5206,12 +5274,20 @@ export function ClassicEditor({
 
   const moveCurrentElement = (direction: "up" | "down" | "left" | "right") => {
     const editor = editableRef.current;
+    const range = getSelectionRangeInEditor();
+    const selectedListItems = range ? resolveSelectedListItems(range) : [];
+    if (selectedListItems.length > 0 && (direction === "left" || direction === "right")) {
+      applyListDepthChange(selectedListItems, direction === "right" ? "indent" : "outdent");
+      return;
+    }
     if (moveSelectedBlocks(direction)) return;
     let target = getMoveTarget();
     if (!editor || !target) return;
+    let historyPushed = false;
 
-    pushEditorHistory();
     if (target.tagName === "TD" || target.tagName === "TH") {
+      pushEditorHistory();
+      historyPushed = true;
       const cell = target;
       const paragraph = document.createElement("p");
       while (cell.firstChild) paragraph.appendChild(cell.firstChild);
@@ -5221,28 +5297,50 @@ export function ClassicEditor({
     if (target.tagName.toLowerCase() === "li") {
       const list = target.parentElement as HTMLElement | null;
       if (!list) return;
+      let changed = false;
       if (direction === "up") {
         const previous = elementSibling(target, "previous");
-        if (previous?.nodeName === "LI") list.insertBefore(target, previous);
+        if (previous?.nodeName !== "LI") return;
+        pushEditorHistory();
+        list.insertBefore(target, previous);
+        changed = true;
       } else if (direction === "down") {
         const next = elementSibling(target, "next");
-        if (next?.nodeName === "LI") list.insertBefore(next, target);
+        if (next?.nodeName !== "LI") return;
+        pushEditorHistory();
+        list.insertBefore(next, target);
+        changed = true;
       } else if (direction === "right") {
-        nestSelectedListItems([target], list.tagName.toLowerCase() as "ul" | "ol");
+        if (!canIndentListItems([target])) return;
+        pushEditorHistory();
+        changed = nestSelectedListItems([target]);
       } else {
-        outdentListItem(target);
+        if (!canOutdentListItems([target])) return;
+        pushEditorHistory();
+        changed = outdentSelectedListItems([target]);
       }
+      if (!changed) return;
+      if (direction === "up" || direction === "down") focusElementEnd(target);
+      handleInput();
+      requestAnimationFrame(updateActiveState);
+      return;
     } else if (direction === "up") {
       const previous = elementSibling(target, "previous");
+      if (!previous) return;
+      if (!historyPushed) pushEditorHistory();
       if (previous) target.parentElement?.insertBefore(target, previous);
     } else if (direction === "down") {
       const next = elementSibling(target, "next");
+      if (!next) return;
+      if (!historyPushed) pushEditorHistory();
       if (next) target.parentElement?.insertBefore(next, target);
     } else {
       const current = parseInt(target.style.marginLeft || "0", 10) || 0;
       const nextMargin = direction === "right"
         ? Math.min(current + 24, 240)
         : Math.max(current - 24, 0);
+      if (nextMargin === current) return;
+      if (!historyPushed) pushEditorHistory();
       target.style.marginLeft = nextMargin ? `${nextMargin}px` : "";
     }
 
@@ -6054,6 +6152,7 @@ export function ClassicEditor({
           <span style={{ fontSize: 12, opacity: 0.7 }}>Move:</span>
           <button
             title="Move selected block up"
+            onMouseDown={preserveEditorSelection}
             onClick={() => moveCurrentElement("up")}
             style={activeButtonStyle(false, { height: 28, minWidth: 28, padding: "0 6px" })}
           >
@@ -6061,6 +6160,7 @@ export function ClassicEditor({
           </button>
           <button
             title="Move selected block down"
+            onMouseDown={preserveEditorSelection}
             onClick={() => moveCurrentElement("down")}
             style={activeButtonStyle(false, { height: 28, minWidth: 28, padding: "0 6px" })}
           >
@@ -6068,6 +6168,7 @@ export function ClassicEditor({
           </button>
           <button
             title="Move selected block left"
+            onMouseDown={preserveEditorSelection}
             onClick={() => moveCurrentElement("left")}
             style={activeButtonStyle(false, { height: 28, minWidth: 28, padding: "0 6px" })}
           >
@@ -6075,6 +6176,7 @@ export function ClassicEditor({
           </button>
           <button
             title="Move selected block right"
+            onMouseDown={preserveEditorSelection}
             onClick={() => moveCurrentElement("right")}
             style={activeButtonStyle(false, { height: 28, minWidth: 28, padding: "0 6px" })}
           >
@@ -6925,25 +7027,16 @@ export function ClassicEditor({
             }
             // Keep Tab for indentation in lists; otherwise insert 2 spaces
             if (e.key === "Tab") {
-              e.preventDefault();
               const selection = getSelectionRangeInEditor();
-              const selectedListItems = selection && !selection.collapsed
-                ? getSelectedListItems(getSelectedBlocks(selection))
-                : [];
+              const selectedListItems = selection ? resolveSelectedListItems(selection) : [];
               if (selectedListItems.length > 0) {
-                if (!e.shiftKey) {
-                  nestListSelection();
-                  return;
-                }
-                pushEditorHistory();
-                exec("outdent");
+                e.preventDefault();
+                applyListDepthChange(selectedListItems, e.shiftKey ? "outdent" : "indent");
                 return;
               }
+              e.preventDefault();
               const currentBlock = getCurrentBlock();
-              if (currentBlock?.closest("li")) {
-                pushEditorHistory();
-                exec(e.shiftKey ? "outdent" : "indent");
-              } else {
+              if (!currentBlock?.closest("li")) {
                 captureInputHistory("insertText");
                 document.execCommand("insertText", false, "  ");
               }
