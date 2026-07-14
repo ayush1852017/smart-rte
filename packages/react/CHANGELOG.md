@@ -7,6 +7,7 @@
 - Prevent list elements from being inserted beneath table rows or replacing table cells.
 - Make nested-list Tab and Shift+Tab deterministic, depth-aware, selection-preserving, and independently styled.
 - Remove the redundant standalone unlink control; links remain removable from the edit-link popover.
+- Use a recognizable chain-link icon and consolidate document import/export formats into labeled menus.
 
 ## 0.3.1
 

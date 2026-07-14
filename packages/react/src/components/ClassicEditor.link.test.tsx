@@ -69,4 +69,20 @@ describe("ClassicEditor link UI", () => {
     expect(anchor.rel).toContain("noopener");
     expect(anchor.rel).toContain("noreferrer");
   });
+
+  it("uses a recognizable link icon and grouped import/export format menus", () => {
+    renderEditor();
+    const link = document.querySelector('button[aria-label="Insert or edit link"]') as HTMLButtonElement;
+    expect(link.textContent).toContain("🔗");
+    expect(document.querySelector('button[aria-label="Remove link"]')).toBeNull();
+
+    const importMenu = document.querySelector('select[aria-label="Import document"]') as HTMLSelectElement;
+    const exportMenu = document.querySelector('select[aria-label="Export document"]') as HTMLSelectElement;
+    expect(Array.from(importMenu.options, (option) => option.textContent)).toEqual([
+      "Import…", "PDF (.pdf)", "Word (.docx)", "HTML (.html)", "Markdown (.md)",
+    ]);
+    expect(Array.from(exportMenu.options, (option) => option.textContent)).toEqual([
+      "Export…", "HTML (.html)", "Markdown (.md)", "Word (.docx)", "PDF (.pdf)",
+    ]);
+  });
 });

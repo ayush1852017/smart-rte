@@ -5872,7 +5872,7 @@ export function ClassicEditor({
           onClick={() => openLinkEditor()}
           style={activeButtonStyle(activeState.link, { minWidth: 34, fontSize: 17 })}
         >
-          <span aria-hidden="true">↗</span>
+          <span aria-hidden="true">🔗</span>
         </button>
         {media && (
           <>
@@ -5906,122 +5906,6 @@ export function ClassicEditor({
                 📁 Media
               </button>
             )}
-            <button
-              title="Import PDF"
-              onClick={() => pdfInputRef.current?.click()}
-              disabled={loadingPdf}
-              style={{
-                height: 32,
-                padding: "0 10px",
-                border: "1px solid var(--srte-input-border)",
-                borderRadius: 6,
-                background: "var(--srte-input-bg)",
-                color: "var(--srte-input-text)",
-                opacity: loadingPdf ? 0.5 : 1,
-              }}
-            >
-              {loadingPdf ? '⌛ Importing...' : '📄 PDF'}
-            </button>
-            <button
-              title="Import DOCX"
-              onClick={() => docxInputRef.current?.click()}
-              disabled={loadingDocx}
-              style={{
-                height: 32,
-                padding: "0 10px",
-                border: "1px solid var(--srte-input-border)",
-                borderRadius: 6,
-                background: "var(--srte-input-bg)",
-                color: "var(--srte-input-text)",
-                opacity: loadingDocx ? 0.5 : 1,
-              }}
-            >
-              {loadingDocx ? '⌛ Importing...' : '📝 DOCX'}
-            </button>
-            <button
-              title="Import HTML"
-              onClick={() => htmlInputRef.current?.click()}
-              style={{
-                height: 32,
-                padding: "0 10px",
-                border: "1px solid var(--srte-input-border)",
-                borderRadius: 6,
-                background: "var(--srte-input-bg)",
-                color: "var(--srte-input-text)",
-              }}
-            >
-              HTML
-            </button>
-            <button
-              title="Import Markdown"
-              onClick={() => mdInputRef.current?.click()}
-              style={{
-                height: 32,
-                padding: "0 10px",
-                border: "1px solid var(--srte-input-border)",
-                borderRadius: 6,
-                background: "var(--srte-input-bg)",
-                color: "var(--srte-input-text)",
-              }}
-            >
-              MD
-            </button>
-            <button
-              title="Export HTML"
-              onClick={exportHtml}
-              style={{
-                height: 32,
-                padding: "0 10px",
-                border: "1px solid var(--srte-input-border)",
-                borderRadius: 6,
-                background: "var(--srte-input-bg)",
-                color: "var(--srte-input-text)",
-              }}
-            >
-              Export HTML
-            </button>
-            <button
-              title="Export Markdown"
-              onClick={exportMarkdown}
-              style={{
-                height: 32,
-                padding: "0 10px",
-                border: "1px solid var(--srte-input-border)",
-                borderRadius: 6,
-                background: "var(--srte-input-bg)",
-                color: "var(--srte-input-text)",
-              }}
-            >
-              Export MD
-            </button>
-            <button
-              title="Export DOCX"
-              onClick={exportDocx}
-              style={{
-                height: 32,
-                padding: "0 10px",
-                border: "1px solid var(--srte-input-border)",
-                borderRadius: 6,
-                background: "var(--srte-input-bg)",
-                color: "var(--srte-input-text)",
-              }}
-            >
-              Export DOCX
-            </button>
-            <button
-              title="Export PDF"
-              onClick={exportPdf}
-              style={{
-                height: 32,
-                padding: "0 10px",
-                border: "1px solid var(--srte-input-border)",
-                borderRadius: 6,
-                background: "var(--srte-input-bg)",
-                color: "var(--srte-input-text)",
-              }}
-            >
-              Export PDF
-            </button>
             <div
               style={{
                 display: "inline-flex",
@@ -6103,6 +5987,62 @@ export function ClassicEditor({
             </div>
           </>
         )}
+        <select
+          defaultValue=""
+          aria-label="Import document"
+          title="Import document"
+          disabled={loadingPdf || loadingDocx}
+          onChange={(event) => {
+            const format = event.currentTarget.value;
+            event.currentTarget.value = "";
+            if (format === "pdf") pdfInputRef.current?.click();
+            else if (format === "docx") docxInputRef.current?.click();
+            else if (format === "html") htmlInputRef.current?.click();
+            else if (format === "markdown") mdInputRef.current?.click();
+          }}
+          style={{
+            height: 32,
+            padding: "0 8px",
+            border: "1px solid var(--srte-input-border)",
+            borderRadius: 6,
+            background: "var(--srte-input-bg)",
+            color: "var(--srte-input-text)",
+            opacity: loadingPdf || loadingDocx ? 0.6 : 1,
+          }}
+        >
+          <option value="" disabled>{loadingPdf || loadingDocx ? "Importing…" : "Import…"}</option>
+          <option value="pdf">PDF (.pdf)</option>
+          <option value="docx">Word (.docx)</option>
+          <option value="html">HTML (.html)</option>
+          <option value="markdown">Markdown (.md)</option>
+        </select>
+        <select
+          defaultValue=""
+          aria-label="Export document"
+          title="Export document"
+          onChange={(event) => {
+            const format = event.currentTarget.value;
+            event.currentTarget.value = "";
+            if (format === "html") exportHtml();
+            else if (format === "markdown") exportMarkdown();
+            else if (format === "docx") void exportDocx();
+            else if (format === "pdf") exportPdf();
+          }}
+          style={{
+            height: 32,
+            padding: "0 8px",
+            border: "1px solid var(--srte-input-border)",
+            borderRadius: 6,
+            background: "var(--srte-input-bg)",
+            color: "var(--srte-input-text)",
+          }}
+        >
+          <option value="" disabled>Export…</option>
+          <option value="html">HTML (.html)</option>
+          <option value="markdown">Markdown (.md)</option>
+          <option value="docx">Word (.docx)</option>
+          <option value="pdf">PDF (.pdf)</option>
+        </select>
         {table && (
           <button
             title="Insert table"
