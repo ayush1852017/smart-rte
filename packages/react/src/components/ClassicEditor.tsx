@@ -5874,28 +5874,6 @@ export function ClassicEditor({
         >
           <span aria-hidden="true">↗</span>
         </button>
-        <button
-          type="button"
-          title="Remove link"
-          aria-label="Remove link"
-          disabled={!activeState.link}
-          onPointerDown={preserveEditorSelection}
-          onClick={() => exec("unlink")}
-          style={{
-            height: 32,
-            minWidth: 34,
-            padding: "0 8px",
-            border: "1px solid var(--srte-input-border)",
-            borderRadius: 6,
-            background: "var(--srte-input-bg)",
-            color: "var(--srte-input-text)",
-            cursor: activeState.link ? "pointer" : "not-allowed",
-            opacity: activeState.link ? 1 : 0.45,
-            fontSize: 16,
-          }}
-        >
-          <span aria-hidden="true">↗̸</span>
-        </button>
         {media && (
           <>
             <button

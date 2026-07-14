@@ -6,6 +6,7 @@
 - Keep list conversion inside table cells, including legacy cells containing direct text and line breaks.
 - Prevent list elements from being inserted beneath table rows or replacing table cells.
 - Make nested-list Tab and Shift+Tab deterministic, depth-aware, selection-preserving, and independently styled.
+- Remove the redundant standalone unlink control; links remain removable from the edit-link popover.
 
 ## 0.3.1
 
