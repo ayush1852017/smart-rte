@@ -52,7 +52,7 @@ importers:
         specifier: ^5.4.530
         version: 5.4.530
       smartrte-core:
-        specifier: ^0.2.0
+        specifier: ^0.2.1
         version: link:../core
     devDependencies:
       '@playwright/test':

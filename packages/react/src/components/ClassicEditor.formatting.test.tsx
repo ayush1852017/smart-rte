@@ -198,4 +198,33 @@ describe("ClassicEditor headings and font size", () => {
     act(() => (host!.querySelector('button[aria-label="Align right"]') as HTMLButtonElement).click());
     expect((editor.querySelector("pre") as HTMLElement).style.textAlign).toBe("right");
   });
+
+  it("turns superscript off at a caret without changing surrounding script text", () => {
+    const editor = renderEditor("<p>x<sup>23</sup>y</p>");
+    const scripted = editor.querySelector("sup")!.firstChild!;
+    setRange(scripted, 1);
+    act(() => (host!.querySelector('button[title="Superscript"]') as HTMLButtonElement).click());
+    expect(host!.querySelector('button[title="Superscript"]')?.getAttribute("aria-pressed")).toBe("false");
+    act(() => editor.dispatchEvent(new InputEvent("beforeinput", {
+      bubbles: true,
+      cancelable: true,
+      data: "a",
+      inputType: "insertText",
+    })));
+    expect(editor.innerHTML).toBe("<p>x<sup>2</sup>a<sup>3</sup>y</p>");
+  });
+
+  it("applies a pending script to typed text and keeps script types exclusive", () => {
+    const editor = renderEditor("<p>x2</p>");
+    const text = editor.querySelector("p")!.firstChild!;
+    setRange(text, 1, text, 2);
+    act(() => (host!.querySelector('button[title="Superscript"]') as HTMLButtonElement).click());
+    expect(editor.innerHTML).toBe("<p>x<sup>2</sup></p>");
+
+    const superscript = editor.querySelector("sup")!.firstChild!;
+    setRange(superscript, 0, superscript, 1);
+    act(() => (host!.querySelector('button[title="Subscript"]') as HTMLButtonElement).click());
+    expect(editor.innerHTML).toBe("<p>x<sub>2</sub></p>");
+    expect(editor.querySelector("sup")).toBeNull();
+  });
 });

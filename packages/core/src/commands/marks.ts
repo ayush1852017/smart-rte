@@ -103,11 +103,28 @@ const createMarkCommand = <Input>(id: string, nextMark: (input: Input) => SmartM
 });
 
 const toggle = (id: string, type: InlineMarkType) => createMarkCommand<void>(id, () => ({ type } as SmartMark), true);
+const toggleScript = (id: string, type: "superscript" | "subscript"):
+  SmartCommand<void> => ({
+  id,
+  isEnabled: (context) => Boolean(getTextRange(context)),
+  execute: (context) => {
+    const range = getTextRange(context);
+    if (!range) throw new Error(`${id} requires text in one inline container.`);
+    const remove = range.nodes
+      .slice(range.startIndex, range.endIndex + 1)
+      .every((node) => hasMark(node.marks, type));
+    const opposite = type === "superscript" ? "subscript" : "superscript";
+    return createMarkTransaction(id, context, undefined, (marks) => {
+      const withoutOpposite = removeMark(marks, opposite);
+      return remove ? removeMark(withoutOpposite, type) : addMark(withoutOpposite, { type });
+    });
+  },
+});
 export const toggleBold = toggle("toggle-bold", "bold");
 export const toggleItalic = toggle("toggle-italic", "italic");
 export const toggleUnderline = toggle("toggle-underline", "underline");
-export const toggleSuperscript = toggle("toggle-superscript", "superscript");
-export const toggleSubscript = toggle("toggle-subscript", "subscript");
+export const toggleSuperscript = toggleScript("toggle-superscript", "superscript");
+export const toggleSubscript = toggleScript("toggle-subscript", "subscript");
 export const applyTextColor = createMarkCommand<string>("apply-text-color", (value) => ({ type: "textColor", value }), false);
 export const applyBackgroundColor = createMarkCommand<string>("apply-background-color", (value) => ({ type: "backgroundColor", value }), false);
 export const applyFontSize = createMarkCommand<number>("apply-font-size", (valuePx) => ({ type: "fontSize", valuePx }), false);

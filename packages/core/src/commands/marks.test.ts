@@ -150,6 +150,22 @@ describe("inline mark commands", () => {
     ]);
   });
 
+  it("replaces the opposite script mark instead of nesting script types", () => {
+    const document: SmartDocument = {
+      type: "doc",
+      children: [{
+        type: "paragraph",
+        children: [{ type: "text", text: "2", marks: [{ type: "superscript" }] }],
+      }],
+    };
+    const state = stateFor(document, [0, 0], 0, 1);
+    const next = applyTransaction(state, toggleSubscript.execute(state));
+
+    expect((next.document.children[0] as any).children).toEqual([
+      { type: "text", text: "2", marks: [{ type: "subscript" }] },
+    ]);
+  });
+
   it("rejects non-text selections", () => {
     const document: SmartDocument = { type: "doc", children: [paragraph("text")] };
     expect(toggleBold.isEnabled({ document, selection: { type: "node", path: [0] } })).toBe(false);

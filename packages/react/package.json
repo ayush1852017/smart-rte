@@ -1,6 +1,6 @@
 {
   "name": "smartrte-react",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "A powerful, feature-rich Rich Text Editor for React with support for tables, mathematical formulas (LaTeX/KaTeX), and media management",
   "type": "module",
   "main": "dist/index.js",
@@ -79,6 +79,6 @@
     "jszip": "^3.10.1",
     "mammoth": "^1.11.0",
     "pdfjs-dist": "^5.4.530",
-    "smartrte-core": "^0.2.0"
+    "smartrte-core": "^0.2.1"
   }
 }

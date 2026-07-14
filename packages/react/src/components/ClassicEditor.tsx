@@ -221,7 +221,7 @@ export function ClassicEditor({
     offset: number;
   } | null>(null);
   const inlineScriptCaretOverrideRef = useRef<{
-    command: "subscript" | "superscript";
+    command: "normal" | "subscript" | "superscript";
     container: Node;
     offset: number;
   } | null>(null);
@@ -418,12 +418,8 @@ export function ClassicEditor({
         italic: queryState("italic"),
         underline: queryState("underline"),
         strikeThrough: queryState("strikeThrough"),
-        subscript: overrideApplies && scriptOverride?.command === "subscript"
-          ? false
-          : subscriptActive,
-        superscript: overrideApplies && scriptOverride?.command === "superscript"
-          ? false
-          : superscriptActive,
+        subscript: overrideApplies ? scriptOverride?.command === "subscript" : subscriptActive,
+        superscript: overrideApplies ? scriptOverride?.command === "superscript" : superscriptActive,
         checklist: Boolean(element?.closest('[data-srte-checklist="true"]')),
         unorderedList: Boolean(element?.closest("ul:not([data-srte-checklist=\"true\"])")),
         orderedList: Boolean(element?.closest("ol")),
@@ -563,57 +559,120 @@ export function ClassicEditor({
       const range = getSelectionRangeInEditor();
       if (!editor || !range) return;
 
-      const tagName = command === "subscript" ? "sub" : "sup";
-      const script = range.collapsed
-        ? getScriptAncestor(range.startContainer, tagName)
-        : null;
-
-      if (range.collapsed && document.queryCommandState(command)) {
-        document.execCommand(command, false);
-        const currentRange = getSelectionRangeInEditor();
-        savedRangeRef.current = currentRange?.cloneRange() || null;
-        inlineScriptCaretOverrideRef.current = currentRange?.collapsed
-          ? {
-              command,
-              container: currentRange.startContainer,
-              offset: currentRange.startOffset,
-            }
-          : null;
-        setActiveState((current) => ({
-          ...current,
-          subscript: command === "subscript" ? false : current.subscript,
-          superscript: command === "superscript" ? false : current.superscript,
-        }));
-        handleInput();
-        requestAnimationFrame(updateActiveState);
-        return;
-      }
-
-      if (script) {
-        const nextRange = document.createRange();
-        nextRange.setStartAfter(script);
-        nextRange.collapse(true);
-        safeSelectRange(nextRange);
-        savedRangeRef.current = nextRange.cloneRange();
+      if (range.collapsed) {
+        const tagName = command === "subscript" ? "sub" : "sup";
+        const pending = inlineScriptCaretOverrideRef.current;
+        const pendingApplies = pending &&
+          pending.container === range.startContainer && pending.offset === range.startOffset;
+        const active = pendingApplies
+          ? pending.command === command
+          : Boolean(getScriptAncestor(range.startContainer, tagName));
+        const nextCommand = active ? "normal" : command;
         inlineScriptCaretOverrideRef.current = {
-          command,
-          container: nextRange.startContainer,
-          offset: nextRange.startOffset,
+          command: nextCommand,
+          container: range.startContainer,
+          offset: range.startOffset,
         };
         setActiveState((current) => ({
           ...current,
-          subscript: command === "subscript" ? false : current.subscript,
-          superscript: command === "superscript" ? false : current.superscript,
+          subscript: nextCommand === "subscript",
+          superscript: nextCommand === "superscript",
         }));
-        requestAnimationFrame(updateActiveState);
+        savedRangeRef.current = range.cloneRange();
         return;
       }
 
       inlineScriptCaretOverrideRef.current = null;
-      exec(command);
+      pushEditorHistory();
+      const result = getCoreInlineMarkResult(editor, command);
+      if (result) {
+        editor.innerHTML = result.html;
+        ensureTableWrappers(editor);
+        addTableResizeHandles();
+        restoreSelectionToDom(editor, result.selectionAfter);
+        handleInput();
+      } else {
+        exec(command);
+      }
       requestAnimationFrame(updateActiveState);
     } catch {}
   };
+
+  useEffect(() => {
+    const editor = editableRef.current;
+    if (!editor) return;
+
+    const splitScriptAtRange = (script: HTMLElement, range: Range) => {
+      const rightRange = document.createRange();
+      rightRange.selectNodeContents(script);
+      rightRange.setStart(range.startContainer, range.startOffset);
+      const rightContent = rightRange.extractContents();
+      const rightScript = script.cloneNode(false) as HTMLElement;
+      rightScript.appendChild(rightContent);
+      script.parentNode?.insertBefore(rightScript, script.nextSibling);
+      const insertion = document.createRange();
+      insertion.setStartAfter(script);
+      insertion.collapse(true);
+      if (!script.textContent) script.remove();
+      if (!rightScript.textContent) rightScript.remove();
+      return insertion;
+    };
+
+    const applyPendingInlineScript = (event: InputEvent) => {
+      const pending = inlineScriptCaretOverrideRef.current;
+      if (!pending || event.inputType !== "insertText" || !event.data) return;
+      const range = getSelectionRangeInEditor();
+      if (!range?.collapsed || range.startContainer !== pending.container || range.startOffset !== pending.offset) return;
+
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      pushEditorHistory();
+      const currentScript = getScriptAncestor(range.startContainer, "sub") ||
+        getScriptAncestor(range.startContainer, "sup");
+      const desiredTag = pending.command === "normal"
+        ? null
+        : pending.command === "subscript" ? "sub" : "sup";
+      let insertion = range;
+      if (currentScript && currentScript.tagName.toLowerCase() !== desiredTag) {
+        insertion = splitScriptAtRange(currentScript, range);
+      }
+
+      const text = document.createTextNode(event.data);
+      let inserted: Node = text;
+      if (desiredTag && currentScript?.tagName.toLowerCase() !== desiredTag) {
+        const script = document.createElement(desiredTag);
+        script.appendChild(text);
+        inserted = script;
+      }
+      const pendingSize = pendingFontSizeRef.current;
+      if (pendingSize) {
+        const span = document.createElement("span");
+        span.style.fontSize = `${pendingSize.valuePx}px`;
+        span.appendChild(inserted);
+        inserted = span;
+      }
+      insertion.insertNode(inserted);
+      const nextRange = document.createRange();
+      nextRange.setStartAfter(text);
+      nextRange.collapse(true);
+      safeSelectRange(nextRange);
+      inlineScriptCaretOverrideRef.current = {
+        command: pending.command,
+        container: nextRange.startContainer,
+        offset: nextRange.startOffset,
+      };
+      if (pendingSize) pendingFontSizeRef.current = {
+        valuePx: pendingSize.valuePx,
+        container: nextRange.startContainer,
+        offset: nextRange.startOffset,
+      };
+      savedRangeRef.current = nextRange.cloneRange();
+      handleInput();
+    };
+
+    editor.addEventListener("beforeinput", applyPendingInlineScript);
+    return () => editor.removeEventListener("beforeinput", applyPendingInlineScript);
+  }, []);
 
   const applyFormatBlock = (blockName: string) => {
     try {
@@ -5469,6 +5528,7 @@ export function ClassicEditor({
         </button>
         <button
           title="Subscript"
+          onMouseDown={preserveEditorSelection}
           onClick={() => toggleInlineScript("subscript")}
           aria-pressed={activeState.subscript}
           style={activeButtonStyle(activeState.subscript)}
@@ -5477,6 +5537,7 @@ export function ClassicEditor({
         </button>
         <button
           title="Superscript"
+          onMouseDown={preserveEditorSelection}
           onClick={() => toggleInlineScript("superscript")}
           aria-pressed={activeState.superscript}
           style={activeButtonStyle(activeState.superscript)}

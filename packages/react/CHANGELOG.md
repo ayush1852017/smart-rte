@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.1
+
+- Make caret-based superscript and subscript toggling deterministic in controlled React applications.
+- Preserve normal text before and after script spans and prevent nested superscript/subscript markup.
+
 ## 0.3.0
 
 - Rebuild list selection and conversion behavior for checklists, bullets, numbers, alphabetic lists, and Roman numerals.
