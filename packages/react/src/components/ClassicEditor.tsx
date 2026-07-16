@@ -12,6 +12,92 @@ import { getCoreInlineMarkResult, isCoreInlineMarkEnabled, type CoreInlineMark }
 import { closestFromTarget, isNode } from '../adapters/domTargets.js';
 import { ensureStyleSheet, SrteTheme } from '../theme.js';
 
+type ToolbarIconName =
+  | "undo" | "redo" | "align-left" | "align-center" | "align-right" | "justify"
+  | "move" | "up" | "down" | "outdent" | "indent" | "link" | "quote" | "code"
+  | "checklist" | "bullets" | "numbers" | "image" | "media" | "table" | "formula"
+  | "insert" | "import" | "export" | "omega" | "more" | "chevron";
+
+const iconPaths: Record<ToolbarIconName, React.ReactNode> = {
+  undo: <><path d="M9 7 5 11l4 4"/><path d="M5 11h7a5 5 0 0 1 5 5"/></>,
+  redo: <><path d="m15 7 4 4-4 4"/><path d="M19 11h-7a5 5 0 0 0-5 5"/></>,
+  "align-left": <><path d="M4 6h16M4 10h11M4 14h16M4 18h11"/></>,
+  "align-center": <><path d="M4 6h16M7 10h10M4 14h16M7 18h10"/></>,
+  "align-right": <><path d="M4 6h16M9 10h11M4 14h16M9 18h11"/></>,
+  justify: <><path d="M4 6h16M4 10h16M4 14h16M4 18h16"/></>,
+  move: <><path d="m8 7 4-4 4 4M12 3v18M8 17l4 4 4-4"/></>,
+  up: <><path d="m7 10 5-5 5 5M12 5v14"/></>,
+  down: <><path d="m7 14 5 5 5-5M12 19V5"/></>,
+  outdent: <><path d="M11 6h9M11 10h7M11 14h9M11 18h7M8 9l-3 3 3 3"/></>,
+  indent: <><path d="M11 6h9M11 10h7M11 14h9M11 18h7M4 9l3 3-3 3"/></>,
+  link: <><path d="M10 13a5 5 0 0 0 7.54.54l2-2a5 5 0 0 0-7.07-7.07l-1.15 1.15"/><path d="M14 11a5 5 0 0 0-7.54-.54l-2 2a5 5 0 0 0 7.07 7.07l1.14-1.14"/></>,
+  quote: <><path d="M6 15h4V9H5v6a4 4 0 0 1-1 2.7M15 15h4V9h-5v6a4 4 0 0 1-1 2.7"/></>,
+  code: <><path d="m8 9-3 3 3 3M16 9l3 3-3 3M14 5l-4 14"/></>,
+  checklist: <><path d="m4 6 1.5 1.5L8 5M11 6h9M4 12l1.5 1.5L8 11M11 12h9M4 18l1.5 1.5L8 17M11 18h9"/></>,
+  bullets: <><circle cx="5" cy="6" r="1"/><circle cx="5" cy="12" r="1"/><circle cx="5" cy="18" r="1"/><path d="M9 6h11M9 12h11M9 18h11"/></>,
+  numbers: <><path d="M4 6h1V3.8L4 4.5M4 11h2l-2 2h2M4 17h2l-2 2h2M10 6h10M10 12h10M10 18h10"/></>,
+  image: <><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9" r="1.5"/><path d="m21 15-5-5L5 20"/></>,
+  media: <><path d="M4 7h6l2 2h8v10H4z"/><path d="M8 14h8M12 11v6"/></>,
+  table: <><rect x="3" y="4" width="18" height="16" rx="1"/><path d="M3 10h18M9 4v16M15 4v16"/></>,
+  formula: <><path d="M18 5H8l5 7-5 7h10"/></>,
+  insert: <><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></>,
+  import: <><path d="M12 3v12M8 11l4 4 4-4M5 20h14"/></>,
+  export: <><path d="M12 16V4M8 8l4-4 4 4M5 20h14"/></>,
+  omega: <><path d="M7 19h4v-2a7 7 0 1 1 2 0v2h4"/></>,
+  more: <><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></>,
+  chevron: <path d="m8 10 4 4 4-4"/>,
+};
+
+function ToolbarIcon({ name, size = 16 }: { name: ToolbarIconName; size?: number }) {
+  return <svg aria-hidden="true" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">{iconPaths[name]}</svg>;
+}
+
+function ToolbarGroup({ label, priority, children }: { label: string; priority?: number; children: React.ReactNode }) {
+  return <div className="srte-toolbar-group" role="group" aria-label={label} data-srte-priority={priority || 1}>{children}</div>;
+}
+
+function ToolbarMenu({ label, icon, active, priority, children }: { label: string; icon: ToolbarIconName; active?: boolean; priority?: number; children: React.ReactNode }) {
+  const menuRef = useRef<HTMLDetailsElement | null>(null);
+  useEffect(() => {
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      if (menuRef.current?.open && !menuRef.current.contains(event.target as Node)) menuRef.current.open = false;
+    };
+    document.addEventListener("pointerdown", closeOnOutsidePointer);
+    return () => document.removeEventListener("pointerdown", closeOnOutsidePointer);
+  }, []);
+  return (
+    <details
+      ref={menuRef}
+      className="srte-toolbar-menu"
+      data-srte-priority={priority}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          menuRef.current?.removeAttribute("open");
+          menuRef.current?.querySelector<HTMLElement>("summary")?.focus();
+          return;
+        }
+        if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+        const items = Array.from(menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]:not([disabled])') || []);
+        if (!items.length) return;
+        event.preventDefault();
+        const currentIndex = items.indexOf(document.activeElement as HTMLElement);
+        const direction = event.key === "ArrowDown" ? 1 : -1;
+        items[(currentIndex + direction + items.length) % items.length]?.focus();
+      }}
+    >
+      <summary className={`srte-tool-button srte-menu-trigger${active ? " srte-active" : ""}`} aria-label={label} title={label}>
+        <ToolbarIcon name={icon}/><ToolbarIcon name="chevron" size={12}/>
+      </summary>
+      <div className="srte-menu" role="menu" aria-label={label}>{children}</div>
+    </details>
+  );
+}
+
+function MenuItem({ icon, label, active, disabled, onClick, title }: { icon: ToolbarIconName; label: string; active?: boolean; disabled?: boolean; onClick: () => void; title?: string }) {
+  return <button type="button" role="menuitem" className="srte-menu-item" aria-label={title || label} aria-pressed={Boolean(active)} aria-checked={active || undefined} disabled={disabled} title={title || label} onClick={(event) => { onClick(); (event.currentTarget.closest("details") as HTMLDetailsElement | null)?.removeAttribute("open"); }}><ToolbarIcon name={icon}/><span>{label}</span>{active && <span className="srte-menu-check" aria-hidden="true">✓</span>}</button>;
+}
+
 // Initialize PDF.js worker
 if (typeof window !== 'undefined') {
   pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
@@ -200,6 +286,7 @@ export function ClassicEditor({
     er: number;
     ec: number;
   } | null>(null);
+  const tableFillTargetsRef = useRef<HTMLTableCellElement[] | null>(null);
   const selectingRef = useRef<{
     tbody: HTMLTableSectionElement;
     start: HTMLTableCellElement;
@@ -237,6 +324,8 @@ export function ClassicEditor({
   const [currentFont, setCurrentFont] = useState<string>("");
   const [currentBlockType, setCurrentBlockType] = useState<"p" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "mixed">("p");
   const [currentAlignment, setCurrentAlignment] = useState<"left" | "center" | "right" | "justify" | "mixed">("left");
+  const [currentTextColor, setCurrentTextColor] = useState("#000000");
+  const [currentBackgroundColor, setCurrentBackgroundColor] = useState("#ffffff");
   const [activeState, setActiveState] = useState<ActiveState>({
     bold: false,
     italic: false,
@@ -410,6 +499,9 @@ export function ClassicEditor({
         setCurrentBlockType(/^h[1-6]$/.test(tag || "") ? tag as "h1" | "h2" | "h3" | "h4" | "h5" | "h6" : "p");
       }
       setCurrentFontSize(resolveFontSizeForRange(range));
+      const colorTarget = getRangeStartElement(range) || editor;
+      setCurrentTextColor(cssColorToHex(window.getComputedStyle(colorTarget).color) || "#000000");
+      setCurrentBackgroundColor(getEffectiveBackgroundHex(colorTarget) || "#ffffff");
       const alignmentTargets = getAlignmentTargets(range);
       const alignments = new Set(alignmentTargets.map(readTextAlignment));
       setCurrentAlignment(alignments.size > 1 ? "mixed" : Array.from(alignments)[0] || "left");
@@ -1344,6 +1436,40 @@ export function ClassicEditor({
     });
   };
 
+  const syncChecklistItemControl = (item: HTMLElement, strikeCompleted: boolean) => {
+    const legacyCheckbox = item.querySelector(':scope > input[data-srte-check]') as HTMLInputElement | null;
+    const checked = item.dataset.checked === "true" || Boolean(legacyCheckbox?.checked);
+    const controls = Array.from(item.querySelectorAll<HTMLElement>(':scope > [data-srte-check]'));
+    let control = controls.find((candidate) => candidate.tagName === "BUTTON") as HTMLButtonElement | undefined;
+    controls.forEach((candidate) => {
+      if (candidate !== control) candidate.remove();
+    });
+    if (!control) {
+      control = document.createElement("button");
+      control.type = "button";
+      control.dataset.srteCheck = "true";
+      control.contentEditable = "false";
+      control.tabIndex = -1;
+      control.style.cssText = "border:0;padding:0;background:transparent;color:inherit;font:inherit;cursor:pointer";
+      item.prepend(control);
+    }
+    item.dataset.checked = checked ? "true" : "false";
+    control.dataset.checked = checked ? "true" : "false";
+    control.setAttribute("aria-pressed", checked ? "true" : "false");
+    control.setAttribute("aria-label", checked ? "Mark incomplete" : "Mark complete");
+    control.textContent = "";
+    item.style.textDecoration = strikeCompleted && checked ? "line-through" : "";
+  };
+
+  const syncChecklistControls = (root: HTMLElement) => {
+    root.querySelectorAll<HTMLElement>('ul[data-srte-checklist="true"]').forEach((list) => {
+      const strikeCompleted = list.dataset.srteChecklistStrike === "true";
+      Array.from(list.children).forEach((item) => {
+        if (item instanceof HTMLElement && item.tagName === "LI") syncChecklistItemControl(item, strikeCompleted);
+      });
+    });
+  };
+
   const decorateChecklist = (list: HTMLElement, strikeCompleted: boolean) => {
     list.dataset.srteChecklist = "true";
     list.dataset.srteChecklistStrike = strikeCompleted ? "true" : "false";
@@ -1351,20 +1477,7 @@ export function ClassicEditor({
     list.style.paddingInlineStart = "1.5em";
     Array.from(list.children).forEach((item) => {
       if (!(item instanceof HTMLElement) || item.tagName !== "LI") return;
-      const legacyCheckbox = item.querySelector(':scope > input[data-srte-check]') as HTMLInputElement | null;
-      const checked = item.dataset.checked === "true" || Boolean(legacyCheckbox?.checked);
-      item.querySelectorAll(':scope > [data-srte-check]').forEach((control) => control.remove());
-      item.dataset.checked = checked ? "true" : "false";
-      const control = document.createElement("button");
-      control.type = "button";
-      control.dataset.srteCheck = "true";
-      control.contentEditable = "false";
-      control.tabIndex = -1;
-      control.setAttribute("aria-label", checked ? "Mark incomplete" : "Mark complete");
-      control.textContent = checked ? "☑" : "☐";
-      control.style.cssText = "margin-inline:-1.45em .45em;border:0;padding:0;background:transparent;color:inherit;font:inherit;cursor:pointer";
-      item.prepend(control);
-      item.style.textDecoration = strikeCompleted && checked ? "line-through" : "";
+      syncChecklistItemControl(item, strikeCompleted);
     });
     return mergeAdjacentCompatibleLists(list);
   };
@@ -2566,10 +2679,6 @@ export function ClassicEditor({
     }
   };
 
-  const applyTextColor = (color: string) => {
-    exec("foreColor", color);
-  };
-
   const parseCssColor = (value: string) => {
     const normalized = value.trim().toLowerCase();
     if (!normalized || normalized === "transparent") return null;
@@ -2618,16 +2727,19 @@ export function ClassicEditor({
     return node instanceof HTMLElement && editor.contains(node) ? node : null;
   };
 
-  const getInlineBackgroundHex = (element: HTMLElement | null) => {
+  const getEffectiveBackgroundHex = (element: HTMLElement | null) => {
     const editor = editableRef.current;
-    let current: HTMLElement | null = element;
-
-    while (current && current !== editor) {
-      const inlineHex = cssColorToHex(current.style.backgroundColor || current.style.background);
-      if (inlineHex) return inlineHex;
+    let current = element;
+    while (current) {
+      const inline = cssColorToHex(current.style.backgroundColor || current.style.background);
+      if (inline) return inline;
+      const computed = typeof window !== "undefined"
+        ? cssColorToHex(window.getComputedStyle(current).backgroundColor)
+        : "";
+      if (computed) return computed;
+      if (current === editor) break;
       current = current.parentElement;
     }
-
     return "";
   };
 
@@ -2636,9 +2748,9 @@ export function ClassicEditor({
     const editor = editableRef.current;
     if (!editor) return colorPickerType === "text" ? "#000000" : "#ffffff";
 
-    const element = getRangeStartElement(getSelectionRangeInEditor());
+    const element = getRangeStartElement(getSelectionRangeInEditor() || savedRangeRef.current);
     if (colorPickerType === "background") {
-      return getInlineBackgroundHex(element) || "#ffffff";
+      return getEffectiveBackgroundHex(element) || "#ffffff";
     }
 
     const target = element || editor;
@@ -2671,18 +2783,18 @@ export function ClassicEditor({
       .sort((a, b) => b.ratio - a.ratio)[0]?.color || "";
   };
 
-  const applyBackgroundColor = (color: string) => {
+  const applyInlineColor = (type: "text" | "background", color: string) => {
     try {
       const editor = editableRef.current;
       if (!editor) return;
       if (!restoreSavedSelection()) safeSelectRange(getSelectionRangeInEditor());
       const range = getSelectionRangeInEditor();
-      const readableColor = readableTextColorForBackground(color);
       if (!range) return;
 
+      pushEditorHistory();
       const applyToElement = (element: HTMLElement) => {
-        element.style.backgroundColor = color;
-        if (readableColor) element.style.color = readableColor;
+        if (type === "text") element.style.color = color;
+        else element.style.backgroundColor = color;
       };
 
       if (range.collapsed) {
@@ -2699,34 +2811,47 @@ export function ClassicEditor({
         return;
       }
 
-      const selectedCells = Array.from(editor.querySelectorAll<HTMLElement>("td,th"))
-        .filter((cell) => {
-          try {
-            return range.intersectsNode(cell);
-          } catch {
-            return false;
-          }
-        });
-
-      if (selectedCells.length > 0) {
-        selectedCells.forEach(applyToElement);
-        handleInput();
-        return;
+      const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
+      const selected: Array<{ node: Text; start: number; end: number }> = [];
+      let current = walker.nextNode();
+      while (current) {
+        const node = current as Text;
+        if (node.data && range.intersectsNode(node)) {
+          const start = node === range.startContainer ? range.startOffset : 0;
+          const end = node === range.endContainer ? range.endOffset : node.data.length;
+          if (end > start) selected.push({ node, start, end });
+        }
+        current = walker.nextNode();
       }
 
-      const span = document.createElement("span");
-      applyToElement(span);
-      const fragment = range.extractContents();
-      span.appendChild(fragment);
-      range.insertNode(span);
-      range.selectNodeContents(span);
-      safeSelectRange(range);
-      savedRangeRef.current = range.cloneRange();
+      const styledRuns: HTMLElement[] = [];
+      [...selected].reverse().forEach(({ node, start, end }) => {
+        const runRange = document.createRange();
+        runRange.setStart(node, start);
+        runRange.setEnd(node, end);
+        const span = document.createElement("span");
+        applyToElement(span);
+        span.appendChild(runRange.extractContents());
+        runRange.insertNode(span);
+        styledRuns.unshift(span);
+      });
+
+      if (styledRuns.length) {
+        const nextRange = document.createRange();
+        nextRange.setStart(styledRuns[0], 0);
+        nextRange.setEnd(styledRuns[styledRuns.length - 1], styledRuns[styledRuns.length - 1].childNodes.length);
+        safeSelectRange(nextRange);
+        savedRangeRef.current = nextRange.cloneRange();
+      }
       handleInput();
+      requestAnimationFrame(updateActiveState);
     } catch {
-      exec("hiliteColor", color);
+      exec(type === "text" ? "foreColor" : "hiliteColor", color);
     }
   };
+
+  const applyTextColor = (color: string) => applyInlineColor("text", color);
+  const applyBackgroundColor = (color: string) => applyInlineColor("background", color);
 
 
   const insertImage = () => {
@@ -2973,15 +3098,16 @@ export function ClassicEditor({
     try {
       const host = editableRef.current;
       if (!host) return;
-      host.focus();
+      restoreSavedSelection();
       let sel = window.getSelection();
-      let range = sel && sel.rangeCount > 0 ? sel.getRangeAt(0) : null;
+      let range = sel && sel.rangeCount > 0 ? sel.getRangeAt(0).cloneRange() : null;
       if (!range || !host.contains(range.commonAncestorContainer)) {
         range = document.createRange();
         range.selectNodeContents(host);
         range.collapse(false);
         safeSelectRange(range);
       }
+      pushEditorHistory();
       const span = document.createElement("span");
       span.setAttribute("data-formula", tex);
       try {
@@ -4301,6 +4427,8 @@ export function ClassicEditor({
     ensureCaretBoundaryParagraphs(el);
     // Add resize handles to tables
     addTableResizeHandles();
+    // Native Enter creates new list items; keep checklist controls in sync.
+    syncChecklistControls(el);
 
     if (!onChange) return;
     const html = el.innerHTML;
@@ -4728,13 +4856,18 @@ export function ClassicEditor({
 
   const applyBgToSelection = (
     hex: string,
-    fallbackCell?: HTMLTableCellElement
+    fallbackCell?: HTMLTableCellElement,
+    explicitCells?: HTMLTableCellElement[] | null
   ) => {
     const readableColor = readableTextColorForBackground(hex);
     const applyFill = (cell: HTMLTableCellElement) => {
       cell.style.background = hex;
       if (readableColor) cell.style.color = readableColor;
     };
+    if (explicitCells?.length) {
+      explicitCells.forEach(applyFill);
+      return;
+    }
     const sel = shouldUseTableSelection(fallbackCell) ? selectionRef.current : null;
     if (sel) {
       const cells = getCellsInGridRect(sel.tbody, sel.sr, sel.sc, sel.er, sel.ec);
@@ -5273,6 +5406,7 @@ export function ClassicEditor({
   };
 
   const moveCurrentElement = (direction: "up" | "down" | "left" | "right") => {
+    restoreSavedSelection();
     const editor = editableRef.current;
     const range = getSelectionRangeInEditor();
     const selectedListItems = range ? resolveSelectedListItems(range) : [];
@@ -5381,14 +5515,13 @@ export function ClassicEditor({
   ): React.CSSProperties => ({
     height: 32,
     minWidth: 32,
-    padding: "0 8px",
-    border: active
-      ? "2px solid var(--srte-accent)"
-      : "1px solid var(--srte-input-border)",
-    borderRadius: 6,
-    background: active ? "var(--srte-accent-bg)" : "var(--srte-input-bg)",
-    color: "var(--srte-input-text)",
-    boxShadow: active ? "inset 0 0 0 1px var(--srte-accent)" : "none",
+    padding: "0 7px",
+    border: active ? "1px solid color-mix(in srgb, var(--srte-primary) 35%, transparent)" : "1px solid transparent",
+    borderRadius: 8,
+    background: active ? "var(--srte-accent-bg)" : "transparent",
+    color: active ? "var(--srte-primary)" : "var(--srte-foreground)",
+    boxShadow: "none",
+    cursor: "pointer",
     ...extra,
   });
 
@@ -5407,17 +5540,20 @@ export function ClassicEditor({
   return (
     <div className={editorClass} style={{
       border: "1px solid var(--srte-border)",
-      borderRadius: 6,
+      borderRadius: "var(--srte-radius)",
       width: "100%",
       maxWidth: "100vw",
       overflow: "visible",
       display: "flex",
       flexDirection: "column",
-      background: "var(--srte-bg)",
-      color: "var(--srte-text)",
+      background: "var(--srte-background)",
+      color: "var(--srte-foreground)",
       boxSizing: "border-box"
     }}>
       <div
+        className="srte-toolbar"
+        role="toolbar"
+        aria-label="Text formatting"
         aria-disabled={readOnly}
         onMouseDown={(event) => {
           if (readOnly) {
@@ -5438,16 +5574,7 @@ export function ClassicEditor({
           event.stopPropagation();
         }}
         style={{
-          display: "flex",
-          flexWrap: "wrap",
           maxWidth: "100%",
-          gap: 8,
-          padding: 8,
-          borderBottom: "1px solid var(--srte-border-light)",
-          background: "var(--srte-toolbar-bg)",
-          position: "sticky",
-          top: 0,
-          zIndex: 1,
           opacity: readOnly ? 0.55 : 1,
           pointerEvents: readOnly ? "none" : "auto",
           userSelect: readOnly ? "none" : undefined,
@@ -5528,6 +5655,10 @@ export function ClassicEditor({
             e.currentTarget.value = "";
           }}
         />
+        <ToolbarGroup label="History">
+          <button type="button" className="srte-tool-button" aria-label="Undo" title="Undo" onClick={() => exec("undo")}><ToolbarIcon name="undo" /></button>
+          <button type="button" className="srte-tool-button" aria-label="Redo" title="Redo" onClick={() => exec("redo")}><ToolbarIcon name="redo" /></button>
+        </ToolbarGroup>
         <select
           value={currentBlockType}
           onPointerDown={preserveEditorSelection}
@@ -5561,31 +5692,9 @@ export function ClassicEditor({
           <option value="h5">Heading 5</option>
           <option value="h6">Heading 6</option>
         </select>
-        {([
-          ["left", "Left", "Align left"],
-          ["center", "Center", "Align center"],
-          ["right", "Right", "Align right"],
-          ["justify", "Justify", "Justify"],
-        ] as const).map(([alignment, label, title]) => (
-          <button
-            key={alignment}
-            type="button"
-            title={title}
-            aria-label={title}
-            aria-pressed={currentAlignment === alignment}
-            onPointerDown={preserveEditorSelection}
-            onMouseDown={preserveEditorSelection}
-            onClick={() => applyTextAlignment(alignment)}
-            style={activeButtonStyle(currentAlignment === alignment, {
-              minWidth: 32,
-              padding: "0 6px",
-              fontSize: 10,
-            })}
-          >
-            {label}
-          </button>
-        ))}
         <button
+          type="button"
+          className={`srte-tool-button${activeState.bold ? " srte-active" : ""}`}
           title="Bold"
           onClick={() => exec("bold")}
           aria-pressed={activeState.bold}
@@ -5594,6 +5703,8 @@ export function ClassicEditor({
           <span style={{ fontWeight: 700 }}>B</span>
         </button>
         <button
+          type="button"
+          className={`srte-tool-button${activeState.italic ? " srte-active" : ""}`}
           title="Italic"
           onClick={() => exec("italic")}
           aria-pressed={activeState.italic}
@@ -5602,6 +5713,8 @@ export function ClassicEditor({
           I
         </button>
         <button
+          type="button"
+          className={`srte-tool-button${activeState.underline ? " srte-active" : ""}`}
           title="Underline"
           onClick={() => exec("underline")}
           aria-pressed={activeState.underline}
@@ -5610,6 +5723,8 @@ export function ClassicEditor({
           U
         </button>
         <button
+          type="button"
+          className={`srte-tool-button${activeState.strikeThrough ? " srte-active" : ""}`}
           title="Strikethrough"
           onClick={() => exec("strikeThrough")}
           aria-pressed={activeState.strikeThrough}
@@ -5688,7 +5803,11 @@ export function ClassicEditor({
           </select>
         )}
         <button
+          type="button"
+          className="srte-tool-button"
+          aria-label="Text color"
           title="Text Color"
+          onMouseDown={preserveEditorSelection}
           onClick={() => {
             setColorPickerType('text');
             setShowColorPicker(true);
@@ -5704,10 +5823,14 @@ export function ClassicEditor({
             position: "relative",
           }}
         >
-          <span style={{ fontWeight: 700, borderBottom: "3px solid currentColor", lineHeight: 1 }}>A</span>
+          <span style={{ fontWeight: 700, borderBottom: `3px solid ${currentTextColor}`, lineHeight: 1 }}>A</span>
         </button>
         <button
+          type="button"
+          className="srte-tool-button"
+          aria-label="Background color"
           title="Background Color"
+          onMouseDown={preserveEditorSelection}
           onClick={() => {
             setColorPickerType('background');
             setShowColorPicker(true);
@@ -5722,9 +5845,11 @@ export function ClassicEditor({
             color: "var(--srte-input-text)",
           }}
         >
-          <span style={{ fontWeight: 700, padding: "1px 4px", background: "var(--srte-accent-bg)", borderRadius: 3 }}>A</span>
+          <span style={{ fontWeight: 700, padding: "1px 4px", background: currentBackgroundColor, color: readableTextColorForBackground(currentBackgroundColor) || "currentColor", borderRadius: 3 }}>A</span>
         </button>
         <button
+          type="button"
+          className={`srte-tool-button${activeState.subscript ? " srte-active" : ""}`}
           title="Subscript"
           onMouseDown={preserveEditorSelection}
           onClick={() => toggleInlineScript("subscript")}
@@ -5734,6 +5859,8 @@ export function ClassicEditor({
           X<sub>2</sub>
         </button>
         <button
+          type="button"
+          className={`srte-tool-button${activeState.superscript ? " srte-active" : ""}`}
           title="Superscript"
           onMouseDown={preserveEditorSelection}
           onClick={() => toggleInlineScript("superscript")}
@@ -5745,7 +5872,7 @@ export function ClassicEditor({
         {[
           {
             key: "check",
-            label: "☐",
+            icon: "checklist" as ToolbarIconName,
             title: "Checklist",
             active: activeState.checklist,
             action: () => applyChecklist(false, true),
@@ -5753,7 +5880,7 @@ export function ClassicEditor({
           },
           {
             key: "bullet",
-            label: "•≡",
+            icon: "bullets" as ToolbarIconName,
             title: "Bulleted list",
             active: activeState.unorderedList,
             action: () => applyListStyle("bullet:disc"),
@@ -5761,23 +5888,23 @@ export function ClassicEditor({
           },
           {
             key: "ordered",
-            label: "1≡",
+            icon: "numbers" as ToolbarIconName,
             title: "Numbered list",
             active: activeState.orderedList,
             action: () => applyListStyle("ordered:decimal"),
             options: [["ordered:decimal", "1. 2. 3."], ["ordered:lower-alpha", "a. b. c."], ["ordered:upper-alpha", "A. B. C."], ["ordered:lower-roman", "i. ii. iii."], ["ordered:upper-roman", "I. II. III."]],
           },
         ].map((control) => (
-          <span key={control.key} style={{ display: "inline-flex", height: 32 }}>
+          <span key={control.key} className="srte-split-control">
             <button
               type="button"
+              className={`srte-tool-button${control.active ? " srte-active" : ""}`}
               title={control.title}
               onPointerDown={preserveEditorSelection}
               onClick={control.action}
               aria-pressed={control.active}
-              style={activeButtonStyle(control.active, { padding: "0 9px", borderRadius: "6px 0 0 6px" })}
             >
-              {control.label}
+              <ToolbarIcon name={control.icon} />
             </button>
             <select
               defaultValue=""
@@ -5792,16 +5919,6 @@ export function ClassicEditor({
                 else if (selected) applyListStyle(selected);
                 event.currentTarget.value = "";
               }}
-              style={{
-                width: 28,
-                height: 32,
-                padding: 0,
-                border: "1px solid var(--srte-input-border)",
-                borderLeft: 0,
-                borderRadius: "0 6px 6px 0",
-                background: "var(--srte-input-bg)",
-                color: "var(--srte-input-text)",
-              }}
             >
               <option value="" disabled>Style</option>
               {control.options.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
@@ -5810,184 +5927,82 @@ export function ClassicEditor({
         ))}
         <button
           type="button"
+          className={`srte-tool-button${activeState.blockquote ? " srte-active" : ""}`}
           title="Blockquote"
           onPointerDown={preserveEditorSelection}
           onClick={toggleBlockquote}
           aria-pressed={activeState.blockquote}
-          style={activeButtonStyle(activeState.blockquote)}
         >
-          ❝
-        </button>
-        <button
-          title="Special characters"
-          onClick={() => setShowSpecialChars(true)}
-          style={{
-            height: 32,
-            minWidth: 32,
-            padding: "0 8px",
-            border: "1px solid var(--srte-input-border)",
-            borderRadius: 6,
-            background: "var(--srte-input-bg)",
-            color: "var(--srte-input-text)",
-          }}
-        >
-          Ω
+          <ToolbarIcon name="quote" />
         </button>
         <button
           type="button"
+          className="srte-tool-button"
+          aria-label="Special characters"
+          title="Special characters"
+          onClick={() => setShowSpecialChars(true)}
+        >
+          <ToolbarIcon name="omega" />
+        </button>
+        <button
+          type="button"
+          className={`srte-tool-button${activeState.codeBlock ? " srte-active" : ""}`}
           title="Code block"
           onPointerDown={preserveEditorSelection}
           onClick={toggleCodeBlock}
           aria-pressed={activeState.codeBlock}
-          style={activeButtonStyle(activeState.codeBlock, {
-            minWidth: 36,
-            fontFamily: "ui-monospace, SFMono-Regular, Menlo",
-          })}
         >
-          {"< />"}
+          <ToolbarIcon name="code" />
         </button>
-        {formula && (
-          <button
-            title="Insert formula"
-            onClick={() => setShowFormulaDialog(true)}
-            style={{
-              height: 32,
-              minWidth: 32,
-              padding: "0 8px",
-              border: "1px solid var(--srte-input-border)",
-              borderRadius: 6,
-              background: "var(--srte-input-bg)",
-              color: "var(--srte-input-text)",
-            }}
-          >
-            ∑
-          </button>
-        )}
         <button
           type="button"
+          className={`srte-tool-button${activeState.link ? " srte-active" : ""}`}
           title="Insert link"
           aria-label="Insert or edit link"
           aria-pressed={activeState.link}
           onPointerDown={preserveEditorSelection}
           onClick={() => openLinkEditor()}
-          style={activeButtonStyle(activeState.link, { minWidth: 34, fontSize: 17 })}
         >
-          <span aria-hidden="true">🔗</span>
+          <ToolbarIcon name="link" />
         </button>
-        {media && (
-          <>
-            <button
-              title="Insert image"
-              onClick={insertImage}
-              style={{
-                height: 32,
-                padding: "0 10px",
-                border: "1px solid var(--srte-input-border)",
-                borderRadius: 6,
-                background: "var(--srte-input-bg)",
-                color: "var(--srte-input-text)",
-              }}
-            >
-              🖼️ Image
-            </button>
-            {mediaManager && (
-              <button
-                title="Open media manager"
-                onClick={() => setShowMediaManager(true)}
-                style={{
-                  height: 32,
-                  padding: "0 10px",
-                  border: "1px solid var(--srte-input-border)",
-                  borderRadius: 6,
-                  background: "var(--srte-input-bg)",
-                  color: "var(--srte-input-text)",
-                }}
-              >
-                📁 Media
-              </button>
-            )}
-            <div
-              style={{
-                display: "inline-flex",
-                gap: 4,
-                alignItems: "center",
-                marginLeft: 6,
-              }}
-            >
-              <span style={{ fontSize: 12, opacity: 0.7 }}>Image align:</span>
-              <button
-                onClick={() => {
-                  const img = selectedImage;
-                  if (!img) return;
-                  img.style.display = "block";
-                  img.style.margin = "0 auto";
-                  img.style.float = "none";
-                  scheduleImageOverlay();
-                  handleInput();
-                }}
-                title="Center"
-                style={{
-                  height: 28,
-                  minWidth: 28,
-                  padding: "0 6px",
-                  border: "1px solid var(--srte-input-border)",
-                  borderRadius: 6,
-                  background: "var(--srte-input-bg)",
-                  color: "var(--srte-input-text)",
-                }}
-              >
-                ⊙
-              </button>
-              <button
-                onClick={() => {
-                  const img = selectedImage;
-                  if (!img) return;
-                  img.style.display = "inline";
-                  img.style.float = "left";
-                  img.style.margin = "0 8px 8px 0";
-                  scheduleImageOverlay();
-                  handleInput();
-                }}
-                title="Float left"
-                style={{
-                  height: 28,
-                  minWidth: 28,
-                  padding: "0 6px",
-                  border: "1px solid var(--srte-input-border)",
-                  borderRadius: 6,
-                  background: "var(--srte-input-bg)",
-                  color: "var(--srte-input-text)",
-                }}
-              >
-                ⟸
-              </button>
-              <button
-                onClick={() => {
-                  const img = selectedImage;
-                  if (!img) return;
-                  img.style.display = "inline";
-                  img.style.float = "right";
-                  img.style.margin = "0 0 8px 8px";
-                  scheduleImageOverlay();
-                  handleInput();
-                }}
-                title="Float right"
-                style={{
-                  height: 28,
-                  minWidth: 28,
-                  padding: "0 6px",
-                  border: "1px solid var(--srte-input-border)",
-                  borderRadius: 6,
-                  background: "var(--srte-input-bg)",
-                  color: "var(--srte-input-text)",
-                }}
-              >
-                ⟹
-              </button>
-            </div>
-          </>
+        {(table || media || formula) && (
+          <ToolbarMenu label="Insert" icon="insert" priority={2}>
+            {table && <MenuItem icon="table" label="Table" title="Insert table" onClick={() => setShowTableDialog(true)} />}
+            {media && <MenuItem icon="image" label="Upload image" title="Insert image" onClick={insertImage} />}
+            {media && <MenuItem icon="media" label="Media" title="Open media" onClick={() => mediaManager ? setShowMediaManager(true) : insertImage()} />}
+            {formula && <MenuItem icon="formula" label="Formula" title="Insert formula" onClick={() => setShowFormulaDialog(true)} />}
+          </ToolbarMenu>
         )}
+        {selectedImage && (
+          <ToolbarMenu label="Image alignment" icon="image">
+            <MenuItem icon="align-center" label="Center image" onClick={() => {
+              selectedImage.style.display = "block"; selectedImage.style.margin = "0 auto"; selectedImage.style.float = "none"; scheduleImageOverlay(); handleInput();
+            }} />
+            <MenuItem icon="align-left" label="Float left" onClick={() => {
+              selectedImage.style.display = "inline"; selectedImage.style.float = "left"; selectedImage.style.margin = "0 8px 8px 0"; scheduleImageOverlay(); handleInput();
+            }} />
+            <MenuItem icon="align-right" label="Float right" onClick={() => {
+              selectedImage.style.display = "inline"; selectedImage.style.float = "right"; selectedImage.style.margin = "0 0 8px 8px"; scheduleImageOverlay(); handleInput();
+            }} />
+          </ToolbarMenu>
+        )}
+        <ToolbarGroup label="Document" priority={3}>
+        <ToolbarMenu label={loadingPdf || loadingDocx ? "Importing document" : "Import document"} icon="import">
+          <MenuItem icon="import" label="PDF (.pdf)" disabled={loadingPdf || loadingDocx} onClick={() => pdfInputRef.current?.click()} />
+          <MenuItem icon="import" label="Microsoft Word (.docx)" disabled={loadingPdf || loadingDocx} onClick={() => docxInputRef.current?.click()} />
+          <MenuItem icon="import" label="HTML (.html)" disabled={loadingPdf || loadingDocx} onClick={() => htmlInputRef.current?.click()} />
+          <MenuItem icon="import" label="Markdown (.md)" disabled={loadingPdf || loadingDocx} onClick={() => mdInputRef.current?.click()} />
+        </ToolbarMenu>
+        <ToolbarMenu label="Export document" icon="export">
+          <MenuItem icon="export" label="PDF" onClick={exportPdf} />
+          <MenuItem icon="export" label="Microsoft Word (.docx)" onClick={() => void exportDocx()} />
+          <MenuItem icon="export" label="HTML" onClick={exportHtml} />
+          <MenuItem icon="export" label="Markdown" onClick={exportMarkdown} />
+        </ToolbarMenu>
         <select
+          className="srte-command-proxy"
+          aria-hidden="true"
+          tabIndex={-1}
           defaultValue=""
           aria-label="Import document"
           title="Import document"
@@ -6017,6 +6032,9 @@ export function ClassicEditor({
           <option value="markdown">Markdown (.md)</option>
         </select>
         <select
+          className="srte-command-proxy"
+          aria-hidden="true"
+          tabIndex={-1}
           defaultValue=""
           aria-label="Export document"
           title="Export document"
@@ -6043,92 +6061,52 @@ export function ClassicEditor({
           <option value="docx">Word (.docx)</option>
           <option value="pdf">PDF (.pdf)</option>
         </select>
-        {table && (
-          <button
-            title="Insert table"
-            onClick={() => setShowTableDialog(true)}
-            style={{
-              height: 32,
-              padding: "0 10px",
-              border: "1px solid var(--srte-input-border)",
-              borderRadius: 6,
-              background: "var(--srte-input-bg)",
-              color: "var(--srte-input-text)",
-            }}
-          >
-            ➕ Table
-          </button>
-        )}
-        <div
-          style={{
-            display: "inline-flex",
-            gap: 4,
-            alignItems: "center",
-            marginLeft: 6,
-          }}
+        </ToolbarGroup>
+        <ToolbarMenu
+          label="Text alignment"
+          icon={currentAlignment === "center" ? "align-center" : currentAlignment === "right" ? "align-right" : currentAlignment === "justify" ? "justify" : "align-left"}
+          active={currentAlignment !== "left"}
         >
-          <span style={{ fontSize: 12, opacity: 0.7 }}>Move:</span>
-          <button
-            title="Move selected block up"
-            onMouseDown={preserveEditorSelection}
-            onClick={() => moveCurrentElement("up")}
-            style={activeButtonStyle(false, { height: 28, minWidth: 28, padding: "0 6px" })}
-          >
-            ↑
-          </button>
-          <button
-            title="Move selected block down"
-            onMouseDown={preserveEditorSelection}
-            onClick={() => moveCurrentElement("down")}
-            style={activeButtonStyle(false, { height: 28, minWidth: 28, padding: "0 6px" })}
-          >
-            ↓
-          </button>
-          <button
-            title="Move selected block left"
-            onMouseDown={preserveEditorSelection}
-            onClick={() => moveCurrentElement("left")}
-            style={activeButtonStyle(false, { height: 28, minWidth: 28, padding: "0 6px" })}
-          >
-            ←
-          </button>
-          <button
-            title="Move selected block right"
-            onMouseDown={preserveEditorSelection}
-            onClick={() => moveCurrentElement("right")}
-            style={activeButtonStyle(false, { height: 28, minWidth: 28, padding: "0 6px" })}
-          >
-            →
-          </button>
+          {(["left", "center", "right", "justify"] as const).map((alignment) => (
+            <MenuItem
+              key={alignment}
+              icon={alignment === "left" ? "align-left" : alignment === "center" ? "align-center" : alignment === "right" ? "align-right" : "justify"}
+              label={alignment === "justify" ? "Justify" : `Align ${alignment}`}
+              title={alignment === "justify" ? "Justify" : `Align ${alignment}`}
+              active={currentAlignment === alignment}
+              onClick={() => applyTextAlignment(alignment)}
+            />
+          ))}
+        </ToolbarMenu>
+        <ToolbarMenu label="Move and indent" icon="move" priority={2}>
+          <MenuItem icon="up" label="Move block up" title="Move selected block up" onClick={() => moveCurrentElement("up")} />
+          <MenuItem icon="down" label="Move block down" title="Move selected block down" onClick={() => moveCurrentElement("down")} />
+          <div className="srte-menu-separator" role="separator" />
+          <MenuItem icon="outdent" label="Decrease indent" title="Move selected block left" onClick={() => moveCurrentElement("left")} />
+          <MenuItem icon="indent" label="Increase indent" title="Move selected block right" onClick={() => moveCurrentElement("right")} />
+        </ToolbarMenu>
+        <div className="srte-mobile-more">
+          <ToolbarMenu label="More editor actions" icon="more">
+            {table && <MenuItem icon="table" label="Insert table" onClick={() => setShowTableDialog(true)} />}
+            {media && <MenuItem icon="image" label="Upload image" onClick={insertImage} />}
+            {media && <MenuItem icon="media" label="Media" onClick={() => mediaManager ? setShowMediaManager(true) : insertImage()} />}
+            {formula && <MenuItem icon="formula" label="Insert formula" onClick={() => setShowFormulaDialog(true)} />}
+            <MenuItem icon="omega" label="Special characters" onClick={() => setShowSpecialChars(true)} />
+            <MenuItem icon="up" label="Move block up" onClick={() => moveCurrentElement("up")} />
+            <MenuItem icon="down" label="Move block down" onClick={() => moveCurrentElement("down")} />
+            <MenuItem icon="outdent" label="Decrease indent" onClick={() => moveCurrentElement("left")} />
+            <MenuItem icon="indent" label="Increase indent" onClick={() => moveCurrentElement("right")} />
+            <div className="srte-menu-separator" role="separator" />
+            <MenuItem icon="import" label="Import Word document" onClick={() => docxInputRef.current?.click()} />
+            <MenuItem icon="import" label="Import HTML" onClick={() => htmlInputRef.current?.click()} />
+            <MenuItem icon="import" label="Import Markdown" onClick={() => mdInputRef.current?.click()} />
+            <div className="srte-menu-separator" role="separator" />
+            <MenuItem icon="export" label="Export PDF" onClick={exportPdf} />
+            <MenuItem icon="export" label="Export Word document" onClick={() => void exportDocx()} />
+            <MenuItem icon="export" label="Export HTML" onClick={exportHtml} />
+            <MenuItem icon="export" label="Export Markdown" onClick={exportMarkdown} />
+          </ToolbarMenu>
         </div>
-        <button
-          title="Undo"
-          onClick={() => exec("undo")}
-          style={{
-            height: 32,
-            padding: "0 10px",
-            border: "1px solid var(--srte-input-border)",
-            borderRadius: 6,
-            background: "var(--srte-input-bg)",
-            color: "var(--srte-input-text)",
-          }}
-        >
-          ⎌ Undo
-        </button>
-        <button
-          title="Redo"
-          onClick={() => exec("redo")}
-          style={{
-            height: 32,
-            padding: "0 10px",
-            border: "1px solid var(--srte-input-border)",
-            borderRadius: 6,
-            background: "var(--srte-input-bg)",
-            color: "var(--srte-input-text)",
-          }}
-        >
-          ⤾ Redo
-        </button>
       </div>
       {media && mediaManager && (
         <MediaManager
@@ -6843,7 +6821,8 @@ export function ClassicEditor({
                 pushEditorHistory();
                 const checked = item.dataset.checked !== "true";
                 item.dataset.checked = checked ? "true" : "false";
-                t.textContent = checked ? "☑" : "☐";
+                t.dataset.checked = checked ? "true" : "false";
+                t.setAttribute("aria-pressed", checked ? "true" : "false");
                 t.setAttribute("aria-label", checked ? "Mark incomplete" : "Mark complete");
                 item.style.textDecoration =
                   list.dataset.srteChecklistStrike === "true" && checked ? "line-through" : "";
@@ -7325,8 +7304,22 @@ export function ClassicEditor({
                 <input
                   type="color"
                   value={tableMenuFillHex(tableMenu.cell)}
+                  onPointerDown={() => {
+                    const selection = shouldUseTableSelection(tableMenu.cell) ? selectionRef.current : null;
+                    tableFillTargetsRef.current = selection
+                      ? getCellsInGridRect(selection.tbody, selection.sr, selection.sc, selection.er, selection.ec)
+                      : [tableMenu.cell];
+                    pushEditorHistory();
+                    clearSelectionDecor();
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                  onInput={(e) => {
+                    applyBgToSelection(e.currentTarget.value, tableMenu.cell, tableFillTargetsRef.current);
+                    handleInput();
+                  }}
                   onChange={(e) => {
-                    runTableCellAction(tableMenu.cell, (cell) => applyBgToSelection(e.target.value, cell));
+                    applyBgToSelection(e.currentTarget.value, tableMenu.cell, tableFillTargetsRef.current);
+                    handleInput();
                   }}
                   style={{
                     width: 28,

@@ -133,7 +133,30 @@ describe("ClassicEditor lists", () => {
 
     expect(list.querySelectorAll("li")).toHaveLength(2);
     expect(checkbox.closest("li")?.dataset.checked).toBe("true");
+    expect(checkbox.dataset.checked).toBe("true");
+    expect(checkbox.getAttribute("aria-pressed")).toBe("true");
     expect(checkbox.closest("li")?.style.textDecoration).toBe("line-through");
+  });
+
+  it("adds an unchecked control when Enter creates another checklist item", () => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    act(() => {
+      root = createRoot(host!);
+      root.render(<ClassicEditorComponent value={'<ul data-srte-checklist="true" data-srte-checklist-strike="false"><li data-checked="false"><p>one</p></li></ul>'} />);
+    });
+    const editor = host.querySelector('[contenteditable="true"]') as HTMLElement;
+    const list = editor.querySelector('ul[data-srte-checklist="true"]')!;
+    const newItem = document.createElement("li");
+    newItem.innerHTML = "<p>two</p>";
+    list.appendChild(newItem);
+
+    act(() => editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertParagraph" })));
+
+    const control = newItem.querySelector(':scope > button[data-srte-check]') as HTMLButtonElement;
+    expect(control).not.toBeNull();
+    expect(control.dataset.checked).toBe("false");
+    expect(control.getAttribute("aria-pressed")).toBe("false");
   });
 
   it("converts every selected paragraph including the final one", () => {
@@ -520,6 +543,10 @@ describe("ClassicEditor lists", () => {
     selection.addRange(range);
     document.dispatchEvent(new Event("selectionchange"));
 
+    const moveTrigger = host!.querySelector('summary[aria-label="Move and indent"]') as HTMLElement;
+    act(() => moveTrigger.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true })));
+    moveTrigger.focus();
+    selection.removeAllRanges();
     act(() => (host!.querySelector('button[title="Move selected block right"]') as HTMLButtonElement).click());
     expect(Array.from(editor.querySelectorAll(":scope > ul > li:first-child > ul > li"), (item) => item.textContent)).toEqual(["two", "three"]);
     expect(selection.toString()).toBe("twothree");

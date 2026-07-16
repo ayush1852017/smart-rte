@@ -29,7 +29,7 @@ const inputStyle: React.CSSProperties = {
   marginTop: 5,
   padding: "0 10px",
   border: "1px solid var(--srte-input-border)",
-  borderRadius: 6,
+  borderRadius: 8,
   outline: "none",
   background: "var(--srte-input-bg)",
   color: "var(--srte-input-text)",
@@ -37,10 +37,10 @@ const inputStyle: React.CSSProperties = {
 };
 
 const buttonStyle: React.CSSProperties = {
-  minHeight: 34,
+  minHeight: 36,
   padding: "0 11px",
   border: "1px solid var(--srte-input-border)",
-  borderRadius: 6,
+  borderRadius: 8,
   background: "var(--srte-input-bg)",
   color: "var(--srte-menu-text)",
   cursor: "pointer",
@@ -109,7 +109,7 @@ export function LinkEditorPopover({
         background: "var(--srte-menu-bg)",
         color: "var(--srte-menu-text)",
         border: "1px solid var(--srte-border)",
-        borderRadius: 10,
+        borderRadius: 12,
         boxShadow: "var(--srte-menu-shadow)",
         padding: 14,
       }}
@@ -126,7 +126,10 @@ export function LinkEditorPopover({
     >
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
         <div id={titleId} style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 650 }}>
-          <span aria-hidden="true" style={{ color: "var(--srte-primary)", fontSize: 18 }}>↗</span>
+          <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--srte-primary)" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M10 13a5 5 0 0 0 7.54.54l2-2a5 5 0 0 0-7.07-7.07l-1.15 1.15" />
+            <path d="M14 11a5 5 0 0 0-7.54-.54l-2 2a5 5 0 0 0 7.07 7.07l1.14-1.14" />
+          </svg>
           {showRemove ? "Edit link" : "Insert link"}
         </div>
         <button

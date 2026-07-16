@@ -73,7 +73,8 @@ describe("ClassicEditor link UI", () => {
   it("uses a recognizable link icon and grouped import/export format menus", () => {
     renderEditor();
     const link = document.querySelector('button[aria-label="Insert or edit link"]') as HTMLButtonElement;
-    expect(link.textContent).toContain("🔗");
+    expect(link.querySelector("svg")).not.toBeNull();
+    expect(document.querySelector('button[title="Open media"]')).not.toBeNull();
     expect(document.querySelector('button[aria-label="Remove link"]')).toBeNull();
 
     const importMenu = document.querySelector('select[aria-label="Import document"]') as HTMLSelectElement;

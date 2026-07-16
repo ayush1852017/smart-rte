@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.4
+
+- Make foreground and background colours deterministic across paragraphs, lists, and table-cell text selections.
+- Preserve foreground colour when highlighting text and render authored colours correctly in dark mode.
+- Show the effective foreground and background colours at the caret in the toolbar and picker.
+- Keep the table-cell fill picker and context menu open during live colour dragging, including multi-cell selections.
+
+## 0.3.3
+
+- Keep the responsive More-actions menu inside narrow viewports and above the editor canvas.
+- Make long mobile action menus independently scrollable with touch-friendly overscroll behavior.
+
 ## 0.3.2
 
 - Preserve paragraph and heading blocks when creating, restyling, or removing lists.
@@ -8,6 +20,9 @@
 - Make nested-list Tab and Shift+Tab deterministic, depth-aware, selection-preserving, and independently styled.
 - Remove the redundant standalone unlink control; links remain removable from the edit-link popover.
 - Use a recognizable chain-link icon and consolidate document import/export formats into labeled menus.
+- Redesign the editor chrome for Sootr with semantic toolbar groups, consistent outlined icons, Align/Move/Insert menus, responsive overflow, dark-theme tokens, and keyboard-accessible popovers.
+- Keep formulas at the saved caret after dialog interaction, align checklist controls with their content, and render visible split-button chevrons.
+- Restore list selections before Move-menu indentation, synchronize controls for newly created checklist items, render explicit checked borders/ticks, and keep Media discoverable without a custom adapter.
 
 ## 0.3.1
 

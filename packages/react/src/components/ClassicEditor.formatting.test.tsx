@@ -199,6 +199,72 @@ describe("ClassicEditor headings and font size", () => {
     expect((editor.querySelector("pre") as HTMLElement).style.textAlign).toBe("right");
   });
 
+  it("applies text color across blocks without wrapping block elements", () => {
+    const editor = renderEditor("<p>one</p><p>two</p>");
+    const paragraphs = editor.querySelectorAll("p");
+    setRange(paragraphs[0].firstChild!, 1, paragraphs[1].firstChild!, 2);
+    act(() => (host!.querySelector('button[aria-label="Text color"]') as HTMLButtonElement).click());
+    act(() => (host!.querySelector('button[title="#ff0000"]') as HTMLButtonElement).click());
+    expect(editor.querySelector("span > p")).toBeNull();
+    expect(editor.querySelectorAll('span[style*="color: rgb(255, 0, 0)"]')).toHaveLength(2);
+  });
+
+  it("highlights only selected table-cell text without changing its text color", () => {
+    const editor = renderEditor('<table><tbody><tr><td><p>cell text</p></td></tr></tbody></table>');
+    const text = editor.querySelector("td p")!.firstChild!;
+    setRange(text, 0, text, 4);
+    act(() => (host!.querySelector('button[aria-label="Background color"]') as HTMLButtonElement).click());
+    act(() => (host!.querySelector('button[title="#ffff00"]') as HTMLButtonElement).click());
+    const cell = editor.querySelector("td") as HTMLElement;
+    const highlight = cell.querySelector("span") as HTMLElement;
+    expect(cell.style.backgroundColor).toBe("");
+    expect(highlight.style.backgroundColor).toBe("rgb(255, 255, 0)");
+    expect(highlight.style.color).toBe("");
+    expect(highlight.textContent).toBe("cell");
+  });
+
+  it("shows the foreground and background colors at the caret in the toolbar", () => {
+    const editor = renderEditor('<p><span style="color:#1155cc;background-color:#fff2cc">colored</span></p>');
+    const text = editor.querySelector("span")!.firstChild!;
+    setRange(text, 2);
+    const textIndicator = host!.querySelector('button[aria-label="Text color"] span') as HTMLElement;
+    const backgroundIndicator = host!.querySelector('button[aria-label="Background color"] span') as HTMLElement;
+    expect(textIndicator.style.borderBottomColor).toBe("rgb(17, 85, 204)");
+    expect(backgroundIndicator.style.backgroundColor).toBe("rgb(255, 242, 204)");
+  });
+
+  it("keeps the table context menu mounted while dragging its fill picker", () => {
+    const editor = renderEditor('<table><tbody><tr><td><p>cell</p></td></tr></tbody></table>');
+    const cell = editor.querySelector("td") as HTMLTableCellElement;
+    act(() => cell.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })));
+    const picker = host!.querySelector('input[type="color"]') as HTMLInputElement;
+    expect(picker).not.toBeNull();
+    act(() => picker.dispatchEvent(new Event("pointerdown", { bubbles: true })));
+    act(() => {
+      picker.value = "#ff0000";
+      picker.dispatchEvent(new InputEvent("input", { bubbles: true }));
+      picker.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(host!.querySelector('input[type="color"]')).toBe(picker);
+    expect(cell.style.backgroundColor).toBe("rgb(255, 0, 0)");
+  });
+
+  it("inserts a formula at the saved caret after the formula dialog takes focus", () => {
+    const editor = renderEditor("<p>beforeafter</p>");
+    const text = editor.querySelector("p")!.firstChild!;
+    setRange(text, 6);
+
+    act(() => (host!.querySelector('button[title="Insert formula"]') as HTMLButtonElement).click());
+    const input = host!.querySelector('input[placeholder^="Type LaTeX"]') as HTMLInputElement;
+    act(() => input.focus());
+    const insert = Array.from(host!.querySelectorAll("button")).find((button) => button.textContent?.trim() === "Insert") as HTMLButtonElement;
+    act(() => insert.click());
+
+    const paragraph = editor.querySelector("p")!;
+    expect(paragraph.textContent).toBe("before$E=mc^2$after");
+    expect(paragraph.querySelector('[data-formula="E=mc^2"]')).not.toBeNull();
+  });
+
   it("turns superscript off at a caret without changing surrounding script text", () => {
     const editor = renderEditor("<p>x<sup>23</sup>y</p>");
     const scripted = editor.querySelector("sup")!.firstChild!;
