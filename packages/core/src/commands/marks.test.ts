@@ -271,4 +271,36 @@ describe("link mark commands", () => {
     expect((((next.document.children[0] as any).children[0].children[1].children[0].children[0]) as any).marks).toBeUndefined();
     expect((((next.document.children[1] as any).children[0].children[0]) as any).marks).toEqual([{ type: "link", href: "tel:+15551234567" }]);
   });
+
+  it("formats text across inline atoms without changing the atoms", () => {
+    const document: SmartDocument = {
+      type: "doc",
+      children: [{
+        type: "paragraph",
+        children: [
+          { type: "text", text: "Before" },
+          { type: "formula", value: "x^2" },
+          { type: "inlineImage", src: "/x.png", alt: "X" },
+          { type: "text", text: "After" },
+        ],
+      }],
+    };
+    const state: SmartEditorState = {
+      document,
+      selection: {
+        type: "text",
+        anchor: { path: [0, 0], offset: 2 },
+        focus: { path: [0, 3], offset: 3 },
+      },
+    };
+    const next = applyTransaction(state, toggleBold.execute(state));
+    expect((next.document.children[0] as any).children).toEqual([
+      { type: "text", text: "Be" },
+      { type: "text", text: "fore", marks: [{ type: "bold" }] },
+      { type: "formula", value: "x^2" },
+      { type: "inlineImage", src: "/x.png", alt: "X" },
+      { type: "text", text: "Aft", marks: [{ type: "bold" }] },
+      { type: "text", text: "er" },
+    ]);
+  });
 });

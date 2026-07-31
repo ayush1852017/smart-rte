@@ -2,6 +2,7 @@ import { getNodeAtPath, paragraph, type Path, type SmartBlockNode, type SmartCod
 import type { SmartSelection } from "../selection.js";
 import type { SmartTransaction } from "../transaction.js";
 import { isSmartContainer, replaceNodeAtPath } from "../tree.js";
+import type { SmartCommand } from "../command.js";
 
 export interface ToggleCodeBlocksInput {
   parentPath: Path;
@@ -18,7 +19,11 @@ const toCodeBlock = (block: SmartBlockNode): SmartCodeBlockNode => {
   if (block.type === "paragraph" || block.type === "heading") {
     return {
       type: "codeBlock",
-      text: block.children.map((child) => child.text).join(""),
+      text: block.children.map((child) => {
+        if (child.type === "text") return child.text;
+        if (child.type === "formula") return child.displayText ?? child.value;
+        return child.alt ?? "";
+      }).join(""),
     };
   }
   throw new Error(`Cannot convert ${block.type} to a code block.`);
@@ -72,4 +77,22 @@ export const toggleCodeBlocks = (
       timestamp: Date.now(),
     },
   };
+};
+
+export const toggleCodeBlock: SmartCommand<ToggleCodeBlocksInput> = {
+  id: "code-block.toggle",
+  isEnabled: (context, input) => {
+    if (!input?.blockIndexes.length) return false;
+    const parent = getNodeAtPath(context.document, input.parentPath);
+    return isSmartContainer(parent) && input.blockIndexes.every((index) => {
+      const type = (parent.children[index] as { type?: string } | undefined)?.type;
+      return type === "paragraph" || type === "heading" || type === "codeBlock";
+    });
+  },
+  execute: (context, input) => {
+    if (!input || !toggleCodeBlock.isEnabled(context, input)) {
+      throw new Error("code-block.toggle requires convertible sibling blocks.");
+    }
+    return toggleCodeBlocks(context.document, context.selection, input).transaction;
+  },
 };

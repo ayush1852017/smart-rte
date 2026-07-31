@@ -1,16 +1,19 @@
 import React, { useEffect, useRef, useState } from "react";
 import { MediaManager, MediaManagerAdapter, MediaItem } from "./MediaManager.js";
 import { LinkEditorPopover, type LinkEditorApplyValue } from "./LinkEditorPopover.js";
-import * as pdfjsLib from 'pdfjs-dist';
-import mammoth from 'mammoth';
-import JSZip from 'jszip';
-import { applyLink, applyTextColor as coreApplyTextColor, markdownToCompatibilityHtml, removeLink, sanitizeLinkHref, toggleBold, toggleItalic, toggleSubscript, toggleSuperscript, toggleUnderline, type SmartCommand, type SmartEditorState } from 'smartrte-core';
+import { applyLink, applyTextColor as coreApplyTextColor, removeLink, sanitizeLinkHref, toggleBold, toggleItalic, toggleSubscript, toggleSuperscript, toggleUnderline, type CoreFeatureConfig, type SmartCommand, type SmartEditorState } from 'smartrte-core';
+import { executeDomMoveCommand } from '../adapters/domMoveCommandBridge.js';
+import { adjacentInlineAtom } from '../adapters/domInlineAtomCommandBridge.js';
 import { restoreSelectionToDom, selectionFromDom } from '../adapters/domSelectionBridge.js';
 import { serializeSmartDocument, smartDocumentFromEditorRoot } from '../adapters/domSmartDocument.js';
 import { isShadowModeEnabled, runShadowCommand } from '../adapters/shadowMode.js';
 import { getCoreInlineMarkResult, isCoreInlineMarkEnabled, type CoreInlineMark } from '../adapters/inlineMarkCoreExecution.js';
 import { closestFromTarget, isNode } from '../adapters/domTargets.js';
 import { ensureStyleSheet, SrteTheme } from '../theme.js';
+import { createReactEditorPluginRuntime, matchesPluginShortcut, type ReactContextMenuContribution, type ReactEditorPlugin, type ReactKeyboardShortcutContribution, type ReactToolbarContribution } from '../pluginRuntime.js';
+import { createEditorFormatRuntime, type EditorFormatConfig, type EditorFormatDefinition, type EditorFormatExportResult } from '../formatRuntime.js';
+import { createBuiltInFormatDefinitions } from '../builtInFormatDefinitions.js';
+import { createDomEditorController, type DomEditorController } from '../editorController.js';
 
 type ToolbarIconName =
   | "undo" | "redo" | "align-left" | "align-center" | "align-right" | "justify"
@@ -98,15 +101,7 @@ function MenuItem({ icon, label, active, disabled, onClick, title }: { icon: Too
   return <button type="button" role="menuitem" className="srte-menu-item" aria-label={title || label} aria-pressed={Boolean(active)} aria-checked={active || undefined} disabled={disabled} title={title || label} onClick={(event) => { onClick(); (event.currentTarget.closest("details") as HTMLDetailsElement | null)?.removeAttribute("open"); }}><ToolbarIcon name={icon}/><span>{label}</span>{active && <span className="srte-menu-check" aria-hidden="true">✓</span>}</button>;
 }
 
-// Initialize PDF.js worker
-if (typeof window !== 'undefined') {
-  pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
-    'pdfjs-dist/build/pdf.worker.min.mjs',
-    import.meta.url
-  ).toString();
-}
-
-type ClassicEditorProps = {
+export type ClassicEditorProps = {
   value?: string;
   onChange?: (html: string) => void;
   placeholder?: string;
@@ -117,6 +112,14 @@ type ClassicEditorProps = {
   table?: boolean;
   media?: boolean;
   formula?: boolean;
+  /** Filters the standard plugin preset. Supersedes legacy table/media/formula toggles. */
+  features?: CoreFeatureConfig;
+  /** Exact core plugin set. When provided, `features` and legacy feature toggles are ignored. */
+  plugins?: readonly ReactEditorPlugin[];
+  /** Independently enables or disables HTML, Markdown, DOCX, and PDF import/export. */
+  formats?: EditorFormatConfig;
+  /** Exact format definitions. Built-in ids may be replaced and proprietary formats may be added. */
+  formatDefinitions?: readonly EditorFormatDefinition[];
   mediaManager?: MediaManagerAdapter;
   /**
    * Optional custom list of fonts to display in the toolbar.
@@ -174,9 +177,13 @@ export function ClassicEditor({
   minHeight = 200,
   maxHeight = 500,
   readOnly = false,
-  table = true,
-  media = true,
-  formula = true,
+  table: legacyTable = true,
+  media: legacyMedia = true,
+  formula: legacyFormula = true,
+  features,
+  plugins,
+  formats,
+  formatDefinitions,
   mediaManager,
   fonts = [
     { name: "Arial", value: "Arial, Helvetica, sans-serif" },
@@ -196,6 +203,39 @@ export function ClassicEditor({
   className,
 }: ClassicEditorProps) {
   ensureStyleSheet();
+  const pluginRuntime = createReactEditorPluginRuntime({
+    ...(plugins ? { plugins } : {
+      features: {
+        ...features,
+        table: features?.table ?? legacyTable,
+        media: features?.media ?? legacyMedia,
+        formula: features?.formula ?? legacyFormula,
+      },
+    }),
+  });
+  const formatRuntime = createEditorFormatRuntime(
+    formats,
+    [
+      ...(formatDefinitions ?? createBuiltInFormatDefinitions({ preserveDocxStyles })),
+      ...pluginRuntime.formats,
+    ],
+  );
+  const proxyFormatLabel = (format: EditorFormatDefinition) => format.id === "docx" ? "Word" : format.label;
+  const proxyExportFormats = [
+    ...(["html", "markdown", "docx", "pdf"] as const).flatMap((id) => formatRuntime.exports.filter((format) => format.id === id)),
+    ...formatRuntime.exports.filter((format) => !["html", "markdown", "docx", "pdf"].includes(format.id)),
+  ];
+  const table = pluginRuntime.hasFeature("table");
+  const media = pluginRuntime.hasFeature("media");
+  const formula = pluginRuntime.hasFeature("formula");
+  const listFeature = pluginRuntime.hasFeature("list");
+  const checklistFeature = pluginRuntime.hasFeature("checklist");
+  const blockquoteFeature = pluginRuntime.hasFeature("blockquote");
+  const codeBlockFeature = pluginRuntime.hasFeature("codeBlock");
+  const alignmentFeature = pluginRuntime.hasFeature("alignment");
+  const blockTypeFeature = pluginRuntime.hasFeature("blockType");
+  const basicFormattingFeature = pluginRuntime.hasFeature("basicFormatting");
+  const moveFeature = pluginRuntime.hasFeature("move");
   type ActiveState = {
     bold: boolean;
     italic: boolean;
@@ -222,20 +262,21 @@ export function ClassicEditor({
   };
 
   const editableRef = useRef<HTMLDivElement | null>(null);
+  const editorControllerRef = useRef<DomEditorController | null>(null);
+  if (!editorControllerRef.current) editorControllerRef.current = createDomEditorController();
+  editorControllerRef.current.configure({
+    plugins: pluginRuntime.plugins,
+    readOnly,
+  });
   const editorScrollRef = useRef<HTMLDivElement | null>(null);
   const lastEmittedRef = useRef<string>("");
   const isComposingRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const pdfInputRef = useRef<HTMLInputElement | null>(null);
-  const docxInputRef = useRef<HTMLInputElement | null>(null);
-  const htmlInputRef = useRef<HTMLInputElement | null>(null);
-  const mdInputRef = useRef<HTMLInputElement | null>(null);
   const [loadingPdf, setLoadingPdf] = useState(false);
   const [loadingDocx, setLoadingDocx] = useState(false);
-  // State for import confirmation
   const [pendingImport, setPendingImport] = useState<{
-      file: File;
-      type: 'pdf' | 'docx';
+    file: File;
+    definition: EditorFormatDefinition;
   } | null>(null);
   const replaceTargetRef = useRef<HTMLImageElement | null>(null);
   const [selectedImage, setSelectedImage] = useState<HTMLImageElement | null>(
@@ -296,6 +337,11 @@ export function ClassicEditor({
     y: number;
     img: HTMLImageElement;
   } | null>(null);
+  const [pluginContextMenu, setPluginContextMenu] = useState<{
+    x: number;
+    y: number;
+    items: readonly ReactContextMenuContribution[];
+  } | null>(null);
   const [linkMenu, setLinkMenu] = useState<LinkMenuState | null>(null);
   const [showMediaManager, setShowMediaManager] = useState(false);
   const [showColorPicker, setShowColorPicker] = useState(false);
@@ -312,10 +358,6 @@ export function ClassicEditor({
     container: Node;
     offset: number;
   } | null>(null);
-  const historyRef = useRef<{ undo: string[]; redo: string[] }>({
-    undo: [],
-    redo: [],
-  });
   const inputHistoryGroupRef = useRef<{
     inputType: string;
     timestamp: number;
@@ -767,13 +809,41 @@ export function ClassicEditor({
   }, []);
 
   const applyFormatBlock = (blockName: string) => {
+    if (!blockTypeFeature) return;
     try {
       if (!restoreSavedSelection()) {
         safeSelectRange(getSelectionRangeInEditor());
       }
       pushEditorHistory();
+      const range = getSelectionRangeInEditor();
+      const tag = normalizeBlockTag(blockName);
+      const blocks = range
+        ? (range.collapsed
+          ? [getCurrentBlock()].filter((block): block is HTMLElement => Boolean(block))
+          : getSelectedBlocks(range))
+        : [];
+      const coreBlocks = blocks.filter((block) =>
+        block.matches("p,h1,h2,h3,h4,h5,h6") && !block.closest("li,td,th"));
+      if (
+        coreBlocks.length === blocks.length &&
+        coreBlocks.length > 0 &&
+        (tag === "p" || /^h[1-6]$/.test(tag || ""))
+      ) {
+        const replacements = editorControllerRef.current!.bindRoot(editableRef.current).executeBlockCommand(coreBlocks, {
+          id: "block-type.set",
+          input: tag === "p"
+            ? { type: "paragraph" }
+            : { type: "heading", level: Number(tag.slice(1)) as 1 | 2 | 3 | 4 | 5 | 6 },
+        });
+        if (replacements) {
+          focusElementEnd(replacements[replacements.length - 1]);
+          setCurrentBlockType(tag as "p" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6");
+          handleInput();
+          requestAnimationFrame(updateActiveState);
+          return;
+        }
+      }
       if (applyFormatBlockFallback(blockName)) {
-        const tag = normalizeBlockTag(blockName);
         if (tag === "p" || /^h[1-6]$/.test(tag || "")) {
           setCurrentBlockType(tag as "p" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6");
         }
@@ -825,32 +895,15 @@ export function ClassicEditor({
       cell.style.outline = outline;
       cell.style.outlineOffset = outlineOffset;
     });
-    const undo = historyRef.current.undo;
-    if (undo[undo.length - 1] !== html) {
-      undo.push(html);
-      if (undo.length > 100) undo.shift();
-    }
-    historyRef.current.redo = [];
+    editorControllerRef.current!.bindRoot(editor).recordHistorySnapshot(html);
   };
 
   const restoreEditorHistory = (dir: "undo" | "redo") => {
     const editor = editableRef.current;
     if (!editor) return false;
-    const history = historyRef.current;
-    const from = dir === "undo" ? history.undo : history.redo;
-    const to = dir === "undo" ? history.redo : history.undo;
-    const currentHtml = editor.innerHTML;
-    let html: string | undefined;
-    while (from.length > 0) {
-      const candidate = from.pop();
-      if (candidate !== currentHtml) {
-        html = candidate;
-        break;
-      }
-    }
-    if (html == null) return false;
-    if (to[to.length - 1] !== currentHtml) to.push(currentHtml);
-    editor.innerHTML = html;
+    const restored = editorControllerRef.current!.bindRoot(editor).restoreHistory(dir);
+    if (!restored) return false;
+    const html = restored.html;
     fixNegativeMargins(editor);
     normalizeInvalidCodeBlockNesting(editor);
     ensureTableWrappers(editor);
@@ -1175,6 +1228,7 @@ export function ClassicEditor({
   };
 
   const applyTextAlignment = (alignment: "left" | "center" | "right" | "justify") => {
+    if (!alignmentFeature) return;
     try {
       if (!restoreSavedSelection()) safeSelectRange(getSelectionRangeInEditor());
       const range = getSelectionRangeInEditor();
@@ -1182,6 +1236,27 @@ export function ClassicEditor({
       const targets = getAlignmentTargets(range);
       if (targets.length === 0) return;
       pushEditorHistory();
+      const coreTargets = targets.filter((target) =>
+        target.matches("p,h1,h2,h3,h4,h5,h6,blockquote,pre") &&
+        !target.closest("li"));
+      if (coreTargets.length === targets.length) {
+        const groups = new Map<HTMLElement, HTMLElement[]>();
+        coreTargets.forEach((target) => {
+          const parent = target.parentElement;
+          if (parent) groups.set(parent, [...(groups.get(parent) || []), target]);
+        });
+        const replacements = Array.from(groups.values()).flatMap((group) =>
+          editorControllerRef.current!.bindRoot(editableRef.current).executeBlockCommand(group, {
+            id: "alignment.set",
+            input: { alignment },
+          }) || []);
+        if (replacements.length === coreTargets.length) {
+          focusElementEnd(replacements[replacements.length - 1]);
+          handleInput();
+          requestAnimationFrame(updateActiveState);
+          return;
+        }
+      }
       targets.forEach((target) => {
         target.style.textAlign = alignment === "left" ? "" : alignment;
         if (!target.getAttribute("style")) target.removeAttribute("style");
@@ -1669,8 +1744,25 @@ export function ClassicEditor({
   });
 
   const applyListDepthChange = (items: HTMLElement[], direction: "indent" | "outdent") => {
+    if (!listFeature) return false;
     const enabled = direction === "indent" ? canIndentListItems(items) : canOutdentListItems(items);
     if (!enabled) return false;
+    const editor = editableRef.current;
+    if (editor && items.every((item) => !item.closest("td,th,[data-srte-checklist='true']"))) {
+      const beforeCoreHtml = editor.innerHTML;
+      const result = editorControllerRef.current!
+        .bindRoot(editor)
+        .execute(direction === "indent" ? "list.indent" : "list.outdent");
+      if (result) {
+        inputHistoryGroupRef.current = null;
+        editorControllerRef.current!.bindRoot(editor).recordHistorySnapshot(beforeCoreHtml);
+        const selection = window.getSelection();
+        if (selection?.rangeCount) savedRangeRef.current = selection.getRangeAt(0).cloneRange();
+        handleInput();
+        requestAnimationFrame(updateActiveState);
+        return true;
+      }
+    }
     pushEditorHistory();
     const changed = direction === "indent"
       ? nestSelectedListItems(items)
@@ -1728,6 +1820,33 @@ export function ClassicEditor({
       });
     });
     return lastSelected;
+  };
+
+  const defaultListStyleAtDepth = (listTag: "ul" | "ol", depth: number) => {
+    const ordered = ["decimal", "lower-alpha", "lower-roman"];
+    const unordered = ["disc", "circle", "square"];
+    const styles = listTag === "ol" ? ordered : unordered;
+    return styles[Math.min(depth, styles.length - 1)];
+  };
+
+  const restyleDescendantLists = (item: HTMLElement, listTag: "ul" | "ol", depth = 1) => {
+    Array.from(item.children).forEach((child) => {
+      if (!(child instanceof HTMLElement) || !child.matches("ul,ol")) return;
+      const replacement = child.tagName.toLowerCase() === listTag
+        ? child
+        : cloneListShell(child, listTag);
+      if (replacement !== child) {
+        while (child.firstChild) replacement.appendChild(child.firstChild);
+        child.replaceWith(replacement);
+      }
+      clearChecklist(replacement);
+      replacement.style.listStyleType = defaultListStyleAtDepth(listTag, depth);
+      Array.from(replacement.children).forEach((nestedItem) => {
+        if (nestedItem instanceof HTMLElement && nestedItem.tagName === "LI") {
+          restyleDescendantLists(nestedItem, listTag, depth + 1);
+        }
+      });
+    });
   };
 
   const getDirectSelectionCell = (range: Range) => {
@@ -1790,6 +1909,7 @@ export function ClassicEditor({
   };
 
   const applyListStyle = (value: string) => {
+    if (!listFeature) return;
     const listTag = value.startsWith("ordered:") ? "ol" : "ul";
     const styleType = value.replace(/^(ordered|bullet):/, "");
     if (!restoreSavedSelection()) safeSelectRange(getSelectionRangeInEditor());
@@ -1821,8 +1941,41 @@ export function ClassicEditor({
     const selectedItems = resolveSelectedListItems(range);
     const selectedPlainBlocks = selectedBlocks.filter((block) => !block.closest("ul,ol"));
     if (selectedItems.length > 0) {
+      const outermostItems = selectedItems.filter((item) =>
+        !selectedItems.some((candidate) => candidate !== item && candidate.contains(item))
+      );
+      const promotedLists = new Set(
+        outermostItems
+          .filter((item) => selectedItems.some((candidate) => candidate !== item && item.contains(candidate)))
+          .map((item) => item.parentElement)
+          .filter((list): list is HTMLElement => Boolean(list?.matches("ul,ol")))
+      );
       pushEditorHistory();
-      const lastItem = restyleSelectedListItems(selectedItems, listTag, styleType);
+      let lastItem: HTMLElement | null = null;
+      if (promotedLists.size > 0) {
+        promotedLists.forEach((source) => {
+          const items = Array.from(source.children).filter(
+            (child): child is HTMLElement => child instanceof HTMLElement && child.tagName === "LI"
+          );
+          items.forEach((item) => restyleDescendantLists(item, listTag));
+          const target = source.tagName.toLowerCase() === listTag
+            ? source
+            : cloneListShell(source, listTag);
+          if (target !== source) {
+            while (source.firstChild) target.appendChild(source.firstChild);
+            source.replaceWith(target);
+          }
+          clearChecklist(target);
+          target.style.listStyleType = styleType;
+          lastItem = target.lastElementChild as HTMLElement | null;
+          mergeAdjacentCompatibleLists(target);
+        });
+      }
+      const scopedItems = outermostItems.filter((item) =>
+        !Array.from(promotedLists).some((list) => list.contains(item))
+      );
+      scopedItems.forEach((item) => restyleDescendantLists(item, listTag));
+      lastItem = restyleSelectedListItems(scopedItems, listTag, styleType) || lastItem;
       const convertedPlainBlocks = convertSelectedBlocksToList(selectedPlainBlocks, listTag, styleType);
       if (!convertedPlainBlocks && lastItem) focusElementEnd(lastItem);
       handleInput();
@@ -1916,6 +2069,7 @@ export function ClassicEditor({
   };
 
   const applyChecklist = (strikeCompleted = false, toggleOff = false) => {
+    if (!checklistFeature) return;
     if (!restoreSavedSelection()) safeSelectRange(getSelectionRangeInEditor());
     const range = getSelectionRangeInEditor();
     if (!range) return;
@@ -1923,6 +2077,33 @@ export function ClassicEditor({
     const selectedChecklists = selectedItems.filter(
       (item) => item.parentElement?.dataset.srteChecklist === "true"
     );
+    const selectedLists = new Set(selectedItems.map((item) => item.parentElement).filter(Boolean));
+    const coversCompleteList =
+      selectedLists.size === 1 &&
+      selectedItems.length === (Array.from(selectedLists)[0]?.children.length || 0);
+    const removingActiveChecklist =
+      toggleOff &&
+      selectedItems.length > 0 &&
+      selectedChecklists.length === selectedItems.length;
+    if (!removingActiveChecklist && (selectedItems.length === 0 || coversCompleteList)) {
+      const editor = editableRef.current;
+      const beforeCoreHtml = editor?.innerHTML || "";
+      const coreResult = editor
+        ? editorControllerRef.current!
+          .bindRoot(editor)
+          .execute("checklist.toggle", { strikeCompleted })
+        : null;
+      if (coreResult) {
+        inputHistoryGroupRef.current = null;
+        editorControllerRef.current!.bindRoot(editor).recordHistorySnapshot(beforeCoreHtml);
+        syncChecklistControls(editor!);
+        const selection = window.getSelection();
+        if (selection?.rangeCount) savedRangeRef.current = selection.getRangeAt(0).cloneRange();
+        handleInput();
+        requestAnimationFrame(updateActiveState);
+        return;
+      }
+    }
     if (toggleOff && selectedItems.length > 0 && selectedChecklists.length === selectedItems.length) {
       pushEditorHistory();
       selectedItems.forEach((item) => {
@@ -2147,9 +2328,17 @@ export function ClassicEditor({
   };
 
   const toggleList = (listTag: "ul" | "ol") => {
+    if (!listFeature) return;
     const editor = editableRef.current;
     if (!editor) return;
     if (!restoreSavedSelection()) safeSelectRange(getSelectionRangeInEditor());
+    // List toolbar actions intentionally use the DOM-preserving path below.
+    // The core bridge is authoritative for canonical document commands, but
+    // its structural selection model cannot yet represent a browser range
+    // that starts in a paragraph and ends inside a nested list. Routing that
+    // range through the bridge can collapse the selection to one block and
+    // lose descendants. The DOM path preserves the complete subtree and is
+    // also shared by list-style dropdown actions.
     const setListActiveState = (active: boolean) => {
       setActiveState((current) => ({
         ...current,
@@ -2172,10 +2361,45 @@ export function ClassicEditor({
       const blocks = getSelectedBlocks(range);
       const selectedListItems = resolveSelectedListItems(range);
       if (selectedListItems.length > 0) {
+        const selectedPlainBlocks = blocks.filter((block) => !block.closest("ul,ol"));
+        let outermostItems = selectedListItems.filter((item) =>
+          !selectedListItems.some((candidate) => candidate !== item && candidate.contains(item))
+        );
         pushEditorHistory();
-        if (transformSelectedListItems(selectedListItems, listTag)) {
-          const active = Boolean(getCurrentBlock()?.closest(listTag));
-          setListActiveState(active);
+        const togglingOff =
+          selectedPlainBlocks.length === 0 &&
+          outermostItems.every((item) => item.parentElement?.tagName.toLowerCase() === listTag);
+        if (togglingOff) {
+          if (transformSelectedListItems(outermostItems, listTag)) {
+            setListActiveState(false);
+            handleInput();
+            requestAnimationFrame(updateActiveState);
+            return;
+          }
+        } else {
+          if (selectedPlainBlocks.length === 0) {
+            const containingLists = new Set(outermostItems.map((item) => item.parentElement));
+            outermostItems = Array.from(containingLists).flatMap((list) =>
+              list
+                ? Array.from(list.children).filter(
+                    (child): child is HTMLElement => child instanceof HTMLElement && child.tagName === "LI"
+                  )
+                : []
+            );
+          }
+          outermostItems.forEach((item) => restyleDescendantLists(item, listTag));
+          const lastItem = restyleSelectedListItems(
+            outermostItems,
+            listTag,
+            defaultListStyleAtDepth(listTag, 0)
+          );
+          const convertedPlainBlocks = convertSelectedBlocksToList(
+            selectedPlainBlocks,
+            listTag,
+            defaultListStyleAtDepth(listTag, 0)
+          );
+          if (!convertedPlainBlocks && lastItem) focusElementEnd(lastItem);
+          setListActiveState(true);
           handleInput();
           requestAnimationFrame(updateActiveState);
           return;
@@ -2275,11 +2499,47 @@ export function ClassicEditor({
   };
 
   const toggleBlockquote = () => {
+    if (!blockquoteFeature) return;
     try {
       if (!restoreSavedSelection()) safeSelectRange(getSelectionRangeInEditor());
       const range = getSelectionRangeInEditor();
       const editor = editableRef.current;
       if (!editor || !range) return;
+      const rangeNode = range.commonAncestorContainer instanceof HTMLElement
+        ? range.commonAncestorContainer
+        : range.commonAncestorContainer.parentElement;
+      const activeQuote = rangeNode?.closest("blockquote") as HTMLElement | null;
+      if (activeQuote && editor.contains(activeQuote)) {
+        const beforeCoreHtml = editor.innerHTML;
+        pushEditorHistory();
+        const replacements = editorControllerRef.current!.bindRoot(editor).executeBlockCommand([activeQuote], { id: "blockquote.toggle" });
+        if (replacements) {
+          focusElementEnd(replacements[replacements.length - 1]);
+          handleInput();
+          requestAnimationFrame(updateActiveState);
+          return;
+        }
+        editorControllerRef.current!.discardLastHistorySnapshot(beforeCoreHtml);
+      } else {
+        const candidates = (range.collapsed
+          ? [getCurrentBlock()].filter((block): block is HTMLElement => Boolean(block))
+          : getSelectedBlocks(range)
+        ).filter((block) => editor.contains(block));
+        const coreCandidates = candidates.filter((block) =>
+          block.matches("p,h1,h2,h3,h4,h5,h6,pre") && !block.closest("li,td,th"));
+        if (coreCandidates.length === candidates.length && coreCandidates.length > 0) {
+          const beforeCoreHtml = editor.innerHTML;
+          pushEditorHistory();
+          const replacements = editorControllerRef.current!.bindRoot(editor).executeBlockCommand(coreCandidates, { id: "blockquote.toggle" });
+          if (replacements) {
+            focusElementEnd(replacements[replacements.length - 1]);
+            handleInput();
+            requestAnimationFrame(updateActiveState);
+            return;
+          }
+          editorControllerRef.current!.discardLastHistorySnapshot(beforeCoreHtml);
+        }
+      }
 
       const unwrapQuote = (quote: HTMLElement) => {
         const parent = quote.parentElement;
@@ -2413,6 +2673,7 @@ export function ClassicEditor({
   };
 
   const toggleCodeBlock = () => {
+    if (!codeBlockFeature) return;
     try {
       if (!restoreSavedSelection()) safeSelectRange(getSelectionRangeInEditor());
       const editor = editableRef.current;
@@ -2433,6 +2694,19 @@ export function ClassicEditor({
         listItems.every((item) => Boolean(getItemCode(item))) &&
         plainBlocks.every((block) => block.tagName === "PRE") &&
         listItems.length + plainBlocks.length > 0;
+
+      if (listItems.length === 0 && plainBlocks.length === blocks.length && plainBlocks.length > 0) {
+        const beforeCoreHtml = editor.innerHTML;
+        pushEditorHistory();
+        const replacements = editorControllerRef.current!.bindRoot(editor).executeBlockCommand(plainBlocks, { id: "code-block.toggle" });
+        if (replacements) {
+          focusElementEnd(replacements[replacements.length - 1]);
+          handleInput();
+          requestAnimationFrame(updateActiveState);
+          return;
+        }
+        editorControllerRef.current!.discardLastHistorySnapshot(beforeCoreHtml);
+      }
 
       pushEditorHistory();
       let lastTarget: HTMLElement | null = null;
@@ -3051,6 +3325,28 @@ export function ClassicEditor({
         range.collapse(false);
         safeSelectRange(range);
       }
+      const coreImage = editorControllerRef.current!.bindRoot(host).insertInlineImage({
+        src,
+        alt: typeof srcOrItem === "string" ? "image" : (srcOrItem.alt || srcOrItem.title || "image"),
+        ...(typeof srcOrItem !== "string" && srcOrItem.title ? { title: srcOrItem.title } : {}),
+      });
+      if (coreImage) {
+        coreImage.draggable = true;
+        coreImage.style.maxWidth = "100%";
+        coreImage.style.height = "auto";
+        coreImage.style.display = "inline-block";
+        if (typeof srcOrItem !== "string") {
+          if (srcOrItem.license?.author) coreImage.dataset.licenseAuthor = srcOrItem.license.author;
+          if (srcOrItem.license?.licenseType) coreImage.dataset.licenseType = srcOrItem.license.licenseType;
+          if (srcOrItem.license?.licenseText) coreImage.dataset.licenseText = srcOrItem.license.licenseText;
+          if (srcOrItem.license?.sourceUrl) coreImage.dataset.licenseUrl = srcOrItem.license.sourceUrl;
+          if (srcOrItem.license?.workName) coreImage.dataset.workName = srcOrItem.license.workName;
+        }
+        setSelectedImage(coreImage);
+        scheduleImageOverlay();
+        handleInput();
+        return;
+      }
       const img = document.createElement("img");
       img.src = src;
       img.draggable = true;
@@ -3108,23 +3404,42 @@ export function ClassicEditor({
         safeSelectRange(range);
       }
       pushEditorHistory();
-      const span = document.createElement("span");
-      span.setAttribute("data-formula", tex);
+      const span = editorControllerRef.current!.bindRoot(host).insertFormula({
+        value: tex,
+        displayText: `$${tex}$`,
+      });
+      if (span) {
+        try {
+          const katex = (window as any).katex;
+          if (katex && typeof katex.render === "function") {
+            katex.render(tex, span, { throwOnError: false });
+          }
+        } catch {}
+        const next = document.createRange();
+        next.setStartAfter(span);
+        next.collapse(true);
+        safeSelectRange(next);
+        savedRangeRef.current = next.cloneRange();
+        handleInput();
+        return;
+      }
+      const fallbackSpan = document.createElement("span");
+      fallbackSpan.setAttribute("data-formula", tex);
       try {
         // @ts-ignore
         const katex = (window as any).katex;
         if (katex && typeof katex.render === "function") {
-          katex.render(tex, span, { throwOnError: false });
+          katex.render(tex, fallbackSpan, { throwOnError: false });
         } else {
-          span.textContent = `$${tex}$`;
+          fallbackSpan.textContent = `$${tex}$`;
         }
       } catch {
-        span.textContent = `$${tex}$`;
+        fallbackSpan.textContent = `$${tex}$`;
       }
-      if (range) range.insertNode(span);
-      else host.appendChild(span);
+      if (range) range.insertNode(fallbackSpan);
+      else host.appendChild(fallbackSpan);
       const r = document.createRange();
-      r.setStartAfter(span);
+      r.setStartAfter(fallbackSpan);
       r.collapse(true);
       safeSelectRange(r);
       handleInput();
@@ -3200,908 +3515,82 @@ export function ClassicEditor({
     }
   };
 
-  const handlePdfFiles = (files: FileList | null) => {
-    if (!files || files.length === 0) return;
-    const file = files[0];
-    if (file.type !== 'application/pdf') return;
-
-    // Check if editor has content
-    const el = editableRef.current;
-    const hasContent = el && el.textContent && el.textContent.trim().length > 0;
-    
-    if (hasContent) {
-        setPendingImport({ file, type: 'pdf' });
-    } else {
-        processImport(file, 'pdf', 'replace');
-    }
+  const getExportableDocument = () => {
+    return editorControllerRef.current!
+      .bindRoot(editableRef.current)
+      .getDocument();
   };
 
-  const processImport = async (file: File, type: 'pdf' | 'docx', mode: 'replace' | 'append') => {
-      if (type === 'pdf') {
-          await processPdf(file, mode);
-      } else {
-          await processDocx(file, mode);
-      }
+  const downloadFormatResult = (result: EditorFormatExportResult) => {
+    if (result.kind === "handled") return;
+    const blob = result.kind === "blob"
+      ? result.content
+      : new Blob([result.content], { type: result.mediaType });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = result.filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const processFormatImport = async (
+    definition: EditorFormatDefinition,
+    file: File,
+    mode: "replace" | "append",
+  ) => {
+    if (!definition.importFile) return;
+    if (definition.id === "pdf") setLoadingPdf(true);
+    if (definition.id === "docx") setLoadingDocx(true);
+    try {
+      const imported = await definition.importFile(file, { ownerDocument: document });
+      insertImportedHtml(
+        imported.layoutHtml || serializeSmartDocument(imported.document),
+        mode,
+        {
+          preserveColors: imported.preserveColors ?? true,
+          preserveDocumentLayout: imported.preserveDocumentLayout ?? true,
+        },
+      );
+    } catch (error) {
+      console.error(`Error importing ${definition.label}:`, error);
+    } finally {
+      if (definition.id === "pdf") setLoadingPdf(false);
+      if (definition.id === "docx") setLoadingDocx(false);
       setPendingImport(null);
-      // Reset inputs
-      if (pdfInputRef.current) pdfInputRef.current.value = "";
-      if (docxInputRef.current) docxInputRef.current.value = "";
+    }
   };
 
-  const processPdf = async (file: File, mode: 'replace' | 'append') => {
-
-
-    try {
-      setLoadingPdf(true);
-      const arrayBuffer = await file.arrayBuffer();
-      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-      
-      let fullHtml = '';
-
-      for (let i = 1; i <= pdf.numPages; i++) {
-        const page = await pdf.getPage(i);
-        const viewport = page.getViewport({ scale: 1 });
-        const textContent = await page.getTextContent();
-        const styles = textContent.styles;
-        
-        // 1. Group items into lines
-        const items = textContent.items as any[];
-        // Calculate base statistics
-        const heights = items.map(item => Math.abs(item.transform[3])).filter(h => h > 0);
-        heights.sort((a,b) => a-b);
-        const medianHeight = heights[Math.floor(heights.length/2)] || 12;
-
-        // Group by Y (with tolerance)
-        const linesMap = new Map<number, {y: number, items: any[]}>();
-        for (const item of items) {
-            if (!item.str.trim()) continue;
-            // Normalize Y to integer buckets to group roughly
-            // PDF Y is bottom-0, so higher Y is higher on page.
-            const y = item.transform[5];
-            // Find closest existing line
-            let foundKey = -1;
-            for (const key of linesMap.keys()) {
-                if (Math.abs(key - y) < medianHeight * 0.5) {
-                    foundKey = key;
-                    break;
-                }
-            }
-            if (foundKey !== -1) {
-                linesMap.get(foundKey)!.items.push(item);
-            } else {
-                linesMap.set(y, {y, items: [item]});
-            }
-        }
-
-        // Convert map to sorted array (top to bottom)
-        const lines = Array.from(linesMap.values()).sort((a,b) => b.y - a.y);
-        
-        // Sort items within lines (left to right)
-        lines.forEach(line => {
-            line.items.sort((a,b) => a.transform[4] - b.transform[4]);
-        });
-
-        // 2. Identify and Build Structures
-        let html = '';
-        let listStack: string[] = []; // 'ul' or 'ol'
-        let inTable = false;
-        let tableColumns: number[] = []; // X-coordinates of column starts
-        let tableHtml = '';
-
-        const closeList = () => {
-             if (listStack.length > 0) {
-                 html += `</${listStack.pop()}>`;
-             }
-        };
-
-        const closeTable = () => {
-            if (inTable) {
-                html += '<div data-table-wrapper="true" style="overflow-x:auto;width:100%;"><table style="border-collapse:collapse;width:100%;" border="1"><tbody>' + tableHtml + '</tbody></table></div>';
-                tableHtml = '';
-                inTable = false;
-                tableColumns = [];
-            }
-        };
-
-        for (let lIndex = 0; lIndex < lines.length; lIndex++) {
-            const line = lines[lIndex];
-            // Calculate gaps and text
-            let lineText = '';
-            let lineHtmlContent = '';
-            let lastX = -1;
-            let gaps: number[] = [];
-            let itemXs: number[] = []; // Start X of logical items (words or phrases)
-            
-            // Reconstruct text with spacing detection
-            for (let j = 0; j < line.items.length; j++) {
-                const item = line.items[j];
-                const x = item.transform[4];
-                const width = item.width;
-                const fontName = item.fontName;
-                const fontObj = styles[fontName];
-                const fontFamily = fontObj?.fontFamily?.toLowerCase() || '';
-                const isBold = fontFamily.includes('bold') || false;
-                const isItalic = fontFamily.includes('italic') || fontFamily.includes('oblique');
-                const fontSize = Math.max(8, Math.round(Math.abs(item.transform[3])));
-
-                if (lastX > 0) {
-                    const gap = x - lastX;
-                    if (gap > 2) { // Minimal space threshold
-                         lineText += ' ';
-                         lineHtmlContent += ' ';
-                         if (gap > 20) { // Large gap threshold for table detection
-                             gaps.push(gap);
-                         }
-                    }
-                } else {
-                     // First item
-                }
-                
-                // Track "columns" candidates: items separated by big gaps
-                if (j === 0 || (x - lastX) > 20) {
-                    itemXs.push(x);
-                }
-
-                // Append text style
-                const chunkStyle = cssRules([
-                  ['font-size', `${fontSize}px`],
-                  ['font-weight', isBold ? '700' : ''],
-                  ['font-style', isItalic ? 'italic' : ''],
-                ]);
-                let chunk = `<span${styleAttr(chunkStyle)}>${escapeHtml(item.str)}</span>`;
-                
-                lineText += item.str;
-                lineHtmlContent += chunk;
-                
-                lastX = x + width;
-            }
-
-            // === Structure Detection ===
-            
-            // Max Font Size in line
-            const maxH = Math.max(...line.items.map((i: any) => Math.abs(i.transform[3])));
-            const isHeader = maxH > medianHeight * 1.2;
-
-            // List Detection
-            const isBullet = /^[•\-\*]\s/.test(lineText);
-            const isNumber = /^\d+[\.\)]\s/.test(lineText);
-            
-            // Table Detection Logic
-            // A line starts a table if it has distinct "columns" (multiple items with large gaps)
-            // Or if we are already in a table and this line aligns with columns
-            
-            let isTableLine = false;
-            
-            // If in table, check alignment
-            if (inTable) {
-                 // Check if items align with known columns
-                 // Simple loose check: do any of the itemXs align with tableColumns?
-                 // Or is the line just sparsely populated but roughly compatible?
-                 // We'll continually simple-add rows for now until a Paragraph break (plain text, no gaps) is found.
-                 
-                 // If line looks like normal paragraph (no large gaps, starts at left margin), close table
-                 const isPlainParagraph = gaps.length === 0 && itemXs[0] < 50 && lineText.length > 50; 
-                 // Allow wrapping text in table cells, which might look like lines with no gaps?
-                 // Table wrapping usually is indented or aligns with a column > 0.
-                 
-                 const alignsWithColumn = itemXs.some(x => tableColumns.some(cx => Math.abs(x - cx) < 20));
-                 
-                 if (alignsWithColumn || (itemXs[0] > 50)) {
-                     isTableLine = true;
-                 } else {
-                     // Maybe a new row starting at col 0?
-                     // If it aligns with col 0.
-                     if (Math.abs(itemXs[0] - tableColumns[0]) < 20) {
-                         isTableLine = true;
-                     }
-                 }
-            } else {
-                // Potential start of table: multiple items separated by gaps, AND next line likely follows suit?
-                // Or simply: It has > 1 column significantly spaced.
-                if (itemXs.length >= 2 && gaps.some(g => g > 30)) {
-                    isTableLine = true;
-                    // Establish columns
-                    tableColumns = [...itemXs];
-                }
-            }
-
-            // --- Apply Logic ---
-
-            if (isTableLine) {
-                closeList();
-                if (!inTable) {
-                    inTable = true;
-                    // Start table
-                }
-                
-                // Build Row
-                // We need to map items to cells based on tableColumns.
-                // Naive approach: Items close to col X go to col X.
-                let rowHtml = '<tr>';
-                
-                // We assume `tableColumns` defines the start of each cell.
-                // We create a cell for each column.
-                // Collect content for each bucket.
-                const cellContents: string[] = new Array(tableColumns.length).fill('');
-                
-                let currentItemHtml = '';
-                let currentItemStart = -1;
-                
-                // process items again to slot them
-                let currentLineX = 0;
-                for (const item of line.items) {
-                    const x = item.transform[4];
-                    const w = item.width;
-                    const txt = item.str;
-                    const fontObj = styles[item.fontName];
-                    const fontFamily = fontObj?.fontFamily?.toLowerCase() || '';
-                    const isBold = fontFamily.includes('bold');
-                    const isItalic = fontFamily.includes('italic') || fontFamily.includes('oblique');
-                    const fontSize = Math.max(8, Math.round(Math.abs(item.transform[3])));
-                    const styledTxt = `<span${styleAttr(cssRules([
-                      ['font-size', `${fontSize}px`],
-                      ['font-weight', isBold ? '700' : ''],
-                      ['font-style', isItalic ? 'italic' : ''],
-                    ]))}>${escapeHtml(txt)}</span>`;
-                    
-                    // Decide which column this belongs to
-                    // Find closest column to the left (or close enough)
-                    let colIdx = 0;
-                    let minDiff = 9999;
-                    
-                    for (let c=0; c<tableColumns.length; c++) {
-                        const colX = tableColumns[c];
-                        // If item starts near colX or after it (but before next col)
-                        // Actually, just find the "controlling" column (closest start to the left)
-                        if (x >= colX - 10) {
-                            colIdx = c;
-                        }
-                    }
-                    
-                    // Append space if needed
-                    if (cellContents[colIdx]) cellContents[colIdx] += ' ';
-                    cellContents[colIdx] += styledTxt;
-                }
-                
-                cellContents.forEach(content => {
-                    rowHtml += `<td style="border:1px solid #d1d5db;padding:8px;vertical-align:top;">${content || '&nbsp;'}</td>`;
-                });
-                
-                rowHtml += '</tr>';
-                tableHtml += rowHtml;
-                
-            } else {
-                closeTable();
-                
-                if (isBullet || isNumber) {
-                    const listType = isBullet ? 'ul' : 'ol';
-                    if (listStack.length === 0 || listStack[listStack.length-1] !== listType) {
-                         if (listStack.length > 0) closeList(); // Close switch
-                         html += `<${listType}>`;
-                         listStack.push(listType);
-                    }
-                    // Strip marker
-                    const content = lineHtmlContent.replace(/^[•\-\*]|\d+[\.\)]/, '').trim();
-                    html += `<li>${content}</li>`;
-                } else {
-                    closeList();
-                    if (isHeader) {
-                        const tag = maxH > medianHeight * 1.5 ? 'h2' : 'h3';
-                        const firstX = line.items[0]?.transform?.[4] || 0;
-                        const lastItem = line.items[line.items.length - 1];
-                        const lastRight = lastItem ? lastItem.transform[4] + lastItem.width : firstX;
-                        const center = (firstX + lastRight) / 2;
-                        const align = Math.abs(center - viewport.width / 2) < viewport.width * 0.12 ? 'center' : firstX > viewport.width * 0.55 ? 'right' : '';
-                        html += `<${tag}${styleAttr(cssRules([['text-align', align]]))}>${lineHtmlContent}</${tag}>`;
-                    } else {
-                        const firstX = line.items[0]?.transform?.[4] || 0;
-                        const lastItem = line.items[line.items.length - 1];
-                        const lastRight = lastItem ? lastItem.transform[4] + lastItem.width : firstX;
-                        const center = (firstX + lastRight) / 2;
-                        const align = Math.abs(center - viewport.width / 2) < viewport.width * 0.12 ? 'center' : firstX > viewport.width * 0.55 ? 'right' : '';
-                        html += `<p${styleAttr(cssRules([
-                          ['text-align', align],
-                          ['margin-left', firstX > 40 && !align ? `${Math.round(firstX)}px` : ''],
-                        ]))}>${lineHtmlContent}</p>`;
-                    }
-                }
-            }
-        }
-        
-        closeList();
-        closeTable();
-        
-        fullHtml += html;
+  const openFormatImport = (formatId: string) => {
+    const definition = formatRuntime.get(formatId);
+    if (!definition?.importFile || !formatRuntime.canImport(formatId)) return;
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = definition.accept || `.${definition.extension}`;
+    input.onchange = () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      const hasContent = Boolean(editableRef.current?.textContent?.trim());
+      if (hasContent && definition.confirmImportWhenNotEmpty) {
+        setPendingImport({ file, definition });
+        return;
       }
-
-      insertImportedHtml(fullHtml, mode, { preserveColors: true, preserveDocumentLayout: true });
-      
-    } catch (error) {
-      console.error('Error reading PDF:', error);
-      // Optional: show user error
-    } finally {
-      setLoadingPdf(false);
-    }
+      void processFormatImport(definition, file, hasContent ? "append" : "replace");
+    };
+    input.click();
   };
 
-  const handleDocxFiles = (files: FileList | null) => {
-    if (!files || files.length === 0) return;
-    const file = files[0];
-    if (!file.name.endsWith('.docx')) return;
-    
-    // Check if editor has content
-    const el = editableRef.current;
-    const hasContent = el && el.textContent && el.textContent.trim().length > 0;
-    
-    if (hasContent) {
-        setPendingImport({ file, type: 'docx' });
-    } else {
-        processImport(file, 'docx', 'replace');
-    }
-  };
-
-  const processDocx = async (file: File, mode: 'replace' | 'append') => {
-
-    try {
-      setLoadingDocx(true);
-      const arrayBuffer = await file.arrayBuffer();
-      const html = preserveDocxStyles
-        ? await convertDocxToStyledHtml(arrayBuffer)
-        : await convertDocxWithMammoth(arrayBuffer);
-
-      if (html) {
-        insertImportedHtml(`<div class="srte-preserve-colors">${html}</div>`, mode, {
-          preserveColors: preserveDocxStyles,
-          preserveDocumentLayout: preserveDocxStyles,
-        });
-      }
-    } catch (error) {
-      console.error('Error reading DOCX:', error);
-    } finally {
-      setLoadingDocx(false);
-    }
-  };
-
-  const convertDocxWithMammoth = async (arrayBuffer: ArrayBuffer) => {
-    const result = await mammoth.convertToHtml({ arrayBuffer });
-    const temp = document.createElement('div');
-    temp.innerHTML = result.value;
-    enhanceImportedTables(temp);
-    return temp.innerHTML;
-  };
-
-  const convertDocxToStyledHtml = async (arrayBuffer: ArrayBuffer) => {
-    try {
-      const zip = await JSZip.loadAsync(arrayBuffer);
-      const documentXml = await zip.file('word/document.xml')?.async('text');
-      if (!documentXml) return convertDocxWithMammoth(arrayBuffer);
-
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(documentXml, 'application/xml');
-      if (doc.querySelector('parsererror')) return convertDocxWithMammoth(arrayBuffer);
-
-      const body = Array.from(doc.getElementsByTagName('*')).find((node) => node.localName === 'body');
-      if (!body) return convertDocxWithMammoth(arrayBuffer);
-
-      const html = directChildren(body)
-        .filter((node) => node.localName !== 'sectPr')
-        .map((node) => {
-          if (node.localName === 'p') return convertDocxParagraph(node);
-          if (node.localName === 'tbl') return convertDocxTable(node);
-          return '';
-        })
-        .join('');
-
-      if (!html.trim()) return convertDocxWithMammoth(arrayBuffer);
-      const temp = document.createElement('div');
-      temp.innerHTML = html;
-      enhanceImportedTables(temp);
-      return temp.innerHTML;
-    } catch (error) {
-      console.warn('Falling back to Mammoth DOCX import:', error);
-      return convertDocxWithMammoth(arrayBuffer);
-    }
-  };
-
-  const directChildren = (node: Element) => Array.from(node.children);
-
-  const firstChildByName = (node: Element | undefined | null, localName: string) =>
-    node
-      ? directChildren(node).find((child) => child.localName === localName)
-      : undefined;
-
-  const childrenByName = (node: Element | undefined | null, localName: string) =>
-    node
-      ? directChildren(node).filter((child) => child.localName === localName)
-      : [];
-
-  const docxAttr = (node: Element | undefined | null, name: string) => {
-    if (!node) return '';
-    return (
-      node.getAttribute(`w:${name}`) ||
-      node.getAttribute(name) ||
-      node.getAttributeNS('http://schemas.openxmlformats.org/wordprocessingml/2006/main', name) ||
-      ''
-    );
-  };
-
-  const docxHexColor = (value: string) => {
-    if (!value || value.toLowerCase() === 'auto') return '';
-    const normalized = value.replace(/[^0-9a-f]/gi, '');
-    return normalized.length === 6 ? `#${normalized}` : '';
-  };
-
-  const twipsToPt = (value: string) => {
-    const n = Number(value);
-    return Number.isFinite(n) ? `${Math.max(n / 20, 0)}pt` : '';
-  };
-
-  const halfPointsToPt = (value: string) => {
-    const n = Number(value);
-    return Number.isFinite(n) ? `${Math.max(n / 2, 1)}pt` : '';
-  };
-
-  const cssRules = (rules: Array<[string, string]>) =>
-    rules
-      .filter(([, value]) => Boolean(value))
-      .map(([name, value]) => `${name}: ${value}`)
-      .join('; ');
-
-  const styleAttr = (style: string) => (style ? ` style="${escapeHtml(style)}"` : '');
-
-  const convertDocxParagraphStyle = (paragraph: Element) => {
-    const pPr = firstChildByName(paragraph, 'pPr');
-    if (!pPr) return '';
-    const spacing = firstChildByName(pPr, 'spacing');
-    const jc = firstChildByName(pPr, 'jc');
-    const indent = firstChildByName(pPr, 'ind');
-    const borderBottom = firstChildByName(firstChildByName(pPr, 'pBdr') as Element, 'bottom');
-    const line = docxAttr(spacing, 'line');
-    const lineRule = docxAttr(spacing, 'lineRule');
-
-    return cssRules([
-      ['text-align', docxAttr(jc, 'val')],
-      ['margin-top', twipsToPt(docxAttr(spacing, 'before'))],
-      ['margin-bottom', twipsToPt(docxAttr(spacing, 'after'))],
-      ['margin-left', twipsToPt(docxAttr(indent, 'left'))],
-      ['text-indent', twipsToPt(docxAttr(indent, 'firstLine'))],
-      ['line-height', line && lineRule === 'auto' ? `${Number(line) / 240}` : ''],
-      ['border-bottom', docxBorderCss(borderBottom)],
-    ]);
-  };
-
-  const convertDocxRunStyle = (run: Element) => {
-    const rPr = firstChildByName(run, 'rPr');
-    if (!rPr) return '';
-    const color = docxHexColor(docxAttr(firstChildByName(rPr, 'color'), 'val'));
-    const highlight = docxHexColor(docxAttr(firstChildByName(rPr, 'highlight'), 'val'));
-    const shade = docxHexColor(docxAttr(firstChildByName(rPr, 'shd'), 'fill'));
-    const size = halfPointsToPt(docxAttr(firstChildByName(rPr, 'sz'), 'val'));
-    const underline = firstChildByName(rPr, 'u');
-
-    return cssRules([
-      ['font-weight', firstChildByName(rPr, 'b') ? '700' : ''],
-      ['font-style', firstChildByName(rPr, 'i') ? 'italic' : ''],
-      ['text-decoration', underline ? 'underline' : ''],
-      ['color', color],
-      ['background-color', highlight || shade],
-      ['font-size', size],
-    ]);
-  };
-
-  const convertDocxRun = (run: Element) => {
-    const rPr = firstChildByName(run, 'rPr');
-    const vertAlign = docxAttr(firstChildByName(rPr as Element, 'vertAlign'), 'val');
-    const style = convertDocxRunStyle(run);
-    const content = directChildren(run)
-      .map((child) => {
-        if (child.localName === 't') return escapeHtml(child.textContent || '');
-        if (child.localName === 'tab') return '&emsp;';
-        if (child.localName === 'br') {
-          return docxAttr(child, 'type') === 'page'
-            ? '<hr class="srte-docx-page-break">'
-            : '<br>';
-        }
-        return '';
-      })
-      .join('');
-
-    if (!content) return '';
-    const tag = vertAlign === 'superscript' ? 'sup' : vertAlign === 'subscript' ? 'sub' : 'span';
-    return `<${tag}${styleAttr(style)}>${content}</${tag}>`;
-  };
-
-  const convertDocxParagraph = (paragraph: Element) => {
-    const style = convertDocxParagraphStyle(paragraph);
-    const content = childrenByName(paragraph, 'r').map(convertDocxRun).join('');
-    return `<p${styleAttr(style)}>${content || '<br>'}</p>`;
-  };
-
-  const docxBorderCss = (border: Element | undefined) => {
-    if (!border) return '';
-    const val = docxAttr(border, 'val');
-    if (!val || val === 'nil' || val === 'none') return '';
-    const size = Number(docxAttr(border, 'sz')) || 4;
-    const width = Math.max(size / 8, 0.5);
-    const color = docxHexColor(docxAttr(border, 'color')) || '#d1d5db';
-    return `${width}px solid ${color}`;
-  };
-
-  const convertDocxCellStyle = (cell: Element) => {
-    const tcPr = firstChildByName(cell, 'tcPr');
-    const width = twipsToPt(docxAttr(firstChildByName(tcPr as Element, 'tcW'), 'w'));
-    const shade = docxHexColor(docxAttr(firstChildByName(tcPr as Element, 'shd'), 'fill'));
-    const borders = firstChildByName(tcPr as Element, 'tcBorders');
-    const top = docxBorderCss(firstChildByName(borders as Element, 'top'));
-    const right = docxBorderCss(firstChildByName(borders as Element, 'right'));
-    const bottom = docxBorderCss(firstChildByName(borders as Element, 'bottom'));
-    const left = docxBorderCss(firstChildByName(borders as Element, 'left'));
-
-    return cssRules([
-      ['width', width],
-      ['background-color', shade],
-      ['border-top', top],
-      ['border-right', right],
-      ['border-bottom', bottom],
-      ['border-left', left],
-      ['padding', '8px'],
-      ['vertical-align', 'top'],
-    ]);
-  };
-
-  const convertDocxTable = (table: Element) => {
-    const rows = childrenByName(table, 'tr')
-      .map((row) => {
-        const cells = childrenByName(row, 'tc')
-          .map((cell) => {
-            const content = directChildren(cell)
-              .filter((child) => child.localName === 'p' || child.localName === 'tbl')
-              .map((child) => child.localName === 'p' ? convertDocxParagraph(child) : convertDocxTable(child))
-              .join('');
-            return `<td${styleAttr(convertDocxCellStyle(cell))}>${content || '<p><br></p>'}</td>`;
-          })
-          .join('');
-        return `<tr>${cells}</tr>`;
-      })
-      .join('');
-    return `<table style="border-collapse: collapse; width: 100%; margin: 12px 0;"><tbody>${rows}</tbody></table>`;
-  };
-
-  const enhanceImportedTables = (root: HTMLElement) => {
-    const tables = root.querySelectorAll('table');
-    tables.forEach(tbl => {
-      tbl.style.borderCollapse = tbl.style.borderCollapse || 'collapse';
-      tbl.style.width = tbl.style.width || '100%';
-      const cells = tbl.querySelectorAll('td, th');
-      cells.forEach(cell => {
-        const el = cell as HTMLElement;
-        if (!el.style.border && !el.style.borderTop && !el.style.borderRight && !el.style.borderBottom && !el.style.borderLeft) {
-          el.style.border = '1px solid #d1d5db';
-        }
-        el.style.padding = el.style.padding || '8px';
-        el.style.verticalAlign = el.style.verticalAlign || 'top';
-      });
+  const runFormatExport = async (formatId: string) => {
+    const definition = formatRuntime.get(formatId);
+    if (!definition || !formatRuntime.canExport(formatId)) return;
+    if (!definition.exportDocument) return;
+    const result = await definition.exportDocument(getExportableDocument(), {
+      ownerDocument: document,
+      hostWindow: window,
     });
-  };
-
-  const escapeHtml = (value: string) =>
-    value
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;");
-
-  const htmlToMarkdown = (html: string) => {
-    const root = document.createElement("div");
-    root.innerHTML = html;
-
-    const walk = (node: Node): string => {
-      if (node.nodeType === Node.TEXT_NODE) return node.textContent || "";
-      if (!(node instanceof HTMLElement)) return "";
-      const content = Array.from(node.childNodes).map(walk).join("");
-      const tag = node.tagName.toLowerCase();
-      if (tag === "strong" || tag === "b") return `**${content}**`;
-      if (tag === "em" || tag === "i") return `*${content}*`;
-      if (tag === "code") return `\`${content}\``;
-      if (tag === "br") return "\n";
-      if (/h[1-6]/.test(tag)) return `${"#".repeat(Number(tag[1]))} ${content.trim()}\n\n`;
-      if (tag === "p") return `${content.trim()}\n\n`;
-      if (tag === "li") return `- ${content.trim()}\n`;
-      if (tag === "ul" || tag === "ol") return `${content}\n`;
-      if (tag === "blockquote") return `> ${content.trim()}\n\n`;
-      if (tag === "table") return `${node.outerHTML}\n\n`;
-      if (tag === "img") return `![${node.getAttribute("alt") || ""}](${node.getAttribute("src") || ""})`;
-      if (tag === "a") return `[${content}](${node.getAttribute("href") || ""})`;
-      return content;
-    };
-
-    return Array.from(root.childNodes).map(walk).join("").replace(/\n{3,}/g, "\n\n").trim();
-  };
-
-  const importTextFile = async (files: FileList | null, type: "html" | "md") => {
-    if (!files || files.length === 0) return;
-    const file = files[0];
-    const text = await file.text();
-    const html = type === "html" ? text : markdownToCompatibilityHtml(text);
-    const el = editableRef.current;
-    const hasContent = el && el.textContent && el.textContent.trim().length > 0;
-    insertImportedHtml(html, hasContent ? "append" : "replace", {
-      preserveColors: true,
-      preserveDocumentLayout: true,
-    });
-  };
-
-  const downloadText = (filename: string, content: string, mimeType: string) => {
-    const blob = new Blob([content], { type: mimeType });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
-  };
-
-  const buildStandaloneHtmlDocument = (html: string) => `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Smart RTE Export</title>
-  <style>
-    :root {
-      --srte-bg: #ffffff;
-      --srte-text: #111111;
-      --srte-text-muted: #4b5563;
-      --srte-border: #d1d5db;
-      --srte-border-light: #e5e7eb;
-      --srte-accent: #1e90ff;
-      --srte-accent-bg: rgba(30, 144, 255, 0.15);
-      --srte-surface-subtle: #f3f4f6;
-    }
-    html, body {
-      margin: 0;
-      background: var(--srte-bg);
-      color: var(--srte-text);
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      line-height: 1.6;
-    }
-    body {
-      padding: 32px;
-    }
-    .srte-export {
-      max-width: 960px;
-      margin: 0 auto;
-    }
-    .srte-export h1,
-    .srte-export h2,
-    .srte-export h3,
-    .srte-export h4,
-    .srte-export h5,
-    .srte-export h6 {
-      line-height: 1.3;
-      margin: 1.25em 0 0.5em;
-      font-weight: 700;
-      color: var(--srte-text);
-    }
-    .srte-export p {
-      margin: 0 0 0.85em;
-    }
-    .srte-export blockquote {
-      border-left: 4px solid var(--srte-accent);
-      margin: 0.75em 0;
-      padding: 0.5em 1em;
-      background: var(--srte-surface-subtle);
-      color: var(--srte-text);
-    }
-    .srte-export ul,
-    .srte-export ol {
-      margin: 0.75em 0;
-      padding-left: 1.75em;
-      list-style-position: outside;
-    }
-    .srte-export ul {
-      list-style-type: disc;
-    }
-    .srte-export ol {
-      list-style-type: decimal;
-    }
-    .srte-export li {
-      display: list-item;
-      margin: 0.25em 0;
-      padding-left: 0.25em;
-    }
-    .srte-export table {
-      border-collapse: collapse;
-      width: 100%;
-      margin: 12px 0;
-    }
-    .srte-export td,
-    .srte-export th {
-      border: 1px solid var(--srte-border);
-      padding: 8px;
-      vertical-align: top;
-      text-align: left;
-    }
-    .srte-export th {
-      background: var(--srte-surface-subtle);
-      font-weight: 700;
-    }
-    .srte-export img {
-      max-width: 100%;
-      height: auto;
-    }
-    .srte-export pre,
-    .srte-export code {
-      background: var(--srte-surface-subtle);
-      color: var(--srte-text);
-      border-radius: 4px;
-    }
-    .srte-export pre {
-      padding: 12px;
-      overflow-x: auto;
-      white-space: pre-wrap;
-    }
-    @media print {
-      body {
-        padding: 0;
-      }
-      .srte-export {
-        max-width: none;
-      }
-    }
-  </style>
-</head>
-<body>
-  <main class="srte-export">${html || "<p></p>"}</main>
-</body>
-</html>`;
-
-  const exportHtml = () => {
-    const html = editableRef.current?.innerHTML || "";
-    downloadText("smart-rte-export.html", buildStandaloneHtmlDocument(html), "text/html;charset=utf-8");
-  };
-
-  const exportMarkdown = () => {
-    const html = editableRef.current?.innerHTML || "";
-    downloadText("smart-rte-export.md", htmlToMarkdown(html), "text/markdown");
-  };
-
-  const htmlToDocxXml = (html: string) => {
-    const root = document.createElement("div");
-    root.innerHTML = html;
-
-    const xmlEscape = (value: string) =>
-      value
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;");
-
-    const colorValue = (value: string) => {
-      const hex = /^#([0-9a-f]{6})$/i.exec(value.trim());
-      if (hex) return hex[1].toUpperCase();
-      const rgb = /^rgb\(\s*(\d+),\s*(\d+),\s*(\d+)\s*\)$/i.exec(value.trim());
-      if (!rgb) return "";
-      return [rgb[1], rgb[2], rgb[3]]
-        .map((part) => Math.max(0, Math.min(255, Number(part))).toString(16).padStart(2, "0"))
-        .join("")
-        .toUpperCase();
-    };
-
-    const sizeToHalfPoints = (value: string) => {
-      const trimmed = value.trim();
-      const match = /^([\d.]+)(px|pt)$/i.exec(trimmed);
-      if (!match) return "";
-      const raw = Number(match[1]);
-      const pt = match[2].toLowerCase() === "px" ? raw * 0.75 : raw;
-      return String(Math.max(2, Math.round(pt * 2)));
-    };
-
-    const runProperties = (el: HTMLElement) => {
-      const style = el.style;
-      const color = colorValue(style.color);
-      const size = sizeToHalfPoints(style.fontSize);
-      const isBold = el.tagName === "B" || el.tagName === "STRONG" || /bold|700|800|900/.test(style.fontWeight);
-      const isItalic = el.tagName === "I" || el.tagName === "EM" || style.fontStyle === "italic";
-      const isUnderline = el.tagName === "U" || style.textDecoration.includes("underline");
-      return [
-        isBold ? "<w:b/>" : "",
-        isItalic ? "<w:i/>" : "",
-        isUnderline ? '<w:u w:val="single"/>' : "",
-        color ? `<w:color w:val="${color}"/>` : "",
-        size ? `<w:sz w:val="${size}"/>` : "",
-      ].join("");
-    };
-
-    const runs = (node: Node, inheritedProps = ""): string => {
-      if (node.nodeType === Node.TEXT_NODE) {
-        const text = node.textContent || "";
-        return text ? `<w:r>${inheritedProps ? `<w:rPr>${inheritedProps}</w:rPr>` : ""}<w:t xml:space="preserve">${xmlEscape(text)}</w:t></w:r>` : "";
-      }
-      if (!(node instanceof HTMLElement)) return "";
-      if (node.tagName === "BR") return "<w:r><w:br/></w:r>";
-      if (node.tagName === "IMG") {
-        const alt = node.getAttribute("alt") || node.getAttribute("title") || "Image";
-        return `<w:r><w:t>[Image: ${xmlEscape(alt)}]</w:t></w:r>`;
-      }
-      const props = `${inheritedProps}${runProperties(node)}`;
-      return Array.from(node.childNodes).map((child) => runs(child, props)).join("");
-    };
-
-    const paragraph = (el: HTMLElement, fallbackTag = "p") => {
-      const tag = el.tagName.toLowerCase();
-      const headingMatch = /^h([1-6])$/.exec(tag);
-      const style = el.style;
-      const align = style.textAlign ? `<w:jc w:val="${xmlEscape(style.textAlign)}"/>` : "";
-      const headingSize = headingMatch ? `<w:rPr><w:b/><w:sz w:val="${Math.max(24, 40 - Number(headingMatch[1]) * 4)}"/></w:rPr>` : "";
-      const body = runs(el);
-      return `<w:p><w:pPr>${align}${headingSize}</w:pPr>${body || "<w:r><w:t></w:t></w:r>"}</w:p>`;
-    };
-
-    const tableCell = (cell: HTMLElement) => {
-      const fill = colorValue(cell.style.backgroundColor);
-      const shading = fill ? `<w:shd w:val="clear" w:color="auto" w:fill="${fill}"/>` : "";
-      const cellContent = Array.from(cell.childNodes)
-        .map((child) => child instanceof HTMLElement && ["P", "DIV", "H1", "H2", "H3", "H4", "H5", "H6"].includes(child.tagName)
-          ? paragraph(child)
-          : `<w:p>${runs(child)}</w:p>`)
-        .join("");
-      return `<w:tc><w:tcPr>${shading}<w:tcBorders><w:top w:val="single" w:sz="4" w:color="D1D5DB"/><w:left w:val="single" w:sz="4" w:color="D1D5DB"/><w:bottom w:val="single" w:sz="4" w:color="D1D5DB"/><w:right w:val="single" w:sz="4" w:color="D1D5DB"/></w:tcBorders></w:tcPr>${cellContent || "<w:p/>"}</w:tc>`;
-    };
-
-    const tableXml = (table: HTMLTableElement) => {
-      const rows = Array.from(table.querySelectorAll("tr"));
-      return `<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:tblBorders><w:top w:val="single" w:sz="4" w:color="D1D5DB"/><w:left w:val="single" w:sz="4" w:color="D1D5DB"/><w:bottom w:val="single" w:sz="4" w:color="D1D5DB"/><w:right w:val="single" w:sz="4" w:color="D1D5DB"/><w:insideH w:val="single" w:sz="4" w:color="D1D5DB"/><w:insideV w:val="single" w:sz="4" w:color="D1D5DB"/></w:tblBorders></w:tblPr>${rows.map((row) => `<w:tr>${Array.from(row.children).map((cell) => tableCell(cell as HTMLElement)).join("")}</w:tr>`).join("")}</w:tbl>`;
-    };
-
-    const blockXml = (node: Node): string => {
-      if (node.nodeType === Node.TEXT_NODE) {
-        const text = node.textContent?.trim();
-        return text ? `<w:p>${runs(node)}</w:p>` : "";
-      }
-      if (!(node instanceof HTMLElement)) return "";
-      if (node.tagName === "TABLE") return tableXml(node as HTMLTableElement);
-      if (node.tagName === "UL" || node.tagName === "OL") {
-        return Array.from(node.children).map((li) => `<w:p><w:r><w:t>• </w:t></w:r>${runs(li)}</w:p>`).join("");
-      }
-      if (node.tagName === "BLOCKQUOTE") {
-        return `<w:p><w:pPr><w:ind w:left="720"/></w:pPr>${runs(node)}</w:p>`;
-      }
-      if (node.tagName === "HR") return '<w:p><w:pPr><w:pBdr><w:bottom w:val="single" w:sz="6" w:color="D1D5DB"/></w:pBdr></w:pPr></w:p>';
-      if (["P", "DIV", "PRE", "H1", "H2", "H3", "H4", "H5", "H6"].includes(node.tagName)) return paragraph(node);
-      return Array.from(node.childNodes).map(blockXml).join("");
-    };
-
-    const body = Array.from(root.childNodes).map(blockXml).join("");
-    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${body}<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="720" w:right="720" w:bottom="720" w:left="720"/></w:sectPr></w:body></w:document>`;
-  };
-
-  const exportDocx = async () => {
-    const html = editableRef.current?.innerHTML || "";
-    const zip = new JSZip();
-    zip.file("[Content_Types].xml", `<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>`);
-    zip.folder("_rels")?.file(".rels", `<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>`);
-    zip.folder("word")?.file("document.xml", htmlToDocxXml(html));
-    zip.folder("word")?.folder("_rels")?.file("document.xml.rels", `<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>`);
-    const blob = await zip.generateAsync({ type: "blob", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = "smart-rte-export.docx";
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
-  };
-
-  const exportPdf = () => {
-    const html = editableRef.current?.innerHTML || "";
-    const printWindow = window.open("", "_blank", "width=900,height=700");
-    if (!printWindow) return;
-    printWindow.document.open();
-    printWindow.document.write(`<!doctype html><html><head><title>Export PDF</title><style>@page{margin:18mm}html,body{background:#fff}body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;line-height:1.6;padding:32px;color:#111}table{border-collapse:collapse;width:100%;margin:12px 0;break-inside:auto}tr,img,blockquote,pre{break-inside:avoid}td,th{border:1px solid #d1d5db;padding:8px;vertical-align:top}img{max-width:100%;height:auto}blockquote{border-left:4px solid #d1d5db;padding-left:12px;color:#374151}pre,code{background:#f3f4f6}pre{padding:12px;white-space:pre-wrap}@media print{body{padding:0}}</style></head><body>${html || "<p></p>"}<script>window.addEventListener("load",function(){setTimeout(function(){window.focus();window.print();},150);});</script></body></html>`);
-    printWindow.document.close();
+    downloadFormatResult(result);
   };
 
   const fixNegativeMargins = (root: HTMLElement) => {
@@ -4474,6 +3963,26 @@ export function ClassicEditor({
         sel?.removeAllRanges();
         sel?.addRange(range);
       }
+      if (range?.collapsed) {
+        pushEditorHistory();
+        const inserted = editorControllerRef.current!.bindRoot(el).insertTable(tableRows, tableCols);
+        if (inserted) {
+          Array.from(inserted.rows).forEach((row, rowIndex) => {
+            row.setAttribute("data-row-index", String(rowIndex));
+            cellsOfRow(row).forEach((cell, cellIndex) => {
+              cell.setAttribute("data-col-index", String(cellIndex));
+              cell.style.border = cell.style.border || "1px solid #d1d5db";
+              cell.style.padding = cell.style.padding || "6px";
+              cell.style.minWidth = cell.style.minWidth || "60px";
+            });
+          });
+          addTableResizeHandles();
+          const firstCell = inserted.querySelector("td,th");
+          if (firstCell instanceof HTMLTableCellElement) moveCaretToCell(firstCell, false);
+          handleInput();
+          return;
+        }
+      }
       const html = buildTableHTML(tableRows, tableCols);
       // Insert via Range for broader support
       const wrapper = document.createElement("div");
@@ -4667,6 +4176,25 @@ export function ClassicEditor({
     const anchor = grid[sr]?.[sc];
     if (!anchor) return;
     pushEditorHistory();
+    clearSelectionDecor();
+    const table = tbody.closest("table");
+    if (table instanceof HTMLTableElement) {
+      const replacement = editorControllerRef.current!.bindRoot(editableRef.current).executeTableCommand(table, {
+        id: "table.cell.merge",
+        input: {
+          start: { row: sr, column: sc },
+          end: { row: er, column: ec },
+        },
+      });
+      if (replacement) {
+        const nextBody = replacement.tBodies[0];
+        const nextAnchor = nextBody ? getTableGrid(nextBody).grid[sr]?.[sc] : null;
+        if (nextAnchor) moveCaretToCell(nextAnchor, false);
+        addTableResizeHandles();
+        handleInput();
+        return;
+      }
+    }
     // Collect content and remove other cells
     const contents: string[] = [];
     const cellsToMerge = getCellsInGridRect(tbody, sr, sc, er, ec);
@@ -4693,7 +4221,19 @@ export function ClassicEditor({
   const addRow = (cell: HTMLTableCellElement, dir: "above" | "below") => {
     const pos = getCellPosition(cell);
     if (!pos) return;
-    const { row, tbody, rIdx } = pos;
+    const { row, tbody, rIdx, table } = pos;
+    const insertIndex = dir === "above" ? rIdx : rIdx + 1;
+    const replacement = editorControllerRef.current!.bindRoot(editableRef.current).executeTableCommand(table, {
+      id: "table.row.add",
+      input: { index: insertIndex },
+    });
+    if (replacement) {
+      const nextBody = replacement.tBodies[0];
+      const nextCell = nextBody ? getTableGrid(nextBody).grid[insertIndex]?.[0] : null;
+      if (nextCell) moveCaretToCell(nextCell, false);
+      addTableResizeHandles();
+      return;
+    }
     const newRow = document.createElement("tr");
     const numCols = Array.from(row.children).filter((c) =>
       ["TD", "TH"].includes((c as HTMLElement).tagName)
@@ -4706,7 +4246,6 @@ export function ClassicEditor({
       td.innerHTML = "&nbsp;";
       newRow.appendChild(td);
     }
-    const insertIndex = dir === "above" ? rIdx : rIdx + 1;
     const refRow = tbody.children[insertIndex] || null;
     tbody.insertBefore(newRow, refRow);
   };
@@ -4714,7 +4253,19 @@ export function ClassicEditor({
   const deleteRow = (cell: HTMLTableCellElement) => {
     const pos = getCellPosition(cell);
     if (!pos) return;
-    const { row, tbody, table } = pos;
+    const { row, tbody, table, rIdx } = pos;
+    const replacement = editorControllerRef.current!.bindRoot(editableRef.current).executeTableCommand(table, {
+      id: "table.row.remove",
+      input: { index: rIdx },
+    });
+    if (replacement) {
+      const nextBody = replacement.tBodies[0];
+      const nextRow = Math.min(rIdx, Math.max(0, replacement.rows.length - 1));
+      const nextCell = nextBody ? getTableGrid(nextBody).grid[nextRow]?.[0] : null;
+      if (nextCell) moveCaretToCell(nextCell, false);
+      addTableResizeHandles();
+      return;
+    }
     tbody.removeChild(row);
     if (tbody.querySelectorAll("tr").length === 0) {
       table.parentElement?.removeChild(table);
@@ -4725,8 +4276,19 @@ export function ClassicEditor({
     const pos = getCellPosition(cell);
     if (!pos) return;
     const { tbody, cIdx } = pos;
-    const rows = Array.from(tbody.querySelectorAll("tr"));
     const insertIndex = dir === "left" ? cIdx : cIdx + 1;
+    const replacement = editorControllerRef.current!.bindRoot(editableRef.current).executeTableCommand(pos.table, {
+      id: "table.column.add",
+      input: { index: insertIndex },
+    });
+    if (replacement) {
+      const nextBody = replacement.tBodies[0];
+      const nextCell = nextBody ? getTableGrid(nextBody).grid[0]?.[insertIndex] : null;
+      if (nextCell) moveCaretToCell(nextCell, false);
+      addTableResizeHandles();
+      return;
+    }
+    const rows = Array.from(tbody.querySelectorAll("tr"));
     for (const r of rows) {
       const cells = Array.from(r.children).filter((c) =>
         ["TD", "TH"].includes((c as HTMLElement).tagName)
@@ -4746,6 +4308,19 @@ export function ClassicEditor({
     const pos = getCellPosition(cell);
     if (!pos) return;
     const { tbody, table, cIdx } = pos;
+    const replacement = editorControllerRef.current!.bindRoot(editableRef.current).executeTableCommand(table, {
+      id: "table.column.remove",
+      input: { index: cIdx },
+    });
+    if (replacement) {
+      const nextBody = replacement.tBodies[0];
+      const nextGrid = nextBody ? getTableGrid(nextBody).grid : [];
+      const nextColumn = Math.min(cIdx, Math.max(0, (nextGrid[0]?.length || 1) - 1));
+      const nextCell = nextGrid[0]?.[nextColumn] || null;
+      if (nextCell) moveCaretToCell(nextCell, false);
+      addTableResizeHandles();
+      return;
+    }
     const rows = Array.from(tbody.querySelectorAll("tr"));
     for (const r of rows) {
       const cells = Array.from(r.children).filter((c) =>
@@ -4760,7 +4335,19 @@ export function ClassicEditor({
   };
 
   const toggleHeaderCell = (cell: HTMLTableCellElement) => {
+    const pos = getCellPosition(cell);
+    if (!pos) return;
     clearSelectionDecor();
+    const replacement = editorControllerRef.current!.bindRoot(editableRef.current).executeTableCommand(pos.table, {
+      id: "table.header.cell.toggle",
+      input: { row: pos.rIdx, column: pos.cIdx },
+    });
+    if (replacement) {
+      const nextCell = getTableGrid(replacement.tBodies[0]).grid[pos.rIdx]?.[pos.cIdx];
+      if (nextCell) moveCaretToCell(nextCell, false);
+      addTableResizeHandles();
+      return;
+    }
     const isTh = cell.tagName === "TH";
     replaceTableCellTag(cell, isTh ? "td" : "th");
     handleInput();
@@ -4770,6 +4357,7 @@ export function ClassicEditor({
     const pos = getCellPosition(cell);
     if (!pos) return;
     const { table } = pos;
+    if (editorControllerRef.current!.bindRoot(editableRef.current).removeTable(table)) return;
     table.parentElement?.removeChild(table);
   };
 
@@ -4780,6 +4368,18 @@ export function ClassicEditor({
     const rs = Math.max(1, cell.rowSpan || 1);
     const cs = Math.max(1, cell.colSpan || 1);
     if (rs === 1 && cs === 1) return;
+    clearSelectionDecor();
+    const replacement = editorControllerRef.current!.bindRoot(editableRef.current).executeTableCommand(pos.table, {
+      id: "table.cell.split",
+      input: { row: rIdx, column: cIdx },
+    });
+    if (replacement) {
+      const nextBody = replacement.tBodies[0];
+      const nextCell = nextBody ? getTableGrid(nextBody).grid[rIdx]?.[cIdx] : null;
+      if (nextCell) moveCaretToCell(nextCell, false);
+      addTableResizeHandles();
+      return;
+    }
     // Reset current cell
     cell.rowSpan = 1;
     cell.colSpan = 1;
@@ -4818,6 +4418,16 @@ export function ClassicEditor({
     const pos = getCellPosition(cell);
     if (!pos) return;
     clearSelectionDecor();
+    const replacement = editorControllerRef.current!.bindRoot(editableRef.current).executeTableCommand(pos.table, {
+      id: "table.header.row.toggle",
+      input: { row: pos.rIdx, column: pos.cIdx },
+    });
+    if (replacement) {
+      const nextCell = getTableGrid(replacement.tBodies[0]).grid[pos.rIdx]?.[pos.cIdx];
+      if (nextCell) moveCaretToCell(nextCell, false);
+      addTableResizeHandles();
+      return;
+    }
     const { row } = pos;
     const cells = cellsOfRow(row);
     const shouldMakeHeader = cells.some((c) => c.tagName !== "TH");
@@ -4836,6 +4446,16 @@ export function ClassicEditor({
     const pos = getCellPosition(cell);
     if (!pos) return;
     clearSelectionDecor();
+    const replacement = editorControllerRef.current!.bindRoot(editableRef.current).executeTableCommand(pos.table, {
+      id: "table.header.column.toggle",
+      input: { row: pos.rIdx, column: pos.cIdx },
+    });
+    if (replacement) {
+      const nextCell = getTableGrid(replacement.tBodies[0]).grid[pos.rIdx]?.[pos.cIdx];
+      if (nextCell) moveCaretToCell(nextCell, false);
+      addTableResizeHandles();
+      return;
+    }
     const { tbody, cIdx } = pos;
     const { grid } = getTableGrid(tbody);
     const seen = new Set<HTMLTableCellElement>();
@@ -4860,23 +4480,48 @@ export function ClassicEditor({
     explicitCells?: HTMLTableCellElement[] | null
   ) => {
     const readableColor = readableTextColorForBackground(hex);
+    const targetCells = explicitCells?.length
+      ? explicitCells
+      : shouldUseTableSelection(fallbackCell)
+        ? getCellsInGridRect(
+            selectionRef.current!.tbody,
+            selectionRef.current!.sr,
+            selectionRef.current!.sc,
+            selectionRef.current!.er,
+            selectionRef.current!.ec
+          )
+        : fallbackCell ? [fallbackCell] : [];
+    const positions = targetCells
+      .map((target) => getCellPosition(target))
+      .filter((position): position is NonNullable<ReturnType<typeof getCellPosition>> => Boolean(position));
+    const table = positions[0]?.table;
+    if (table && positions.every((position) => position.table === table)) {
+      const start = {
+        row: Math.min(...positions.map((position) => position.rIdx)),
+        column: Math.min(...positions.map((position) => position.cIdx)),
+      };
+      const end = {
+        row: Math.max(...positions.map((position) => position.rIdx)),
+        column: Math.max(...positions.map((position) => position.cIdx)),
+      };
+      clearSelectionDecor();
+      const replacement = editorControllerRef.current!.bindRoot(editableRef.current).executeTableCommand(table, {
+        id: "table.cell.style.set",
+        input: { start, end, backgroundColor: hex, textColor: readableColor || undefined },
+      });
+      if (replacement) {
+        const nextCell = getTableGrid(replacement.tBodies[0]).grid[start.row]?.[start.column];
+        if (nextCell) moveCaretToCell(nextCell, false);
+        addTableResizeHandles();
+        return;
+      }
+    }
     const applyFill = (cell: HTMLTableCellElement) => {
       cell.style.background = hex;
       if (readableColor) cell.style.color = readableColor;
     };
-    if (explicitCells?.length) {
-      explicitCells.forEach(applyFill);
-      return;
-    }
-    const sel = shouldUseTableSelection(fallbackCell) ? selectionRef.current : null;
-    if (sel) {
-      const cells = getCellsInGridRect(sel.tbody, sel.sr, sel.sc, sel.er, sel.ec);
-      clearSelectionDecor();
-      cells.forEach(applyFill);
-    } else if (fallbackCell) {
-      clearSelectionDecor();
-      applyFill(fallbackCell);
-    }
+    clearSelectionDecor();
+    targetCells.forEach(applyFill);
   };
 
   const tableCellFillHex = (cell: HTMLTableCellElement) => {
@@ -4903,17 +4548,40 @@ export function ClassicEditor({
   };
 
   const toggleBorderSelection = (fallbackCell?: HTMLTableCellElement) => {
+    const targetCells = shouldUseTableSelection(fallbackCell)
+      ? getCellsInGridRect(
+          selectionRef.current!.tbody,
+          selectionRef.current!.sr,
+          selectionRef.current!.sc,
+          selectionRef.current!.er,
+          selectionRef.current!.ec
+        )
+      : fallbackCell ? [fallbackCell] : [];
+    const positions = targetCells
+      .map((target) => getCellPosition(target))
+      .filter((position): position is NonNullable<ReturnType<typeof getCellPosition>> => Boolean(position));
+    const table = positions[0]?.table;
+    if (table && positions.every((position) => position.table === table)) {
+      const start = {
+        row: Math.min(...positions.map((position) => position.rIdx)),
+        column: Math.min(...positions.map((position) => position.cIdx)),
+      };
+      const end = {
+        row: Math.max(...positions.map((position) => position.rIdx)),
+        column: Math.max(...positions.map((position) => position.cIdx)),
+      };
+      clearSelectionDecor();
+      if (editorControllerRef.current!.bindRoot(editableRef.current).executeTableCommand(table, {
+        id: "table.cell.border.toggle",
+        input: { start, end },
+      })) return;
+    }
     const applyToggle = (cell: HTMLTableCellElement) => {
       const cur = (cell as HTMLElement).style.border;
       (cell as HTMLElement).style.border =
         cur && cur !== "none" ? "none" : "1px solid #d1d5db";
     };
-    const sel = shouldUseTableSelection(fallbackCell) ? selectionRef.current : null;
-    if (sel) {
-      getCellsInGridRect(sel.tbody, sel.sr, sel.sc, sel.er, sel.ec).forEach(applyToggle);
-    } else if (fallbackCell) {
-      applyToggle(fallbackCell);
-    }
+    targetCells.forEach(applyToggle);
   };
 
   const runTableCellAction = (
@@ -5028,7 +4696,17 @@ export function ClassicEditor({
   };
 
   const handleTableResizeEnd = () => {
-    if (tableResizeRef.current) {
+    const resize = tableResizeRef.current;
+    if (resize) {
+      const size = resize.type === "column"
+        ? Number.parseFloat(resize.cells[0]?.style.width || "") || resize.startSize
+        : Number.parseFloat(resize.table.rows[resize.index]?.style.height || "") || resize.startSize;
+      editorControllerRef.current!.bindRoot(editableRef.current).executeTableCommand(
+        resize.table,
+        resize.type === "column"
+          ? { id: "table.column.width.set", input: { index: resize.index, widthPx: size } }
+          : { id: "table.row.height.set", input: { index: resize.index, heightPx: size } }
+      );
       tableResizeRef.current = null;
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
@@ -5359,6 +5037,7 @@ export function ClassicEditor({
   };
 
   const moveSelectedBlocks = (direction: "up" | "down" | "left" | "right") => {
+    if (!moveFeature) return false;
     const editor = editableRef.current;
     const range = getSelectionRangeInEditor();
     if (!editor || !range || range.collapsed) return false;
@@ -5372,6 +5051,19 @@ export function ClassicEditor({
 
     const parent = blocks[0].parentElement;
     if (!parent || blocks.some((block) => block.parentElement !== parent)) return false;
+
+    const coreResult = executeDomMoveCommand(blocks, direction, pushEditorHistory);
+    if (coreResult === false) return true;
+    if (coreResult) {
+      const movedRange = document.createRange();
+      movedRange.setStartBefore(coreResult[0]);
+      movedRange.setEndAfter(coreResult[coreResult.length - 1]);
+      safeSelectRange(movedRange);
+      savedRangeRef.current = movedRange.cloneRange();
+      handleInput();
+      requestAnimationFrame(updateActiveState);
+      return true;
+    }
 
     pushEditorHistory();
     if (direction === "up") {
@@ -5406,6 +5098,7 @@ export function ClassicEditor({
   };
 
   const moveCurrentElement = (direction: "up" | "down" | "left" | "right") => {
+    if (!moveFeature) return;
     restoreSavedSelection();
     const editor = editableRef.current;
     const range = getSelectionRangeInEditor();
@@ -5427,6 +5120,21 @@ export function ClassicEditor({
       while (cell.firstChild) paragraph.appendChild(cell.firstChild);
       cell.appendChild(paragraph);
       target = paragraph;
+    }
+    if (target.tagName.toLowerCase() !== "li") {
+      const coreResult = executeDomMoveCommand([target], direction, () => {
+        if (!historyPushed) pushEditorHistory();
+        historyPushed = true;
+      });
+      if (coreResult === false) return;
+      if (coreResult) {
+        focusElementEnd(target);
+        setSelectedImage(target.tagName === "IMG" ? target as HTMLImageElement : target.querySelector("img"));
+        scheduleImageOverlay();
+        handleInput();
+        requestAnimationFrame(updateActiveState);
+        return;
+      }
     }
     if (target.tagName.toLowerCase() === "li") {
       const list = target.parentElement as HTMLElement | null;
@@ -5534,6 +5242,66 @@ export function ClassicEditor({
     }
   };
 
+  const executePluginCommand = (commandId: string, input?: unknown) => {
+    const editor = editableRef.current;
+    if (!editor || readOnly) return false;
+    const before = editor.innerHTML;
+    pushEditorHistory();
+    const result = editorControllerRef.current!
+      .bindRoot(editor)
+      .execute(commandId, input);
+    if (!result) {
+      editorControllerRef.current!.discardLastHistorySnapshot(before);
+      return false;
+    }
+    handleInput();
+    requestAnimationFrame(updateActiveState);
+    return true;
+  };
+
+  const executePluginToolbarContribution = (contribution: ReactToolbarContribution) =>
+    executePluginCommand(contribution.commandId, contribution.input);
+
+  const pluginContributionContext = {
+    root: editableRef.current,
+    selection: typeof window === "undefined" ? null : window.getSelection(),
+    readOnly,
+    canExecute: (commandId: string, input?: unknown) =>
+      editorControllerRef.current!.bindRoot(editableRef.current).canExecute(commandId, input),
+  };
+  const isPluginContributionVisible = (contribution: ReactToolbarContribution | ReactContextMenuContribution) => {
+    try {
+      return contribution.isVisible?.(pluginContributionContext) ?? true;
+    } catch {
+      return false;
+    }
+  };
+  const isPluginContributionEnabled = (contribution: ReactToolbarContribution | ReactContextMenuContribution) => {
+    if (readOnly) return false;
+    try {
+      if (contribution.isEnabled && !contribution.isEnabled(pluginContributionContext)) return false;
+      return !editableRef.current || pluginContributionContext.canExecute(contribution.commandId, contribution.input);
+    } catch {
+      return false;
+    }
+  };
+  const isPluginContributionActive = (contribution: ReactToolbarContribution) => {
+    try {
+      return contribution.isActive?.(pluginContributionContext) ?? false;
+    } catch {
+      return false;
+    }
+  };
+  const isPluginShortcutAvailable = (shortcut: ReactKeyboardShortcutContribution) => {
+    if (readOnly) return false;
+    try {
+      return (shortcut.isVisible?.(pluginContributionContext) ?? true) &&
+        (shortcut.isEnabled?.(pluginContributionContext) ?? true) &&
+        pluginContributionContext.canExecute(shortcut.commandId, shortcut.input);
+    } catch {
+      return false;
+    }
+  };
 
   const editorClass = `srte-editor${theme === 'dark' ? ' srte-dark' : ''}${className ? ' ' + className : ''}`;
 
@@ -5615,51 +5383,11 @@ export function ClassicEditor({
             }}
           />
         )}
-        <input
-          ref={pdfInputRef}
-          type="file"
-          accept="application/pdf"
-          style={{ display: "none" }}
-          onChange={(e) => {
-            handlePdfFiles(e.currentTarget.files);
-            e.currentTarget.value = "";
-          }}
-        />
-        <input
-          ref={docxInputRef}
-          type="file"
-          accept=".docx"
-          style={{ display: "none" }}
-          onChange={(e) => {
-             handleDocxFiles(e.currentTarget.files);
-             e.currentTarget.value = "";
-          }}
-        />
-        <input
-          ref={htmlInputRef}
-          type="file"
-          accept=".html,.htm,text/html"
-          style={{ display: "none" }}
-          onChange={(e) => {
-            importTextFile(e.currentTarget.files, "html");
-            e.currentTarget.value = "";
-          }}
-        />
-        <input
-          ref={mdInputRef}
-          type="file"
-          accept=".md,.markdown,text/markdown,text/plain"
-          style={{ display: "none" }}
-          onChange={(e) => {
-            importTextFile(e.currentTarget.files, "md");
-            e.currentTarget.value = "";
-          }}
-        />
         <ToolbarGroup label="History">
           <button type="button" className="srte-tool-button" aria-label="Undo" title="Undo" onClick={() => exec("undo")}><ToolbarIcon name="undo" /></button>
           <button type="button" className="srte-tool-button" aria-label="Redo" title="Redo" onClick={() => exec("redo")}><ToolbarIcon name="redo" /></button>
         </ToolbarGroup>
-        <select
+        {blockTypeFeature && <select
           value={currentBlockType}
           onPointerDown={preserveEditorSelection}
           onMouseDown={preserveEditorSelection}
@@ -5691,7 +5419,8 @@ export function ClassicEditor({
           <option value="h4">Heading 4</option>
           <option value="h5">Heading 5</option>
           <option value="h6">Heading 6</option>
-        </select>
+        </select>}
+        {basicFormattingFeature && <>
         <button
           type="button"
           className={`srte-tool-button${activeState.bold ? " srte-active" : ""}`}
@@ -5869,9 +5598,11 @@ export function ClassicEditor({
         >
           X<sup>2</sup>
         </button>
+        </>}
         {[
           {
             key: "check",
+            enabled: checklistFeature,
             icon: "checklist" as ToolbarIconName,
             title: "Checklist",
             active: activeState.checklist,
@@ -5880,21 +5611,23 @@ export function ClassicEditor({
           },
           {
             key: "bullet",
+            enabled: listFeature,
             icon: "bullets" as ToolbarIconName,
             title: "Bulleted list",
             active: activeState.unorderedList,
-            action: () => applyListStyle("bullet:disc"),
+            action: () => toggleList("ul"),
             options: [["bullet:disc", "• Disc"], ["bullet:circle", "○ Circle"], ["bullet:square", "▪ Square"]],
           },
           {
             key: "ordered",
+            enabled: listFeature,
             icon: "numbers" as ToolbarIconName,
             title: "Numbered list",
             active: activeState.orderedList,
-            action: () => applyListStyle("ordered:decimal"),
+            action: () => toggleList("ol"),
             options: [["ordered:decimal", "1. 2. 3."], ["ordered:lower-alpha", "a. b. c."], ["ordered:upper-alpha", "A. B. C."], ["ordered:lower-roman", "i. ii. iii."], ["ordered:upper-roman", "I. II. III."]],
           },
-        ].map((control) => (
+        ].filter((control) => control.enabled).map((control) => (
           <span key={control.key} className="srte-split-control">
             <button
               type="button"
@@ -5925,7 +5658,7 @@ export function ClassicEditor({
             </select>
           </span>
         ))}
-        <button
+        {blockquoteFeature && <button
           type="button"
           className={`srte-tool-button${activeState.blockquote ? " srte-active" : ""}`}
           title="Blockquote"
@@ -5934,7 +5667,7 @@ export function ClassicEditor({
           aria-pressed={activeState.blockquote}
         >
           <ToolbarIcon name="quote" />
-        </button>
+        </button>}
         <button
           type="button"
           className="srte-tool-button"
@@ -5944,7 +5677,7 @@ export function ClassicEditor({
         >
           <ToolbarIcon name="omega" />
         </button>
-        <button
+        {codeBlockFeature && <button
           type="button"
           className={`srte-tool-button${activeState.codeBlock ? " srte-active" : ""}`}
           title="Code block"
@@ -5953,8 +5686,8 @@ export function ClassicEditor({
           aria-pressed={activeState.codeBlock}
         >
           <ToolbarIcon name="code" />
-        </button>
-        <button
+        </button>}
+        {basicFormattingFeature && <button
           type="button"
           className={`srte-tool-button${activeState.link ? " srte-active" : ""}`}
           title="Insert link"
@@ -5964,13 +5697,47 @@ export function ClassicEditor({
           onClick={() => openLinkEditor()}
         >
           <ToolbarIcon name="link" />
-        </button>
-        {(table || media || formula) && (
+        </button>}
+        {pluginRuntime.toolbar
+          .filter((contribution) =>
+            (!contribution.placement || contribution.placement === "main") &&
+            isPluginContributionVisible(contribution))
+          .map((contribution) => (
+            <button
+              key={contribution.id}
+              type="button"
+              className="srte-tool-button"
+              disabled={!isPluginContributionEnabled(contribution)}
+              aria-pressed={isPluginContributionActive(contribution)}
+              aria-label={contribution.label}
+              title={contribution.title || contribution.label}
+              onPointerDown={preserveEditorSelection}
+              onClick={() => executePluginToolbarContribution(contribution)}
+            >
+              {contribution.icon || contribution.label.slice(0, 2)}
+            </button>
+          ))}
+        {(table || media || formula || pluginRuntime.toolbar.some((item) => item.placement === "insert")) && (
           <ToolbarMenu label="Insert" icon="insert" priority={2}>
             {table && <MenuItem icon="table" label="Table" title="Insert table" onClick={() => setShowTableDialog(true)} />}
             {media && <MenuItem icon="image" label="Upload image" title="Insert image" onClick={insertImage} />}
             {media && <MenuItem icon="media" label="Media" title="Open media" onClick={() => mediaManager ? setShowMediaManager(true) : insertImage()} />}
             {formula && <MenuItem icon="formula" label="Formula" title="Insert formula" onClick={() => setShowFormulaDialog(true)} />}
+            {pluginRuntime.toolbar.filter((item) =>
+              item.placement === "insert" && isPluginContributionVisible(item)).map((contribution) => (
+              <button
+                key={contribution.id}
+                type="button"
+                role="menuitem"
+                className="srte-menu-item"
+                disabled={!isPluginContributionEnabled(contribution)}
+                title={contribution.title || contribution.label}
+                onClick={() => executePluginToolbarContribution(contribution)}
+              >
+                <span aria-hidden="true">{contribution.icon || "＋"}</span>
+                <span>{contribution.label}</span>
+              </button>
+            ))}
           </ToolbarMenu>
         )}
         {selectedImage && (
@@ -5986,19 +5753,13 @@ export function ClassicEditor({
             }} />
           </ToolbarMenu>
         )}
-        <ToolbarGroup label="Document" priority={3}>
-        <ToolbarMenu label={loadingPdf || loadingDocx ? "Importing document" : "Import document"} icon="import">
-          <MenuItem icon="import" label="PDF (.pdf)" disabled={loadingPdf || loadingDocx} onClick={() => pdfInputRef.current?.click()} />
-          <MenuItem icon="import" label="Microsoft Word (.docx)" disabled={loadingPdf || loadingDocx} onClick={() => docxInputRef.current?.click()} />
-          <MenuItem icon="import" label="HTML (.html)" disabled={loadingPdf || loadingDocx} onClick={() => htmlInputRef.current?.click()} />
-          <MenuItem icon="import" label="Markdown (.md)" disabled={loadingPdf || loadingDocx} onClick={() => mdInputRef.current?.click()} />
-        </ToolbarMenu>
-        <ToolbarMenu label="Export document" icon="export">
-          <MenuItem icon="export" label="PDF" onClick={exportPdf} />
-          <MenuItem icon="export" label="Microsoft Word (.docx)" onClick={() => void exportDocx()} />
-          <MenuItem icon="export" label="HTML" onClick={exportHtml} />
-          <MenuItem icon="export" label="Markdown" onClick={exportMarkdown} />
-        </ToolbarMenu>
+        {formatRuntime.formats.length > 0 && <ToolbarGroup label="Document" priority={3}>
+        {formatRuntime.imports.length > 0 && <ToolbarMenu label={loadingPdf || loadingDocx ? "Importing document" : "Import document"} icon="import">
+          {formatRuntime.imports.map((format) => <MenuItem key={format.id} icon="import" label={`${format.label} (.${format.extension})`} disabled={loadingPdf || loadingDocx} onClick={() => openFormatImport(format.id)} />)}
+        </ToolbarMenu>}
+        {formatRuntime.exports.length > 0 && <ToolbarMenu label="Export document" icon="export">
+          {formatRuntime.exports.map((format) => <MenuItem key={format.id} icon="export" label={format.label} onClick={() => void runFormatExport(format.id)} />)}
+        </ToolbarMenu>}
         <select
           className="srte-command-proxy"
           aria-hidden="true"
@@ -6010,10 +5771,7 @@ export function ClassicEditor({
           onChange={(event) => {
             const format = event.currentTarget.value;
             event.currentTarget.value = "";
-            if (format === "pdf") pdfInputRef.current?.click();
-            else if (format === "docx") docxInputRef.current?.click();
-            else if (format === "html") htmlInputRef.current?.click();
-            else if (format === "markdown") mdInputRef.current?.click();
+            openFormatImport(format);
           }}
           style={{
             height: 32,
@@ -6026,10 +5784,7 @@ export function ClassicEditor({
           }}
         >
           <option value="" disabled>{loadingPdf || loadingDocx ? "Importing…" : "Import…"}</option>
-          <option value="pdf">PDF (.pdf)</option>
-          <option value="docx">Word (.docx)</option>
-          <option value="html">HTML (.html)</option>
-          <option value="markdown">Markdown (.md)</option>
+          {formatRuntime.imports.map((format) => <option key={format.id} value={format.id}>{proxyFormatLabel(format)} (.{format.extension})</option>)}
         </select>
         <select
           className="srte-command-proxy"
@@ -6041,10 +5796,7 @@ export function ClassicEditor({
           onChange={(event) => {
             const format = event.currentTarget.value;
             event.currentTarget.value = "";
-            if (format === "html") exportHtml();
-            else if (format === "markdown") exportMarkdown();
-            else if (format === "docx") void exportDocx();
-            else if (format === "pdf") exportPdf();
+            void runFormatExport(format);
           }}
           style={{
             height: 32,
@@ -6056,13 +5808,10 @@ export function ClassicEditor({
           }}
         >
           <option value="" disabled>Export…</option>
-          <option value="html">HTML (.html)</option>
-          <option value="markdown">Markdown (.md)</option>
-          <option value="docx">Word (.docx)</option>
-          <option value="pdf">PDF (.pdf)</option>
+          {proxyExportFormats.map((format) => <option key={format.id} value={format.id}>{proxyFormatLabel(format)} (.{format.extension})</option>)}
         </select>
-        </ToolbarGroup>
-        <ToolbarMenu
+        </ToolbarGroup>}
+        {alignmentFeature && <ToolbarMenu
           label="Text alignment"
           icon={currentAlignment === "center" ? "align-center" : currentAlignment === "right" ? "align-right" : currentAlignment === "justify" ? "justify" : "align-left"}
           active={currentAlignment !== "left"}
@@ -6077,34 +5826,44 @@ export function ClassicEditor({
               onClick={() => applyTextAlignment(alignment)}
             />
           ))}
-        </ToolbarMenu>
-        <ToolbarMenu label="Move and indent" icon="move" priority={2}>
+        </ToolbarMenu>}
+        {moveFeature && <ToolbarMenu label="Move and indent" icon="move" priority={2}>
           <MenuItem icon="up" label="Move block up" title="Move selected block up" onClick={() => moveCurrentElement("up")} />
           <MenuItem icon="down" label="Move block down" title="Move selected block down" onClick={() => moveCurrentElement("down")} />
           <div className="srte-menu-separator" role="separator" />
           <MenuItem icon="outdent" label="Decrease indent" title="Move selected block left" onClick={() => moveCurrentElement("left")} />
           <MenuItem icon="indent" label="Increase indent" title="Move selected block right" onClick={() => moveCurrentElement("right")} />
-        </ToolbarMenu>
+        </ToolbarMenu>}
         <div className="srte-mobile-more">
           <ToolbarMenu label="More editor actions" icon="more">
             {table && <MenuItem icon="table" label="Insert table" onClick={() => setShowTableDialog(true)} />}
             {media && <MenuItem icon="image" label="Upload image" onClick={insertImage} />}
             {media && <MenuItem icon="media" label="Media" onClick={() => mediaManager ? setShowMediaManager(true) : insertImage()} />}
             {formula && <MenuItem icon="formula" label="Insert formula" onClick={() => setShowFormulaDialog(true)} />}
+            {pluginRuntime.toolbar.filter((item) =>
+              item.placement === "more" && isPluginContributionVisible(item)).map((contribution) => (
+              <button
+                key={contribution.id}
+                type="button"
+                role="menuitem"
+                className="srte-menu-item"
+                disabled={!isPluginContributionEnabled(contribution)}
+                title={contribution.title || contribution.label}
+                onClick={() => executePluginToolbarContribution(contribution)}
+              >
+                <span aria-hidden="true">{contribution.icon || "•"}</span>
+                <span>{contribution.label}</span>
+              </button>
+            ))}
             <MenuItem icon="omega" label="Special characters" onClick={() => setShowSpecialChars(true)} />
-            <MenuItem icon="up" label="Move block up" onClick={() => moveCurrentElement("up")} />
-            <MenuItem icon="down" label="Move block down" onClick={() => moveCurrentElement("down")} />
-            <MenuItem icon="outdent" label="Decrease indent" onClick={() => moveCurrentElement("left")} />
-            <MenuItem icon="indent" label="Increase indent" onClick={() => moveCurrentElement("right")} />
+            {moveFeature && <MenuItem icon="up" label="Move block up" onClick={() => moveCurrentElement("up")} />}
+            {moveFeature && <MenuItem icon="down" label="Move block down" onClick={() => moveCurrentElement("down")} />}
+            {moveFeature && <MenuItem icon="outdent" label="Decrease indent" onClick={() => moveCurrentElement("left")} />}
+            {moveFeature && <MenuItem icon="indent" label="Increase indent" onClick={() => moveCurrentElement("right")} />}
             <div className="srte-menu-separator" role="separator" />
-            <MenuItem icon="import" label="Import Word document" onClick={() => docxInputRef.current?.click()} />
-            <MenuItem icon="import" label="Import HTML" onClick={() => htmlInputRef.current?.click()} />
-            <MenuItem icon="import" label="Import Markdown" onClick={() => mdInputRef.current?.click()} />
+            {formatRuntime.imports.map((format) => <MenuItem key={`mobile-import-${format.id}`} icon="import" label={`Import ${format.label}`} onClick={() => openFormatImport(format.id)} />)}
             <div className="srte-menu-separator" role="separator" />
-            <MenuItem icon="export" label="Export PDF" onClick={exportPdf} />
-            <MenuItem icon="export" label="Export Word document" onClick={() => void exportDocx()} />
-            <MenuItem icon="export" label="Export HTML" onClick={exportHtml} />
-            <MenuItem icon="export" label="Export Markdown" onClick={exportMarkdown} />
+            {formatRuntime.exports.map((format) => <MenuItem key={`mobile-export-${format.id}`} icon="export" label={`Export ${format.label}`} onClick={() => void runFormatExport(format.id)} />)}
           </ToolbarMenu>
         </div>
       </div>
@@ -6220,8 +5979,6 @@ export function ClassicEditor({
           }}
           onClick={() => {
              setPendingImport(null);
-             if (pdfInputRef.current) pdfInputRef.current.value = "";
-             if (docxInputRef.current) docxInputRef.current.value = "";
           }}
         >
           <div
@@ -6244,7 +6001,7 @@ export function ClassicEditor({
             </p>
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 <button
-                    onClick={() => processImport(pendingImport.file, pendingImport.type, 'replace')}
+                    onClick={() => void processFormatImport(pendingImport.definition, pendingImport.file, 'replace')}
                     style={{
                         padding: "8px 16px",
                         background: "var(--srte-danger)",
@@ -6259,7 +6016,7 @@ export function ClassicEditor({
                     Replace Check existing content (Overwrite)
                 </button>
                 <button
-                    onClick={() => processImport(pendingImport.file, pendingImport.type, 'append')}
+                    onClick={() => void processFormatImport(pendingImport.definition, pendingImport.file, 'append')}
                     style={{
                         padding: "8px 16px",
                         background: "var(--srte-primary)",
@@ -6276,8 +6033,6 @@ export function ClassicEditor({
                 <button
                     onClick={() => {
                         setPendingImport(null);
-                        if (pdfInputRef.current) pdfInputRef.current.value = "";
-                        if (docxInputRef.current) docxInputRef.current.value = "";
                     }}
                     style={{
                         padding: "8px 16px",
@@ -6820,6 +6575,14 @@ export function ClassicEditor({
               if (item && list) {
                 pushEditorHistory();
                 const checked = item.dataset.checked !== "true";
+                const replacement = editorControllerRef.current!
+                  .bindRoot(editableRef.current)
+                  .executeChecklistItemCommand(list, item, checked);
+                if (replacement) {
+                  syncChecklistControls(replacement);
+                  handleInput();
+                  return;
+                }
                 item.dataset.checked = checked ? "true" : "false";
                 t.dataset.checked = checked ? "true" : "false";
                 t.setAttribute("aria-pressed", checked ? "true" : "false");
@@ -6894,7 +6657,33 @@ export function ClassicEditor({
             updateActiveState();
           }}
           onKeyDown={(e) => {
-            if ((e.metaKey || e.ctrlKey) && String(e.key).toLowerCase() === "k") {
+            if (e.key === "Backspace" || e.key === "Delete") {
+              const selection = window.getSelection();
+              const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+              const atom = range
+                ? adjacentInlineAtom(range, e.key === "Backspace" ? "backward" : "forward")
+                : null;
+              if (atom && editableRef.current) {
+                pushEditorHistory();
+                if (editorControllerRef.current!.bindRoot(editableRef.current).deleteInlineAtom(atom)) {
+                  e.preventDefault();
+                  handleInput();
+                  return;
+                }
+                editorControllerRef.current!.discardLastHistorySnapshot();
+              }
+            }
+            const pluginShortcut = pluginRuntime.shortcuts.find((shortcut) =>
+              matchesPluginShortcut(e, shortcut) &&
+              isPluginShortcutAvailable(shortcut));
+            if (
+              pluginShortcut &&
+              executePluginCommand(pluginShortcut.commandId, pluginShortcut.input)
+            ) {
+              e.preventDefault();
+              return;
+            }
+            if (basicFormattingFeature && (e.metaKey || e.ctrlKey) && String(e.key).toLowerCase() === "k") {
               e.preventDefault();
               openLinkEditor();
               return;
@@ -7025,6 +6814,30 @@ export function ClassicEditor({
           }}
           onContextMenu={(e) => {
             const target = e.target as HTMLElement;
+            const contextItems = pluginRuntime.contextMenu.filter((item) => {
+              try {
+                return isPluginContributionVisible(item) && (!item.when || item.when({
+                  root: e.currentTarget,
+                  target,
+                  selection: window.getSelection(),
+                }));
+              } catch {
+                return false;
+              }
+            });
+            if (contextItems.length) {
+              e.preventDefault();
+              preserveEditorSelection();
+              setPluginContextMenu({
+                x: Math.max(8, Math.min(e.clientX, window.innerWidth - 228)),
+                y: Math.max(8, Math.min(e.clientY, window.innerHeight - 48 - contextItems.length * 36)),
+                items: contextItems,
+              });
+              setImageMenu(null);
+              setTableMenu(null);
+              return;
+            }
+            setPluginContextMenu(null);
             if (target && target.tagName === "IMG") {
               e.preventDefault();
               const vw = window.innerWidth;
@@ -7159,6 +6972,11 @@ export function ClassicEditor({
                   window.removeEventListener("mousemove", onMove);
                   window.removeEventListener("mouseup", onUp);
                   resizingRef.current = null;
+                  if (editableRef.current && selectedImage) {
+                    editorControllerRef.current!.bindRoot(editableRef.current).updateInlineImage(selectedImage, {
+                      width: Math.max(1, Math.round(selectedImage.getBoundingClientRect().width)),
+                    });
+                  }
                   handleInput();
                 };
                 window.addEventListener("mousemove", onMove);
@@ -7200,6 +7018,11 @@ export function ClassicEditor({
                   window.removeEventListener("mousemove", onMove);
                   window.removeEventListener("mouseup", onUp);
                   resizingRef.current = null;
+                  if (editableRef.current && selectedImage) {
+                    editorControllerRef.current!.bindRoot(editableRef.current).updateInlineImage(selectedImage, {
+                      width: Math.max(1, Math.round(selectedImage.getBoundingClientRect().width)),
+                    });
+                  }
                   handleInput();
                 };
                 window.addEventListener("mousemove", onMove);
@@ -7221,6 +7044,50 @@ export function ClassicEditor({
           </div>
         )}
       </div>
+      {pluginContextMenu && (
+        <div
+          style={{ position: "fixed", inset: 0, zIndex: 70 }}
+          onMouseDown={() => setPluginContextMenu(null)}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            setPluginContextMenu(null);
+          }}
+        >
+          <div
+            role="menu"
+            aria-label="Plugin actions"
+            style={{
+              position: "fixed",
+              left: pluginContextMenu.x,
+              top: pluginContextMenu.y,
+              minWidth: 200,
+              padding: 6,
+              border: "1px solid var(--srte-border)",
+              borderRadius: 8,
+              background: "var(--srte-input-bg)",
+              boxShadow: "var(--srte-menu-shadow)",
+            }}
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            {pluginContextMenu.items.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                role="menuitem"
+                className="srte-menu-item"
+                disabled={!isPluginContributionEnabled(item)}
+                onClick={() => {
+                  restoreSavedSelection();
+                  executePluginCommand(item.commandId, item.input);
+                  setPluginContextMenu(null);
+                }}
+              >
+                <span>{item.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       {linkMenu && (
         <LinkEditorPopover
           x={linkMenu.x}
@@ -7895,7 +7762,11 @@ export function ClassicEditor({
                 <button
                   style={{ color: "var(--srte-danger)" }}
                   onClick={() => {
-                    imageMenu.img.remove();
+                    pushEditorHistory();
+                    const removedThroughCore = editableRef.current
+                      ? editorControllerRef.current!.bindRoot(editableRef.current).deleteInlineAtom(imageMenu.img)
+                      : false;
+                    if (!removedThroughCore) imageMenu.img.remove();
                     setImageMenu(null);
                     setSelectedImage(null);
                     setImageOverlay(null);

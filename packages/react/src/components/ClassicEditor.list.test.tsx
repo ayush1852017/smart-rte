@@ -74,6 +74,161 @@ describe("ClassicEditor lists", () => {
     expect(editor.querySelector(":scope > p")?.textContent).toBe("three");
   });
 
+  it("removes an ordered list when the selected list button is clicked again", () => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    act(() => {
+      root = createRoot(host!);
+      root.render(
+        <ClassicEditorComponent
+          value={'<ol style="list-style-type:upper-alpha"><li><p>Rubella</p></li><li><p>Cytomegalovirus (CMV)</p></li><li><p>Toxoplasmosis</p></li><li><p>Varicella</p></li></ol>'}
+        />
+      );
+    });
+
+    const editor = host.querySelector('[contenteditable="true"]') as HTMLElement;
+    const range = document.createRange();
+    range.selectNodeContents(editor.querySelector("ol")!);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+
+    act(() => (host!.querySelector('button[title="Numbered list"]') as HTMLButtonElement).click());
+
+    expect(editor.querySelector("ol,ul")).toBeNull();
+    expect(Array.from(editor.querySelectorAll(":scope > p"), (block) => block.textContent)).toEqual([
+      "Rubella",
+      "Cytomegalovirus (CMV)",
+      "Toxoplasmosis",
+      "Varicella",
+    ]);
+  });
+
+  it("preserves and converts nested descendants in a mixed numbered-list selection", () => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    act(() => {
+      root = createRoot(host!);
+      root.render(
+        <ClassicEditorComponent
+          value={'<p><strong>Toxoplasma (Option C):</strong></p><ul><li><p><strong>Congenital Toxoplasmosis – Classic Triad:</strong></p><ul><li><p>Chorioretinitis</p></li><li><p>Hydrocephalus</p></li><li><p>Intracranial calcifications</p></li></ul></li><li><p>No PDA</p></li><li><p>No salt and pepper retinopathy</p></li></ul><p>Varicella</p>'}
+        />
+      );
+    });
+
+    const editor = host.querySelector('[contenteditable="true"]') as HTMLElement;
+    const heading = editor.querySelector(":scope > p")!;
+    const nestedItems = editor.querySelectorAll(":scope > ul > li:first-child > ul > li");
+    const range = document.createRange();
+    range.setStart(heading, 0);
+    range.setEnd(nestedItems[1], nestedItems[1].childNodes.length);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+
+    act(() => (host!.querySelector('button[title="Numbered list"]') as HTMLButtonElement).click());
+
+    const numbered = editor.querySelector(":scope > ol")!;
+    expect(Array.from(numbered.children, (item) => item.firstElementChild?.textContent)).toEqual([
+      "Toxoplasma (Option C):",
+      "Congenital Toxoplasmosis – Classic Triad:",
+    ]);
+    expect(Array.from(numbered.querySelectorAll(":scope > li:nth-child(2) > ol > li"), (item) => item.textContent)).toEqual([
+      "Chorioretinitis",
+      "Hydrocephalus",
+      "Intracranial calcifications",
+    ]);
+    expect(Array.from(editor.querySelectorAll(":scope > ul > li"), (item) => item.textContent)).toEqual([
+      "No PDA",
+      "No salt and pepper retinopathy",
+    ]);
+    expect(editor.textContent).toContain("Varicella");
+  });
+
+  it("keeps the complete pasted nested list when selection starts in a preceding heading", () => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    act(() => {
+      root = createRoot(host!);
+      root.render(
+        <ClassicEditorComponent
+          value={'<p>Toxoplasma (Option C):</p><ul><li><p>Congenital Toxoplasmosis – Classic Triad:</p><ul><li><p>Chorioretinitis</p></li><li><p>Hydrocephalus</p></li><li><p>Intracranial calcifications: Diffuse, often involving basal ganglia</p></li></ul></li><li><p>No Patent Ductus Arteriosus (PDA): PDA is not a feature of congenital toxoplasmosis</p></li><li><p>No Salt &amp; Pepper Retinopathy: Ocular involvement is present but differs in appearance</p></li></ul>'}
+        />
+      );
+    });
+
+    const editor = host.querySelector('[contenteditable="true"]') as HTMLElement;
+    const headingText = editor.querySelector(":scope > p")!.firstChild!;
+    const hydrocephalusText = editor.querySelector(":scope > ul > li:first-child > ul > li:nth-child(2) p")!.firstChild!;
+    const range = document.createRange();
+    range.setStart(headingText, 0);
+    range.setEnd(hydrocephalusText, hydrocephalusText.textContent!.length);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+
+    act(() => (host!.querySelector('button[title="Numbered list"]') as HTMLButtonElement).click());
+
+    const numbered = editor.querySelector(":scope > ol") as HTMLOListElement;
+    expect(numbered).not.toBeNull();
+    expect(numbered.querySelector(":scope > li:first-child > p")?.textContent).toBe("Toxoplasma (Option C):");
+    expect(numbered.querySelector(":scope > li:nth-child(2) > p")?.textContent).toBe("Congenital Toxoplasmosis – Classic Triad:");
+    expect(Array.from(numbered.querySelectorAll(":scope > li:nth-child(2) > ol > li"), (item) => item.textContent)).toEqual([
+      "Chorioretinitis",
+      "Hydrocephalus",
+      "Intracranial calcifications: Diffuse, often involving basal ganglia",
+    ]);
+    expect(editor.textContent).toContain("No Patent Ductus Arteriosus");
+    expect(editor.textContent).toContain("No Salt & Pepper Retinopathy");
+  });
+
+  it("converts the containing list and its complete subtree when selection starts in a list", () => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    act(() => {
+      root = createRoot(host!);
+      root.render(
+        <ClassicEditorComponent
+          value={'<p>Toxoplasma (Option C):</p><ul><li><p>Congenital Toxoplasmosis – Classic Triad:</p><ul><li><p>Chorioretinitis</p></li><li><p>Hydrocephalus</p></li><li><p>Intracranial calcifications</p></li></ul></li><li><p>No PDA</p></li><li><p>No salt and pepper retinopathy</p></li></ul><p>Varicella</p>'}
+        />
+      );
+    });
+
+    const editor = host.querySelector('[contenteditable="true"]') as HTMLElement;
+    const parentContent = editor.querySelector(":scope > ul > li:first-child > p")!;
+    const nestedItems = editor.querySelectorAll(":scope > ul > li:first-child > ul > li");
+    const range = document.createRange();
+    range.setStart(parentContent, 0);
+    range.setEnd(nestedItems[1], nestedItems[1].childNodes.length);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+
+    act(() => (host!.querySelector('button[title="Numbered list"]') as HTMLButtonElement).click());
+
+    const numbered = editor.querySelector(":scope > ol") as HTMLOListElement;
+    expect(numbered).not.toBeNull();
+    expect(numbered.style.listStyleType).toBe("decimal");
+    expect(Array.from(numbered.children, (item) => item.querySelector(":scope > p")?.textContent)).toEqual([
+      "Congenital Toxoplasmosis – Classic Triad:",
+      "No PDA",
+      "No salt and pepper retinopathy",
+    ]);
+    const nested = numbered.querySelector(":scope > li:first-child > ol") as HTMLOListElement;
+    expect(nested.style.listStyleType).toBe("lower-alpha");
+    expect(Array.from(nested.children, (item) => item.textContent)).toEqual([
+      "Chorioretinitis",
+      "Hydrocephalus",
+      "Intracranial calcifications",
+    ]);
+    expect(editor.querySelector(":scope > ul")).toBeNull();
+    expect(editor.querySelector(":scope > p")?.textContent).toBe("Toxoplasma (Option C):");
+  });
+
   it("merges separately styled neighboring ordered lists", () => {
     host = document.createElement("div");
     document.body.appendChild(host);

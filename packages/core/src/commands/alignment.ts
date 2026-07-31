@@ -2,6 +2,7 @@ import { getNodeAtPath, type Path, type SmartDocument, type TextAlignment } from
 import type { SmartSelection } from "../selection.js";
 import type { SmartTransaction } from "../transaction.js";
 import { replaceNodeAtPath } from "../tree.js";
+import type { SmartCommand } from "../command.js";
 
 export interface SetTextAlignmentInput {
   paths: readonly Path[];
@@ -42,4 +43,21 @@ export const setTextAlignment = (
       timestamp: Date.now(),
     },
   };
+};
+
+export const setAlignment: SmartCommand<SetTextAlignmentInput> = {
+  id: "alignment.set",
+  isEnabled: (context, input) => {
+    if (!input?.paths.length) return false;
+    return input.paths.every((path) => {
+      const type = (getNodeAtPath(context.document, path) as { type?: string } | undefined)?.type;
+      return ["paragraph", "heading", "listItem", "blockquote", "codeBlock"].includes(type || "");
+    });
+  },
+  execute: (context, input) => {
+    if (!input || !setAlignment.isEnabled(context, input)) {
+      throw new Error("alignment.set requires alignable block paths.");
+    }
+    return setTextAlignment(context.document, context.selection, input).transaction;
+  },
 };

@@ -7,7 +7,10 @@ const CONTAINER_TAGS = new Set(["blockquote", "ul", "ol", "li", "table", "tr", "
 
 export const isEditorOnlyElement = (node: Element) =>
   node.getAttribute("data-table-wrapper") === "true" ||
-  Array.from(node.attributes).some((attribute) => attribute.name.startsWith("data-srte-")) ||
+  node.hasAttribute("data-srte-selection-marker") ||
+  node.hasAttribute("data-srte-resize-overlay") ||
+  node.hasAttribute("data-srte-drag-handle") ||
+  node.hasAttribute("data-srte-check") ||
   node.matches(".srte-table-resize-handle, .srte-table-resize-overlay, .srte-drag-handle");
 
 const isSemanticElement = (node: Element) => LEAF_TAGS.has(node.tagName.toLowerCase()) || CONTAINER_TAGS.has(node.tagName.toLowerCase());
@@ -69,36 +72,56 @@ const pathForElement = (element: Element, editor: HTMLElement): Path | null => {
   return findPath(editor, []);
 };
 
-const textNodesIn = (root: Element): Text[] => {
-  const nodes: Text[] = [];
-  const walker = root.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-    acceptNode(node) {
-      let parent = node.parentElement;
-      while (parent && parent !== root) {
-        if (isEditorOnlyElement(parent)) return NodeFilter.FILTER_REJECT;
-        parent = parent.parentElement;
-      }
-      return NodeFilter.FILTER_ACCEPT;
-    },
-  });
-  let node = walker.nextNode();
-  while (node) {
-    nodes.push(node as Text);
-    node = walker.nextNode();
-  }
-  return nodes;
+/** Returns the semantic model path for a DOM element at the adapter boundary. */
+export const pathForDomElement = (element: Element, editor: HTMLElement): Path | null =>
+  pathForElement(element, editor);
+
+type InlineDomUnit =
+  | { type: "text"; node: Text }
+  | { type: "atom"; node: Element };
+
+const isInlineAtom = (element: Element) =>
+  element.tagName.toLowerCase() === "img" || element.hasAttribute("data-formula");
+
+const inlineUnitsIn = (root: Element): InlineDomUnit[] => {
+  const units: InlineDomUnit[] = [];
+  const visit = (node: Node) => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      if (node.textContent) units.push({ type: "text", node: node as Text });
+      return;
+    }
+    if (!(node instanceof Element) || isEditorOnlyElement(node)) return;
+    if (isInlineAtom(node)) {
+      units.push({ type: "atom", node });
+      return;
+    }
+    Array.from(node.childNodes).forEach(visit);
+  };
+  Array.from(root.childNodes).forEach(visit);
+  return units;
 };
 
-const offsetBeforePoint = (leaf: Element, container: Node, offset: number): number | null => {
-  if (!leaf.contains(container) && leaf !== container) return null;
-  const range = leaf.ownerDocument.createRange();
-  range.selectNodeContents(leaf);
+const pointRelativeTo = (
+  container: Node,
+  offset: number,
+  unit: InlineDomUnit,
+): "before" | "inside" | "after" | null => {
+  const point = container.ownerDocument?.createRange();
+  const unitRange = container.ownerDocument?.createRange();
+  if (!point || !unitRange) return null;
   try {
-    range.setEnd(container, offset);
+    point.setStart(container, offset);
+    point.collapse(true);
+    if (unit.type === "text") unitRange.selectNodeContents(unit.node);
+    else unitRange.selectNode(unit.node);
+    const fromStart = point.compareBoundaryPoints(Range.START_TO_START, unitRange);
+    const fromEnd = point.compareBoundaryPoints(Range.START_TO_END, unitRange);
+    if (fromStart <= 0) return "before";
+    if (fromEnd >= 0) return "after";
+    return "inside";
   } catch {
     return null;
   }
-  return range.toString().length;
 };
 
 const pointForDomPoint = (editor: HTMLElement, container: Node, offset: number): Point | null => {
@@ -106,24 +129,45 @@ const pointForDomPoint = (editor: HTMLElement, container: Node, offset: number):
   if (!leaf) return null;
   const leafPath = pathForElement(leaf, editor);
   if (!leafPath) return null;
-  const textNodes = textNodesIn(leaf);
-  if (textNodes.length === 0) return { path: [...leafPath, 0], offset: 0 };
-  const absoluteOffset = offsetBeforePoint(leaf, container, offset);
-  if (absoluteOffset == null) return null;
-
-  let remaining = absoluteOffset;
-  for (let index = 0; index < textNodes.length; index += 1) {
-    const length = textNodes[index].data.length;
-    if (remaining <= length) return { path: [...leafPath, index], offset: remaining };
-    remaining -= length;
+  const units = inlineUnitsIn(leaf);
+  if (units.length === 0) return { path: [...leafPath, 0], offset: 0 };
+  const directTextIndex = units.findIndex((unit) => unit.type === "text" && unit.node === container);
+  if (directTextIndex >= 0) {
+    const text = units[directTextIndex] as Extract<InlineDomUnit, { type: "text" }>;
+    return {
+      path: [...leafPath, directTextIndex],
+      offset: Math.max(0, Math.min(offset, text.node.data.length)),
+    };
   }
-  const last = textNodes.length - 1;
-  return { path: [...leafPath, last], offset: textNodes[last].data.length };
+  let previousText: { index: number; node: Text } | null = null;
+  for (let index = 0; index < units.length; index += 1) {
+    const unit = units[index];
+    const relative = pointRelativeTo(container, offset, unit);
+    if (relative === "before") {
+      if (unit.type === "text") return { path: [...leafPath, index], offset: 0 };
+      const nextTextIndex = units.slice(index + 1).findIndex((candidate) => candidate.type === "text");
+      if (nextTextIndex >= 0) return { path: [...leafPath, index + 1 + nextTextIndex], offset: 0 };
+      break;
+    }
+    if (unit.type === "text") previousText = { index, node: unit.node };
+  }
+  if (previousText) {
+    return { path: [...leafPath, previousText.index], offset: previousText.node.data.length };
+  }
+  return null;
 };
 
 const nodeSelectionFromRange = (editor: HTMLElement, range: Range): SmartSelection | null => {
-  const nodes = Array.from(editor.querySelectorAll<HTMLElement>("img, [data-srte-node-selection='true']"));
-  const selected = nodes.find((node) => range.intersectsNode(node));
+  const nodes = Array.from(editor.querySelectorAll<HTMLElement>(
+    "img, [data-formula], [data-srte-node-selection='true']",
+  ));
+  const selected = nodes.find((node) => {
+    if (range.collapsed) return node === range.startContainer || node.contains(range.startContainer);
+    const nodeRange = editor.ownerDocument.createRange();
+    nodeRange.selectNode(node);
+    return range.compareBoundaryPoints(Range.START_TO_START, nodeRange) === 0 &&
+      range.compareBoundaryPoints(Range.END_TO_END, nodeRange) === 0;
+  });
   if (!selected) return null;
   const path = pathForElement(selected, editor);
   return path ? { type: "node", path } : null;
@@ -158,13 +202,25 @@ const domPointForSmartPoint = (editor: HTMLElement, point: Point): { node: Text;
   if (point.path.length === 0) return null;
   const leaf = elementAtPath(editor, point.path.slice(0, -1));
   if (!leaf) return null;
-  const text = textNodesIn(leaf)[point.path[point.path.length - 1]];
-  if (!text || point.offset < 0 || point.offset > text.data.length) return null;
-  return { node: text, offset: point.offset };
+  const unit = inlineUnitsIn(leaf)[point.path[point.path.length - 1]];
+  if (unit?.type !== "text" || point.offset < 0 || point.offset > unit.node.data.length) return null;
+  return { node: unit.node, offset: point.offset };
 };
 
 /** Restores a text selection from core paths after the editor DOM is rebuilt. */
 export const restoreSelectionToDom = (editor: HTMLElement, smartSelection: SmartSelection): boolean => {
+  if (smartSelection.type === "node") {
+    const element = elementAtPath(editor, smartSelection.path);
+    if (!element) return false;
+    const range = editor.ownerDocument.createRange();
+    range.selectNodeContents(element);
+    range.collapse(false);
+    const selection = editor.ownerDocument.defaultView?.getSelection();
+    if (!selection) return false;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    return true;
+  }
   if (smartSelection.type !== "text") return false;
   const anchor = domPointForSmartPoint(editor, smartSelection.anchor);
   const focus = domPointForSmartPoint(editor, smartSelection.focus);

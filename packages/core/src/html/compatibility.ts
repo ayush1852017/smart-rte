@@ -20,6 +20,12 @@ const BLOCK_TAGS = new Set([
   "blockquote", "pre", "table", "div",
 ]);
 
+const SEMANTIC_SRTE_ATTRIBUTES = new Set([
+  "data-srte-checklist",
+  "data-srte-checklist-strike",
+  "data-srte-checked",
+]);
+
 const attrsOf = (node: HtmlNode) => node.attrs || [];
 const hasAttr = (node: HtmlNode, name: string, value?: string) =>
   attrsOf(node).some((attr) => attr.name === name && (value == null || attr.value === value));
@@ -56,7 +62,7 @@ const normalizeNode = (node: HtmlNode) => {
   node.attrs = attrsOf(node).filter((attr) => {
     if (attr.name === "data-table-wrapper") return false;
     if (attr.name === "data-row-index" || attr.name === "data-col-index") return false;
-    return !attr.name.startsWith("data-srte-");
+    return !attr.name.startsWith("data-srte-") || SEMANTIC_SRTE_ATTRIBUTES.has(attr.name);
   });
 
   if (!node.childNodes) return;

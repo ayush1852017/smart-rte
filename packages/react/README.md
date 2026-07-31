@@ -87,6 +87,10 @@ export default App;
 | `table` | `boolean` | `true` | Enable/disable table functionality |
 | `media` | `boolean` | `true` | Enable/disable media/image functionality |
 | `formula` | `boolean` | `true` | Enable/disable formula/LaTeX functionality |
+| `features` | `CoreFeatureConfig` | standard preset | Enable or disable individual core plugins |
+| `plugins` | `ReactEditorPlugin[]` | standard preset | Use an exact custom plugin set; replaces the standard preset |
+| `formats` | `EditorFormatConfig` | all built-ins | Enable or disable HTML, Markdown, DOCX, and PDF adapters |
+| `formatDefinitions` | `EditorFormatDefinition[]` | built-ins | Add or replace import/export adapters |
 | `mediaManager` | `MediaManagerAdapter` | `undefined` | Custom media manager for handling images |
 | `fonts` | `{ name: string; value: string }[]` | Default web-safe fonts | Custom font list for the toolbar |
 | `defaultFont` | `string` | `undefined` | Default font family for the editor content |
@@ -94,6 +98,25 @@ export default App;
 | `className` | `string` | `undefined` | Custom CSS class for theming via CSS variable overrides |
 
 ### Advanced Examples
+
+#### Feature plugins
+
+The editor uses the same plugin registry for core commands and React toolbar
+state. For the architecture and custom plugin API, see
+[`docs/PLUGIN_ARCHITECTURE.md`](../../docs/PLUGIN_ARCHITECTURE.md).
+
+```tsx
+import { ClassicEditor } from 'smartrte-react';
+
+<ClassicEditor
+  features={{
+    table: false,
+    media: false,
+    formula: false,
+    checklist: true,
+  }}
+/>
+```
 
 #### Complete Example with All Features
 

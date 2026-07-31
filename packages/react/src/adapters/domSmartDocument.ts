@@ -3,13 +3,14 @@ import {
   sanitizeLinkAttrs,
   type SmartBlockNode,
   type SmartDocument,
+  type SmartInlineNode,
   type SmartMark,
   type SmartTextNode,
   type TextAlignment,
 } from "smartrte-core";
 import { isEditorOnlyElement } from "./domSelectionBridge.js";
 
-const blockTags = new Set(["p", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "blockquote", "pre", "table"]);
+const blockTags = new Set(["p", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "blockquote", "pre", "table", "img", "video", "audio"]);
 
 const unwrap = (element: Element) => {
   const parent = element.parentNode;
@@ -43,6 +44,9 @@ const marksFor = (element: Element, inherited: SmartMark[]): SmartMark[] => {
   if (tag === "sup") marks = addMark(marks, { type: "superscript" });
   if (tag === "sub") marks = addMark(marks, { type: "subscript" });
   if (tag === "code") marks = addMark(marks, { type: "code" });
+  if (element.hasAttribute("data-formula")) {
+    marks = addMark(marks, { type: "formula", value: element.getAttribute("data-formula") || "" });
+  }
   if (tag === "a") {
     const safeLink = sanitizeLinkAttrs({
       href: element.getAttribute("href") || "",
@@ -53,6 +57,7 @@ const marksFor = (element: Element, inherited: SmartMark[]): SmartMark[] => {
   const color = element.getAttribute("color") || (element as HTMLElement).style.color;
   const backgroundColor = (element as HTMLElement).style.backgroundColor;
   const fontSize = (element as HTMLElement).style.fontSize;
+  const fontFamily = (element as HTMLElement).style.fontFamily;
   if (color) marks = addMark(marks, { type: "textColor", value: color });
   if (backgroundColor) marks = addMark(marks, { type: "backgroundColor", value: backgroundColor });
   if (fontSize) {
@@ -63,17 +68,39 @@ const marksFor = (element: Element, inherited: SmartMark[]): SmartMark[] => {
       if (Number.isFinite(valuePx) && valuePx > 0) marks = addMark(marks, { type: "fontSize", valuePx });
     }
   }
+  if (fontFamily) marks = addMark(marks, { type: "fontFamily", value: fontFamily });
   return marks;
 };
 
-const inlineNodes = (nodes: NodeListOf<ChildNode> | ChildNode[], inherited: SmartMark[] = []): SmartTextNode[] => {
-  const result: SmartTextNode[] = [];
+const inlineNodes = (nodes: NodeListOf<ChildNode> | ChildNode[], inherited: SmartMark[] = []): SmartInlineNode[] => {
+  const result: SmartInlineNode[] = [];
   Array.from(nodes).forEach((node) => {
     if (node.nodeType === Node.TEXT_NODE) {
       if (node.textContent) result.push({ type: "text", text: node.textContent, marks: inherited.length ? inherited : undefined });
       return;
     }
     if (!(node instanceof Element)) return;
+    if (node.hasAttribute("data-formula")) {
+      result.push({
+        type: "formula",
+        value: node.getAttribute("data-formula") || "",
+        ...(node.textContent && node.textContent !== node.getAttribute("data-formula")
+          ? { displayText: node.textContent }
+          : {}),
+      });
+      return;
+    }
+    if (node.tagName.toLowerCase() === "img") {
+      result.push({
+        type: "inlineImage",
+        src: node.getAttribute("src") || "",
+        alt: node.getAttribute("alt") || undefined,
+        title: node.getAttribute("title") || undefined,
+        width: Number(node.getAttribute("width")) || undefined,
+        height: Number(node.getAttribute("height")) || undefined,
+      });
+      return;
+    }
     if (node.tagName.toLowerCase() === "br") {
       result.push({ type: "text", text: "\n", marks: inherited.length ? inherited : undefined });
       return;
@@ -105,10 +132,22 @@ const alignmentFor = (element: Element): TextAlignment | undefined => {
   return value === "center" || value === "right" || value === "justify" ? value : undefined;
 };
 
+const indentFor = (element: Element) => {
+  const margin = Number.parseFloat((element as HTMLElement).style.marginLeft || "0");
+  return Number.isFinite(margin) && margin > 0 ? Math.min(Math.round(margin / 24), 10) : undefined;
+};
+
 const parseBlocks = (parent: Element): SmartBlockNode[] => directBlockChildren(parent).flatMap(parseBlock);
 
 const parseList = (element: Element): SmartBlockNode => {
-  const style = element.tagName.toLowerCase() === "ol" ? "decimal" : "disc";
+  const requestedStyle = (element as HTMLElement).style.listStyleType;
+  const supportedStyles = new Set([
+    "disc", "circle", "square", "decimal", "lower-alpha", "upper-alpha",
+    "lower-roman", "upper-roman",
+  ]);
+  const fallbackStyle = element.tagName.toLowerCase() === "ol" ? "decimal" : "disc";
+  const style = (supportedStyles.has(requestedStyle) ? requestedStyle : fallbackStyle) as
+    Extract<SmartBlockNode, { type: "list" }>["style"];
   const items = Array.from(element.children)
     .filter((child) => child.tagName.toLowerCase() === "li")
     .map((item) => {
@@ -116,9 +155,26 @@ const parseList = (element: Element): SmartBlockNode => {
       const nested = Array.from(item.children)
         .filter((child) => ["ul", "ol", "blockquote", "pre", "table", "p", "h1", "h2", "h3", "h4", "h5", "h6"].includes(child.tagName.toLowerCase()))
         .flatMap(parseBlock);
-      return { type: "listItem" as const, alignment: alignmentFor(item), children: [...(content ? [content] : []), ...nested] };
+      return {
+        type: "listItem" as const,
+        alignment: alignmentFor(item),
+        ...(item.hasAttribute("data-checked") || item.hasAttribute("data-srte-checked")
+          ? { checked: (item.getAttribute("data-checked") || item.getAttribute("data-srte-checked")) === "true" }
+          : {}),
+        children: [...(content ? [content] : []), ...nested],
+      };
     });
-  return { type: "list", style, children: items };
+  const checklist = element.getAttribute("data-srte-checklist") === "true";
+  return {
+    type: "list",
+    indent: indentFor(element),
+    style,
+    ...(checklist ? { checklist: true } : {}),
+    ...(checklist && element.getAttribute("data-srte-checklist-strike") === "true"
+      ? { strikeCompleted: true }
+      : {}),
+    children: items,
+  };
 };
 
 const tableRows = (table: Element) => {
@@ -132,16 +188,38 @@ const tableRows = (table: Element) => {
   return rows;
 };
 
+const borderFor = (element: Element) => {
+  const style = (element as HTMLElement).style;
+  if (style.border) return style.border;
+  const declared = element.getAttribute("style")?.match(/(?:^|;)\s*border\s*:\s*([^;]+)/i)?.[1]?.trim();
+  if (declared) return declared;
+  if (
+    style.borderTopStyle === "none" &&
+    style.borderRightStyle === "none" &&
+    style.borderBottomStyle === "none" &&
+    style.borderLeftStyle === "none"
+  ) return "none";
+  return undefined;
+};
+
 const parseTable = (element: Element): SmartBlockNode => ({
   type: "table",
+  indent: indentFor(element),
+  columnWidths: Array.from(element.querySelectorAll(":scope > colgroup > col"))
+    .map((column) => Number.parseFloat((column as HTMLElement).style.width || column.getAttribute("width") || ""))
+    .filter((width) => Number.isFinite(width) && width > 0),
   children: tableRows(element).map((row) => ({
     type: "tableRow",
+    heightPx: Number.parseFloat((row as HTMLElement).style.height || "") || undefined,
     children: Array.from(row.children)
       .filter((cell) => ["td", "th"].includes(cell.tagName.toLowerCase()))
       .map((cell) => ({
         type: cell.tagName.toLowerCase() === "th" ? "tableHeaderCell" : "tableCell",
         colspan: Number(cell.getAttribute("colspan")) || undefined,
         rowspan: Number(cell.getAttribute("rowspan")) || undefined,
+        backgroundColor: (cell as HTMLElement).style.backgroundColor || undefined,
+        textColor: (cell as HTMLElement).style.color || undefined,
+        border: borderFor(cell),
         children: parseBlocks(cell).length ? parseBlocks(cell) : [{ type: "paragraph", alignment: alignmentFor(cell), children: inlineNodes(cell.childNodes) }],
       })),
   })),
@@ -149,11 +227,28 @@ const parseTable = (element: Element): SmartBlockNode => ({
 
 const parseBlock = (element: Element): SmartBlockNode[] => {
   const tag = element.tagName.toLowerCase();
-  if (tag === "p") return [{ type: "paragraph", alignment: alignmentFor(element), children: inlineNodes(element.childNodes) }];
-  if (/^h[1-6]$/.test(tag)) return [{ type: "heading", level: Number(tag.slice(1)) as 1 | 2 | 3 | 4 | 5 | 6, alignment: alignmentFor(element), children: inlineNodes(element.childNodes) }];
+  if (tag === "p") return [{ type: "paragraph", alignment: alignmentFor(element), indent: indentFor(element), children: inlineNodes(element.childNodes) }];
+  if (/^h[1-6]$/.test(tag)) return [{ type: "heading", level: Number(tag.slice(1)) as 1 | 2 | 3 | 4 | 5 | 6, alignment: alignmentFor(element), indent: indentFor(element), children: inlineNodes(element.childNodes) }];
   if (tag === "ul" || tag === "ol") return [parseList(element)];
-  if (tag === "blockquote") return [{ type: "blockquote", alignment: alignmentFor(element), children: parseBlocks(element) }];
-  if (tag === "pre") return [{ type: "codeBlock", alignment: alignmentFor(element), text: element.textContent || "", language: element.querySelector("code")?.className.replace(/^language-/, "") || undefined }];
+  if (tag === "blockquote") return [{ type: "blockquote", alignment: alignmentFor(element), indent: indentFor(element), children: parseBlocks(element) }];
+  if (tag === "pre") return [{ type: "codeBlock", alignment: alignmentFor(element), indent: indentFor(element), text: element.textContent || "", language: element.querySelector("code")?.className.replace(/^language-/, "") || undefined }];
+  if (tag === "img") return [{
+    type: "image",
+    indent: indentFor(element),
+    src: element.getAttribute("src") || "",
+    alt: element.getAttribute("alt") || undefined,
+    title: element.getAttribute("title") || undefined,
+    width: Number(element.getAttribute("width")) || undefined,
+    height: Number(element.getAttribute("height")) || undefined,
+  }];
+  if (tag === "video" || tag === "audio") return [{
+    type: "media",
+    indent: indentFor(element),
+    src: element.getAttribute("src") || element.querySelector("source")?.getAttribute("src") || "",
+    mediaType: tag,
+    title: element.getAttribute("title") || undefined,
+    mimeType: element.getAttribute("type") || element.querySelector("source")?.getAttribute("type") || undefined,
+  }];
   if (tag === "table") return [parseTable(element)];
   return [];
 };
@@ -184,23 +279,64 @@ const serializeText = (node: SmartTextNode) => {
     if (mark.type === "textColor") html = `<span style="color:${escapeHtml(mark.value)}">${html}</span>`;
     if (mark.type === "backgroundColor") html = `<span style="background-color:${escapeHtml(mark.value)}">${html}</span>`;
     if (mark.type === "fontSize") html = `<span style="font-size:${mark.valuePx}px">${html}</span>`;
+    if (mark.type === "fontFamily") html = `<span style="font-family:${escapeHtml(mark.value)}">${html}</span>`;
+    if (mark.type === "formula") html = `<span data-formula="${escapeHtml(mark.value)}">${html}</span>`;
     if (mark.type === "link") html = `<a href="${escapeHtml(mark.href)}"${mark.target ? ` target="${escapeHtml(mark.target)}"` : ""}>${html}</a>`;
   });
   return html;
 };
 
-const alignmentAttribute = (alignment?: TextAlignment) => alignment ? ` style="text-align:${alignment}"` : "";
+const serializeInline = (node: SmartInlineNode) => {
+  if (node.type === "text") return serializeText(node);
+  if (node.type === "formula") {
+    return `<span data-formula="${escapeHtml(node.value)}">${escapeHtml(node.displayText ?? node.value)}</span>`;
+  }
+  return `<img data-srte-inline="true" src="${escapeHtml(node.src)}"${node.alt ? ` alt="${escapeHtml(node.alt)}"` : ""}${node.title ? ` title="${escapeHtml(node.title)}"` : ""}${node.width ? ` width="${node.width}"` : ""}${node.height ? ` height="${node.height}"` : ""}>`;
+};
+
+const blockStyleAttribute = (block: { alignment?: TextAlignment; indent?: number }, extra?: string) => {
+  const declarations = [
+    block.alignment ? `text-align:${block.alignment}` : "",
+    block.indent ? `margin-left:${block.indent * 24}px` : "",
+    extra || "",
+  ].filter(Boolean);
+  return declarations.length ? ` style="${declarations.join(";")}"` : "";
+};
+
+const alignmentAttribute = (alignment?: TextAlignment) => blockStyleAttribute({ alignment });
 
 const serializeBlock = (block: SmartBlockNode): string => {
-  if (block.type === "paragraph") return `<p${alignmentAttribute(block.alignment)}>${block.children.map(serializeText).join("")}</p>`;
-  if (block.type === "heading") return `<h${block.level}${alignmentAttribute(block.alignment)}>${block.children.map(serializeText).join("")}</h${block.level}>`;
-  if (block.type === "blockquote") return `<blockquote${alignmentAttribute(block.alignment)}>${block.children.map(serializeBlock).join("")}</blockquote>`;
-  if (block.type === "codeBlock") return `<pre${alignmentAttribute(block.alignment)}><code${block.language ? ` class="language-${escapeHtml(block.language)}"` : ""}>${escapeHtml(block.text)}</code></pre>`;
-  if (block.type === "list") {
-    const tag = block.style === "decimal" ? "ol" : "ul";
-    return `<${tag}>${block.children.map((item) => `<li${alignmentAttribute(item.alignment)}>${item.children.map(serializeBlock).join("")}</li>`).join("")}</${tag}>`;
+  if (block.type === "paragraph") return `<p${blockStyleAttribute(block)}>${block.children.map(serializeInline).join("")}</p>`;
+  if (block.type === "heading") return `<h${block.level}${blockStyleAttribute(block)}>${block.children.map(serializeInline).join("")}</h${block.level}>`;
+  if (block.type === "blockquote") return `<blockquote${blockStyleAttribute(block)}>${block.children.map(serializeBlock).join("")}</blockquote>`;
+  if (block.type === "codeBlock") return `<pre${blockStyleAttribute(block)}><code${block.language ? ` class="language-${escapeHtml(block.language)}"` : ""}>${escapeHtml(block.text)}</code></pre>`;
+  if (block.type === "image") return `<img${blockStyleAttribute(block)} src="${escapeHtml(block.src)}"${block.alt ? ` alt="${escapeHtml(block.alt)}"` : ""}${block.title ? ` title="${escapeHtml(block.title)}"` : ""}${block.width ? ` width="${block.width}"` : ""}${block.height ? ` height="${block.height}"` : ""}>`;
+  if (block.type === "media") {
+    const tag = block.mediaType === "audio" ? "audio" : "video";
+    return `<${tag}${blockStyleAttribute(block)} controls src="${escapeHtml(block.src)}"${block.title ? ` title="${escapeHtml(block.title)}"` : ""}${block.mimeType ? ` type="${escapeHtml(block.mimeType)}"` : ""}></${tag}>`;
   }
-  return `<table><tbody>${block.children.map((row) => `<tr>${row.children.map((cell) => `<${cell.type === "tableHeaderCell" ? "th" : "td"}>${cell.children.map(serializeBlock).join("")}</${cell.type === "tableHeaderCell" ? "th" : "td"}>`).join("")}</tr>`).join("")}</tbody></table>`;
+  if (block.type === "list") {
+    const ordered = ["decimal", "lower-alpha", "upper-alpha", "lower-roman", "upper-roman"].includes(block.style);
+    const tag = ordered ? "ol" : "ul";
+    const style = blockStyleAttribute(block, `list-style-type:${block.style}`);
+    const checklist = block.checklist
+      ? ` data-srte-checklist="true" data-srte-checklist-strike="${block.strikeCompleted ? "true" : "false"}"`
+      : "";
+    return `<${tag}${style}${checklist}>${block.children.map((item) => `<li${item.checked !== undefined ? ` data-srte-checked="${item.checked ? "true" : "false"}"` : ""}${alignmentAttribute(item.alignment)}>${item.children.map(serializeBlock).join("")}</li>`).join("")}</${tag}>`;
+  }
+  const columns = block.columnWidths?.length
+    ? `<colgroup>${block.columnWidths.map((width) => `<col style="width:${width}px">`).join("")}</colgroup>`
+    : "";
+  return `<table${blockStyleAttribute(block)}>${columns}<tbody>${block.children.map((row) => `<tr${row.heightPx ? ` style="height:${row.heightPx}px"` : ""}>${row.children.map((cell) => {
+    const tag = cell.type === "tableHeaderCell" ? "th" : "td";
+    const spans = `${cell.colspan && cell.colspan > 1 ? ` colspan="${cell.colspan}"` : ""}${cell.rowspan && cell.rowspan > 1 ? ` rowspan="${cell.rowspan}"` : ""}`;
+    const style = [
+      cell.backgroundColor ? `background-color:${escapeHtml(cell.backgroundColor)}` : "",
+      cell.textColor ? `color:${escapeHtml(cell.textColor)}` : "",
+      cell.border ? `border:${escapeHtml(cell.border)}` : "",
+    ].filter(Boolean);
+    return `<${tag}${spans}${style.length ? ` style="${style.join(";")}"` : ""}>${cell.children.map(serializeBlock).join("")}</${tag}>`;
+  }).join("")}</tr>`).join("")}</tbody></table>`;
 };
 
 /** Serializes the shadow-only model. It is not used for persisted editor HTML. */

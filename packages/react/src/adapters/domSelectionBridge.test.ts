@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import { selectionFromDom } from "./domSelectionBridge.js";
+import { restoreSelectionToDom, selectionFromDom } from "./domSelectionBridge.js";
 
 const createEditor = () => {
   document.body.innerHTML = `
@@ -106,5 +106,66 @@ describe("DOMSelectionBridge", () => {
     range.setEnd(text, 2);
 
     expect(selectionFromDom(editor, setRange(range))).toBeNull();
+  });
+
+  it("counts formulas and images as inline model units", () => {
+    const editor = createEditor();
+    const paragraph = editor.querySelector("p")!;
+    paragraph.innerHTML = 'Before<span data-formula="x">rendered formula</span><img src="/x.png">After';
+    const after = paragraph.lastChild!;
+    const range = document.createRange();
+    range.setStart(after, 2);
+    range.collapse(true);
+
+    expect(selectionFromDom(editor, setRange(range))).toEqual({
+      type: "text",
+      anchor: { path: [0, 3], offset: 2 },
+      focus: { path: [0, 3], offset: 2 },
+    });
+  });
+
+  it("maps element-boundary carets beside atoms to adjacent text", () => {
+    const editor = createEditor();
+    const paragraph = editor.querySelector("p")!;
+    paragraph.innerHTML = 'Before<span data-formula="x">x</span>After';
+    const range = document.createRange();
+    range.setStart(paragraph, 2);
+    range.collapse(true);
+
+    expect(selectionFromDom(editor, setRange(range))).toEqual({
+      type: "text",
+      anchor: { path: [0, 2], offset: 0 },
+      focus: { path: [0, 2], offset: 0 },
+    });
+  });
+
+  it("restores text selections after atomic inline nodes", () => {
+    const editor = createEditor();
+    const paragraph = editor.querySelector("p")!;
+    paragraph.innerHTML = 'Before<img src="/x.png">After';
+
+    expect(restoreSelectionToDom(editor, {
+      type: "text",
+      anchor: { path: [0, 2], offset: 1 },
+      focus: { path: [0, 2], offset: 4 },
+    })).toBe(true);
+    expect(window.getSelection()?.toString()).toBe("fte");
+  });
+
+  it("does not turn a text selection spanning a formula into node selection", () => {
+    const editor = createEditor();
+    const paragraph = editor.querySelector("p")!;
+    paragraph.innerHTML = 'Before<span data-formula="x">x</span>After';
+    const before = paragraph.firstChild!;
+    const after = paragraph.lastChild!;
+    const range = document.createRange();
+    range.setStart(before, 3);
+    range.setEnd(after, 2);
+
+    expect(selectionFromDom(editor, setRange(range))).toEqual({
+      type: "text",
+      anchor: { path: [0, 0], offset: 3 },
+      focus: { path: [0, 2], offset: 2 },
+    });
   });
 });

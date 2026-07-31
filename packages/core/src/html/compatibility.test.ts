@@ -61,4 +61,13 @@ describe("HTML compatibility boundary", () => {
     expect(html).toContain("<td><p>First paragraph</p><h1>Heading one</h1><h2>Heading two</h2><h3>Heading <em>three</em></h3><p>Last paragraph</p></td>");
     expect(html).toContain("<td><p>Other cell</p></td>");
   });
+
+  it("preserves semantic checklist attributes while removing checklist controls", () => {
+    const html = normalizeCompatibilityHtml(
+      '<ul data-srte-checklist="true" data-srte-checklist-strike="true"><li data-srte-checked="true">Task</li></ul>',
+    );
+    expect(html).toContain('data-srte-checklist="true"');
+    expect(html).toContain('data-srte-checklist-strike="true"');
+    expect(html).toContain('data-srte-checked="true"');
+  });
 });

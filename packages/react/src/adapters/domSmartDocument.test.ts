@@ -2,7 +2,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { applyLink, applyTransaction, getNodeAtPath, removeLink, toggleBold } from "smartrte-core";
 import { selectionFromDom } from "./domSelectionBridge.js";
-import { cleanEditorHtml, smartDocumentFromEditorRoot, serializeSmartDocument } from "./domSmartDocument.js";
+import {
+  cleanEditorHtml,
+  serializeSmartDocument,
+  smartDocumentFromEditorRoot,
+  smartDocumentFromHtml,
+} from "./domSmartDocument.js";
 import { runShadowCommand } from "./shadowMode.js";
 
 const createEditor = () => {
@@ -27,6 +32,17 @@ const setRange = (range: Range) => {
 };
 
 describe("live SmartDocument adapter", () => {
+  it("round-trips merged table cells without losing spans or covered rows", () => {
+    const document = smartDocumentFromHtml(
+      '<table><tbody><tr><td colspan="2" rowspan="2"><p>Merged</p></td></tr><tr></tr></tbody></table>',
+      window.document,
+    );
+    const html = serializeSmartDocument(document);
+    expect(html).toContain('<td colspan="2" rowspan="2">');
+    expect(html).toContain("<tr></tr>");
+    expect(smartDocumentFromHtml(html, window.document)).toEqual(document);
+  });
+
   it("strips editor UI and creates a clean table model", () => {
     const editor = createEditor();
     const { document: smartDocument, html } = smartDocumentFromEditorRoot(editor);
@@ -91,6 +107,63 @@ describe("live SmartDocument adapter", () => {
     expect(getNodeAtPath(smartDocument, [0, 0, 0, 1])).toMatchObject({ type: "heading", level: 2 });
     expect(getNodeAtPath(smartDocument, [0, 0, 0, 1, 1])).toMatchObject({ type: "text", text: "two", marks: [{ type: "italic" }] });
     expect(getNodeAtPath(smartDocument, [0, 0, 1, 0, 0])).toMatchObject({ type: "text", text: "Other" });
+  });
+
+  it("round-trips checklist state, font families, formulas, images, and media", () => {
+    document.body.innerHTML = `
+      <div id="editor">
+        <ul data-srte-checklist="true" data-srte-checklist-strike="true">
+          <li data-srte-checked="true"><button data-srte-check="true"></button><p><span style="font-family:Inter">Task</span></p></li>
+        </ul>
+        <p>Equation <span data-formula="E=mc^2">$E=mc^2$</span> and <img src="inline.png" alt="Inline">.</p>
+        <img src="image.png" alt="Diagram" width="320" height="200">
+        <video src="movie.mp4" type="video/mp4" title="Demo"></video>
+      </div>`;
+    const editor = document.getElementById("editor") as HTMLElement;
+    const { document: smartDocument, html } = smartDocumentFromEditorRoot(editor);
+
+    expect(html).not.toContain("data-srte-check=");
+    expect(smartDocument.children[0]).toMatchObject({
+      type: "list",
+      checklist: true,
+      strikeCompleted: true,
+      children: [{
+        checked: true,
+        children: [{
+          children: [{ marks: [{ type: "fontFamily", value: "Inter" }] }],
+        }],
+      }],
+    });
+    expect(smartDocument.children[1]).toMatchObject({
+      children: [
+        { type: "text", text: "Equation " },
+        { type: "formula", value: "E=mc^2", displayText: "$E=mc^2$" },
+        { type: "text", text: " and " },
+        { type: "inlineImage", src: "inline.png", alt: "Inline" },
+        { type: "text", text: "." },
+      ],
+    });
+    expect(smartDocument.children[2]).toMatchObject({
+      type: "image",
+      src: "image.png",
+      width: 320,
+      height: 200,
+    });
+    expect(smartDocument.children[3]).toMatchObject({
+      type: "media",
+      src: "movie.mp4",
+      mediaType: "video",
+      mimeType: "video/mp4",
+    });
+
+    const serialized = serializeSmartDocument(smartDocument);
+    expect(serialized).toContain('data-srte-checklist="true"');
+    expect(serialized).toContain('data-srte-checked="true"');
+    expect(serialized).toContain('font-family:Inter');
+    expect(serialized).toContain('data-formula="E=mc^2"');
+    expect(serialized).toContain('data-srte-inline="true" src="inline.png"');
+    expect(serialized).toContain('<img src="image.png"');
+    expect(serialized).toContain('<video controls src="movie.mp4"');
   });
 
   it("runs create-link shadow diagnostics for safe selections without mutating DOM or calling callbacks", () => {
@@ -254,5 +327,45 @@ describe("live SmartDocument adapter", () => {
 
     expect(getNodeAtPath(smartDocument, [0])).toMatchObject({ type: "codeBlock", alignment: "justify" });
     expect(serializeSmartDocument(smartDocument)).toContain('<pre style="text-align:justify"><code>');
+  });
+
+  it("round-trips table cell background and text colors", () => {
+    document.body.innerHTML = '<div id="editor"><table><tbody><tr><td style="background-color:#123456;color:#ffffff"><p>Cell</p></td></tr></tbody></table></div>';
+    const editor = document.getElementById("editor") as HTMLElement;
+    const { document: smartDocument } = smartDocumentFromEditorRoot(editor);
+
+    expect(getNodeAtPath(smartDocument, [0, 0, 0])).toMatchObject({
+      type: "tableCell",
+      backgroundColor: "rgb(18, 52, 86)",
+      textColor: "rgb(255, 255, 255)",
+    });
+    const html = serializeSmartDocument(smartDocument);
+    expect(html).toContain("background-color:rgb(18, 52, 86)");
+    expect(html).toContain("color:rgb(255, 255, 255)");
+  });
+
+  it("round-trips table column widths and row heights", () => {
+    document.body.innerHTML = '<div id="editor"><table><colgroup><col style="width:90px"><col style="width:180px"></colgroup><tbody><tr style="height:48px"><td>A</td><td>B</td></tr></tbody></table></div>';
+    const editor = document.getElementById("editor") as HTMLElement;
+    const { document: smartDocument } = smartDocumentFromEditorRoot(editor);
+
+    expect(getNodeAtPath(smartDocument, [0])).toMatchObject({
+      type: "table",
+      columnWidths: [90, 180],
+      children: [{ heightPx: 48 }],
+    });
+    const html = serializeSmartDocument(smartDocument);
+    expect(html).toContain('<col style="width:90px">');
+    expect(html).toContain('<col style="width:180px">');
+    expect(html).toContain('<tr style="height:48px">');
+  });
+
+  it("round-trips table cell borders", () => {
+    document.body.innerHTML = '<div id="editor"><table><tbody><tr><td style="border:none"><p>A</p></td></tr></tbody></table></div>';
+    const editor = document.getElementById("editor") as HTMLElement;
+    const { document: smartDocument } = smartDocumentFromEditorRoot(editor);
+
+    expect(getNodeAtPath(smartDocument, [0, 0, 0])).toMatchObject({ border: "none" });
+    expect(serializeSmartDocument(smartDocument)).toContain('style="border:none"');
   });
 });

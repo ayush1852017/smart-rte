@@ -1,6 +1,12 @@
 import type { CommandContext, SmartCommand } from "../command.js";
 import { addMark, hasMark, removeMark, type InlineMarkType } from "../marks.js";
-import { getNodeAtPath, type Path, type SmartMark, type SmartTextNode } from "../model.js";
+import {
+  getNodeAtPath,
+  type Path,
+  type SmartInlineNode,
+  type SmartMark,
+  type SmartTextNode,
+} from "../model.js";
 import { sanitizeLinkAttrs } from "../security/urlPolicy.js";
 import type { SmartTextSelection } from "../selection.js";
 import type { SmartTransaction } from "../transaction.js";
@@ -14,7 +20,7 @@ type TextRange = {
   endIndex: number;
   startOffset: number;
   endOffset: number;
-  nodes: SmartTextNode[];
+  nodes: SmartInlineNode[];
 };
 
 const getTextRange = (context: CommandContext): TextRange | null => {
@@ -29,21 +35,28 @@ const getTextRange = (context: CommandContext): TextRange | null => {
   const endIndex = forward ? focusIndex : anchorIndex;
   const startOffset = forward ? anchor.offset : focus.offset;
   const endOffset = forward ? focus.offset : anchor.offset;
-  const parent = getNodeAtPath(context.document, parentPath) as { children?: SmartTextNode[] } | undefined;
+  const parent = getNodeAtPath(context.document, parentPath) as { children?: SmartInlineNode[] } | undefined;
   const nodes = parent?.children;
   if (!nodes || startIndex < 0 || endIndex >= nodes.length || startOffset < 0 || endOffset < 0) return null;
-  if (nodes.slice(startIndex, endIndex + 1).some((node) => node.type !== "text")) return null;
-  if (startIndex === endIndex && (startOffset === endOffset || endOffset > nodes[startIndex].text.length)) return null;
-  if (startOffset > nodes[startIndex].text.length || endOffset > nodes[endIndex].text.length) return null;
+  const startNode = nodes[startIndex];
+  const endNode = nodes[endIndex];
+  if (startNode?.type !== "text" || endNode?.type !== "text") return null;
+  if (startIndex === endIndex && (startOffset === endOffset || endOffset > startNode.text.length)) return null;
+  if (startOffset > startNode.text.length || endOffset > endNode.text.length) return null;
+  if (!nodes.slice(startIndex, endIndex + 1).some((node) => node.type === "text")) return null;
   return { selection: context.selection, parentPath, startIndex, endIndex, startOffset, endOffset, nodes };
 };
 
-const replaceRange = (range: TextRange, mutate: (marks: SmartMark[] | undefined) => SmartMark[] | undefined): { children: SmartTextNode[]; start: number; end: number } => {
-  const children: SmartTextNode[] = [];
+const replaceRange = (range: TextRange, mutate: (marks: SmartMark[] | undefined) => SmartMark[] | undefined): { children: SmartInlineNode[]; start: number; end: number } => {
+  const children: SmartInlineNode[] = [];
   let selectionStart = 0;
   let selectionEnd = 0;
   range.nodes.forEach((node, index) => {
     if (index < range.startIndex || index > range.endIndex) {
+      children.push(node);
+      return;
+    }
+    if (node.type !== "text") {
       children.push(node);
       return;
     }
@@ -62,6 +75,11 @@ const replaceRange = (range: TextRange, mutate: (marks: SmartMark[] | undefined)
 const hasLink = (marks: readonly SmartMark[] | undefined) =>
   marks?.some((mark) => mark.type === "link") || false;
 
+const selectedTextNodes = (range: TextRange) =>
+  range.nodes
+    .slice(range.startIndex, range.endIndex + 1)
+    .filter((node): node is SmartTextNode => node.type === "text");
+
 const createMarkTransaction = <Input>(
   id: string,
   context: CommandContext,
@@ -71,11 +89,15 @@ const createMarkTransaction = <Input>(
   const range = getTextRange(context);
   if (!range) throw new Error(`${id} requires text in one inline container.`);
   const result = replaceRange(range, (marks) => mutate(marks, range));
-  const parent = getNodeAtPath(context.document, range.parentPath) as { children: SmartTextNode[] };
+  const parent = getNodeAtPath(context.document, range.parentPath) as { children: SmartInlineNode[] };
+  const selectionEnd = result.children[result.end];
   const selectionAfter: SmartTextSelection = {
     type: "text",
     anchor: { path: [...range.parentPath, result.start], offset: 0 },
-    focus: { path: [...range.parentPath, result.end], offset: result.children[result.end]?.text.length || 0 },
+    focus: {
+      path: [...range.parentPath, result.end],
+      offset: selectionEnd?.type === "text" ? selectionEnd.text.length : 0,
+    },
   };
   return {
     id,
@@ -95,7 +117,7 @@ const createMarkCommand = <Input>(id: string, nextMark: (input: Input) => SmartM
     const range = getTextRange(context);
     if (!range) throw new Error(`${id} requires text in one inline container.`);
     const mark = nextMark(input as Input);
-    const selected = range.nodes.slice(range.startIndex, range.endIndex + 1);
+    const selected = selectedTextNodes(range);
     const remove = toggle && selected.every((node) => hasMark(node.marks, mark.type as InlineMarkType));
     return createMarkTransaction(id, context, input, (marks) =>
       remove ? removeMark(marks, mark.type as InlineMarkType) : addMark(marks, mark));
@@ -110,8 +132,7 @@ const toggleScript = (id: string, type: "superscript" | "subscript"):
   execute: (context) => {
     const range = getTextRange(context);
     if (!range) throw new Error(`${id} requires text in one inline container.`);
-    const remove = range.nodes
-      .slice(range.startIndex, range.endIndex + 1)
+    const remove = selectedTextNodes(range)
       .every((node) => hasMark(node.marks, type));
     const opposite = type === "superscript" ? "subscript" : "superscript";
     return createMarkTransaction(id, context, undefined, (marks) => {
@@ -123,11 +144,14 @@ const toggleScript = (id: string, type: "superscript" | "subscript"):
 export const toggleBold = toggle("toggle-bold", "bold");
 export const toggleItalic = toggle("toggle-italic", "italic");
 export const toggleUnderline = toggle("toggle-underline", "underline");
+export const toggleStrike = toggle("toggle-strike", "strike");
+export const toggleInlineCode = toggle("toggle-inline-code", "code");
 export const toggleSuperscript = toggleScript("toggle-superscript", "superscript");
 export const toggleSubscript = toggleScript("toggle-subscript", "subscript");
 export const applyTextColor = createMarkCommand<string>("apply-text-color", (value) => ({ type: "textColor", value }), false);
 export const applyBackgroundColor = createMarkCommand<string>("apply-background-color", (value) => ({ type: "backgroundColor", value }), false);
 export const applyFontSize = createMarkCommand<number>("apply-font-size", (valuePx) => ({ type: "fontSize", valuePx }), false);
+export const applyFontFamily = createMarkCommand<string>("apply-font-family", (value) => ({ type: "fontFamily", value }), false);
 
 type LinkInput = { href: string; target?: string };
 
@@ -145,12 +169,12 @@ export const updateLink: SmartCommand<LinkInput> = {
   id: "update-link",
   isEnabled: (context, input) => {
     const range = getTextRange(context);
-    return Boolean(range && input && sanitizeLinkAttrs(input) && range.nodes.slice(range.startIndex, range.endIndex + 1).some((node) => hasLink(node.marks)));
+    return Boolean(range && input && sanitizeLinkAttrs(input) && selectedTextNodes(range).some((node) => hasLink(node.marks)));
   },
   execute: (context, input) => {
     const range = getTextRange(context);
     const safe = sanitizeLinkAttrs(input || {});
-    if (!range || !safe || !range.nodes.slice(range.startIndex, range.endIndex + 1).some((node) => hasLink(node.marks))) {
+    if (!range || !safe || !selectedTextNodes(range).some((node) => hasLink(node.marks))) {
       throw new Error("update-link requires selected linked text and a safe href.");
     }
     return createMarkTransaction("update-link", context, input, (marks) => addMark(marks, { type: "link", ...safe }));
@@ -161,7 +185,7 @@ export const removeLink: SmartCommand<void> = {
   id: "remove-link",
   isEnabled: (context) => {
     const range = getTextRange(context);
-    return Boolean(range && range.nodes.slice(range.startIndex, range.endIndex + 1).some((node) => hasLink(node.marks)));
+    return Boolean(range && selectedTextNodes(range).some((node) => hasLink(node.marks)));
   },
   execute: (context) => {
     if (!removeLink.isEnabled(context)) throw new Error("remove-link requires selected linked text.");
