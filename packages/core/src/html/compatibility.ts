@@ -24,6 +24,7 @@ const SEMANTIC_SRTE_ATTRIBUTES = new Set([
   "data-srte-checklist",
   "data-srte-checklist-strike",
   "data-srte-checked",
+  "data-srte-list-preset",
 ]);
 
 const attrsOf = (node: HtmlNode) => node.attrs || [];

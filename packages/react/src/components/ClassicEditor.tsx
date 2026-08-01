@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { MediaManager, MediaManagerAdapter, MediaItem } from "./MediaManager.js";
 import { LinkEditorPopover, type LinkEditorApplyValue } from "./LinkEditorPopover.js";
-import { applyLink, applyTextColor as coreApplyTextColor, removeLink, sanitizeLinkHref, toggleBold, toggleItalic, toggleSubscript, toggleSuperscript, toggleUnderline, type CoreFeatureConfig, type SmartCommand, type SmartEditorState } from 'smartrte-core';
+import { applyLink, applyTextColor as coreApplyTextColor, getSmartListPreset, isSmartListPreset, listStyleForPresetDepth, removeLink, sanitizeLinkHref, SMART_LIST_PRESETS, toggleBold, toggleItalic, toggleSubscript, toggleSuperscript, toggleUnderline, type CoreFeatureConfig, type SmartCommand, type SmartEditorState, type SmartListPreset } from 'smartrte-core';
 import { executeDomMoveCommand } from '../adapters/domMoveCommandBridge.js';
 import { adjacentInlineAtom } from '../adapters/domInlineAtomCommandBridge.js';
 import { restoreSelectionToDom, selectionFromDom } from '../adapters/domSelectionBridge.js';
@@ -1181,6 +1181,22 @@ export function ClassicEditor({
     );
   };
 
+  const resolveCommonSelectedList = (items: HTMLElement[]) => {
+    if (items.length === 0) return null;
+    const listChain = (item: HTMLElement) => {
+      const lists: HTMLElement[] = [];
+      let list = item.parentElement?.matches("ul,ol") ? item.parentElement as HTMLElement : null;
+      while (list) {
+        lists.push(list);
+        const ownerItem = list.parentElement?.closest("li") as HTMLElement | null;
+        list = ownerItem?.parentElement?.matches("ul,ol") ? ownerItem.parentElement as HTMLElement : null;
+      }
+      return lists;
+    };
+    const chains = items.map(listChain);
+    return chains[0].find((candidate) => chains.every((chain) => chain.includes(candidate))) || null;
+  };
+
   const getAlignmentTarget = (block: HTMLElement) => {
     const item = block.tagName === "LI" ? block : block.closest("li");
     return item instanceof HTMLElement ? item : block;
@@ -1480,6 +1496,8 @@ export function ClassicEditor({
       candidate instanceof HTMLElement &&
       candidate.tagName === list.tagName &&
       candidate.style.listStyleType === list.style.listStyleType &&
+      candidate.dataset.srteListPreset === list.dataset.srteListPreset &&
+      candidate.dataset.srteListDepth === list.dataset.srteListDepth &&
       candidate.dataset.srteChecklist === list.dataset.srteChecklist &&
       candidate.dataset.srteChecklistStrike === list.dataset.srteChecklistStrike;
 
@@ -1609,6 +1627,7 @@ export function ClassicEditor({
     list.parentElement?.replaceChild(replacement, list);
     const li = replacement.querySelector("li") as HTMLElement | null;
     focusElementEnd(li || replacement);
+    return replacement;
   };
 
   const getOrCreateNestedList = (item: HTMLElement, source: HTMLElement) => {
@@ -1822,14 +1841,56 @@ export function ClassicEditor({
     return lastSelected;
   };
 
-  const defaultListStyleAtDepth = (listTag: "ul" | "ol", depth: number) => {
-    const ordered = ["decimal", "lower-alpha", "lower-roman"];
-    const unordered = ["disc", "circle", "square"];
-    const styles = listTag === "ol" ? ordered : unordered;
+  const listStylesForRoot = (listTag: "ul" | "ol", rootStyle?: string) => {
+    if (listTag === "ul") {
+      if (rootStyle === "circle") return ["circle", "square", "disc"];
+      if (rootStyle === "square") return ["square", "circle", "disc"];
+      return ["disc", "circle", "square"];
+    }
+    if (rootStyle === "upper-alpha") return ["upper-alpha", "lower-alpha", "lower-roman"];
+    if (rootStyle === "upper-roman") return ["upper-roman", "upper-alpha", "decimal"];
+    // Legacy single-style choices remain stable across the first nested level.
+    // Depth-aware families are represented by named presets above.
+    if (rootStyle === "lower-alpha") return ["lower-alpha", "lower-alpha", "lower-roman"];
+    if (rootStyle === "lower-roman") return ["lower-roman", "lower-roman", "lower-alpha"];
+    if (rootStyle === "decimal-leading-zero") return ["decimal-leading-zero", "lower-alpha", "lower-roman"];
+    return ["decimal", "lower-alpha", "lower-roman"];
+  };
+
+  const clearListPreset = (list: HTMLElement) => {
+    delete list.dataset.srteListPreset;
+    delete list.dataset.srteListDepth;
+    delete list.dataset.srteListMarker;
+  };
+
+  const applyListPreset = (list: HTMLElement, preset: SmartListPreset, depth: number) => {
+    const definition = getSmartListPreset(preset);
+    list.dataset.srteListPreset = preset;
+    list.dataset.srteListDepth = String(depth);
+    list.style.listStyleType = listStyleForPresetDepth(preset, depth);
+    const marker = definition.markers?.[Math.min(depth, definition.markers.length - 1)];
+    if (marker) list.dataset.srteListMarker = marker;
+    else delete list.dataset.srteListMarker;
+  };
+
+  const applyListPresetHierarchy = (list: HTMLElement, preset: SmartListPreset, depth = 0) => {
+    applyListPreset(list, preset, depth);
+    Array.from(list.children).forEach((item) => {
+      if (!(item instanceof HTMLElement) || item.tagName !== "LI") return;
+      Array.from(item.children).forEach((child) => {
+        if (child instanceof HTMLElement && child.matches("ul,ol")) {
+          applyListPresetHierarchy(child, preset, depth + 1);
+        }
+      });
+    });
+  };
+
+  const defaultListStyleAtDepth = (listTag: "ul" | "ol", depth: number, rootStyle?: string) => {
+    const styles = listStylesForRoot(listTag, rootStyle);
     return styles[Math.min(depth, styles.length - 1)];
   };
 
-  const restyleDescendantLists = (item: HTMLElement, listTag: "ul" | "ol", depth = 1) => {
+  const restyleDescendantLists = (item: HTMLElement, listTag: "ul" | "ol", depth = 1, rootStyle?: string, preset?: SmartListPreset) => {
     Array.from(item.children).forEach((child) => {
       if (!(child instanceof HTMLElement) || !child.matches("ul,ol")) return;
       const replacement = child.tagName.toLowerCase() === listTag
@@ -1840,10 +1901,14 @@ export function ClassicEditor({
         child.replaceWith(replacement);
       }
       clearChecklist(replacement);
-      replacement.style.listStyleType = defaultListStyleAtDepth(listTag, depth);
+      if (preset) applyListPreset(replacement, preset, depth);
+      else {
+        clearListPreset(replacement);
+        replacement.style.listStyleType = defaultListStyleAtDepth(listTag, depth, rootStyle);
+      }
       Array.from(replacement.children).forEach((nestedItem) => {
         if (nestedItem instanceof HTMLElement && nestedItem.tagName === "LI") {
-          restyleDescendantLists(nestedItem, listTag, depth + 1);
+          restyleDescendantLists(nestedItem, listTag, depth + 1, rootStyle, preset);
         }
       });
     });
@@ -1910,8 +1975,13 @@ export function ClassicEditor({
 
   const applyListStyle = (value: string) => {
     if (!listFeature) return;
-    const listTag = value.startsWith("ordered:") ? "ol" : "ul";
-    const styleType = value.replace(/^(ordered|bullet):/, "");
+    const listTag = value.startsWith("ordered:") || value.startsWith("ordered-preset:") ? "ol" : "ul";
+    const requestedPreset = value.replace(/^(ordered|bullet)-preset:/, "");
+    const preset = isSmartListPreset(requestedPreset) ? requestedPreset : undefined;
+    const styleType = preset
+      ? listStyleForPresetDepth(preset, 0)
+      : value.replace(/^(ordered|bullet):/, "");
+    normalizeListNesting(editableRef.current!);
     if (!restoreSavedSelection()) safeSelectRange(getSelectionRangeInEditor());
 
     const range = getSelectionRangeInEditor();
@@ -1921,7 +1991,8 @@ export function ClassicEditor({
       pushEditorHistory();
       const list = convertDirectTableCellContentsToList(currentBlock as HTMLTableCellElement, listTag);
       if (list) {
-        list.style.listStyleType = styleType;
+        if (preset) applyListPreset(list, preset, 0);
+        else list.style.listStyleType = styleType;
         handleInput();
         requestAnimationFrame(updateActiveState);
       }
@@ -1931,7 +2002,8 @@ export function ClassicEditor({
       pushEditorHistory();
       const list = convertDirectTableCellSelectionToList(range, listTag);
       if (list) {
-        list.style.listStyleType = styleType;
+        if (preset) applyListPreset(list, preset, 0);
+        else list.style.listStyleType = styleType;
         handleInput();
         requestAnimationFrame(updateActiveState);
       }
@@ -1944,11 +2016,17 @@ export function ClassicEditor({
       const outermostItems = selectedItems.filter((item) =>
         !selectedItems.some((candidate) => candidate !== item && candidate.contains(item))
       );
+      const commonSelectedList = resolveCommonSelectedList(selectedItems);
       const promotedLists = new Set(
-        outermostItems
-          .filter((item) => selectedItems.some((candidate) => candidate !== item && item.contains(candidate)))
-          .map((item) => item.parentElement)
-          .filter((list): list is HTMLElement => Boolean(list?.matches("ul,ol")))
+        selectedPlainBlocks.length > 0
+          ? outermostItems.map((item) => {
+            let list = item.parentElement?.matches("ul,ol") ? item.parentElement as HTMLElement : null;
+            while (list?.parentElement?.closest("li")?.parentElement?.matches("ul,ol")) {
+              list = list.parentElement.closest("li")!.parentElement as HTMLElement;
+            }
+            return list;
+          }).filter((list): list is HTMLElement => Boolean(list))
+          : commonSelectedList ? [commonSelectedList] : [],
       );
       pushEditorHistory();
       let lastItem: HTMLElement | null = null;
@@ -1957,7 +2035,7 @@ export function ClassicEditor({
           const items = Array.from(source.children).filter(
             (child): child is HTMLElement => child instanceof HTMLElement && child.tagName === "LI"
           );
-          items.forEach((item) => restyleDescendantLists(item, listTag));
+          items.forEach((item) => restyleDescendantLists(item, listTag, 1, styleType, preset));
           const target = source.tagName.toLowerCase() === listTag
             ? source
             : cloneListShell(source, listTag);
@@ -1966,7 +2044,11 @@ export function ClassicEditor({
             source.replaceWith(target);
           }
           clearChecklist(target);
-          target.style.listStyleType = styleType;
+          if (preset) applyListPreset(target, preset, 0);
+          else {
+            clearListPreset(target);
+            target.style.listStyleType = styleType;
+          }
           lastItem = target.lastElementChild as HTMLElement | null;
           mergeAdjacentCompatibleLists(target);
         });
@@ -1974,8 +2056,14 @@ export function ClassicEditor({
       const scopedItems = outermostItems.filter((item) =>
         !Array.from(promotedLists).some((list) => list.contains(item))
       );
-      scopedItems.forEach((item) => restyleDescendantLists(item, listTag));
+      scopedItems.forEach((item) => restyleDescendantLists(item, listTag, 1, styleType, preset));
       lastItem = restyleSelectedListItems(scopedItems, listTag, styleType) || lastItem;
+      if (preset) {
+        scopedItems.forEach((item) => {
+          const list = item.parentElement;
+          if (list?.matches("ul,ol")) applyListPreset(list, preset, 0);
+        });
+      }
       const convertedPlainBlocks = convertSelectedBlocksToList(selectedPlainBlocks, listTag, styleType);
       if (!convertedPlainBlocks && lastItem) focusElementEnd(lastItem);
       handleInput();
@@ -2012,7 +2100,11 @@ export function ClassicEditor({
         if (convertSelectedBlocksToList(convertibleBlocks, listTag)) {
           const createdList = getCurrentBlock()?.closest("ul,ol") as HTMLElement | null;
           if (createdList) {
-            createdList.style.listStyleType = styleType;
+            if (preset) applyListPresetHierarchy(createdList, preset);
+            else {
+              clearListPreset(createdList);
+              createdList.style.listStyleType = styleType;
+            }
             const mergedList = mergeAdjacentCompatibleLists(createdList);
             const lastItem = mergedList.lastElementChild as HTMLElement | null;
             if (lastItem) focusElementEnd(lastItem);
@@ -2027,7 +2119,11 @@ export function ClassicEditor({
         toggleList(listTag);
         const createdList = getCurrentBlock()?.closest("ul,ol") as HTMLElement | null;
         if (createdList) {
-          createdList.style.listStyleType = styleType;
+          if (preset) applyListPresetHierarchy(createdList, preset);
+          else {
+            clearListPreset(createdList);
+            createdList.style.listStyleType = styleType;
+          }
           handleInput();
         }
         return;
@@ -2053,7 +2149,11 @@ export function ClassicEditor({
         list.parentElement?.replaceChild(target, list);
       }
       clearChecklist(target);
-      target.style.listStyleType = styleType;
+      if (preset) applyListPresetHierarchy(target, preset);
+      else {
+        clearListPreset(target);
+        target.style.listStyleType = styleType;
+      }
       lastList = target;
       styledLists.push(target);
     });
@@ -2331,14 +2431,8 @@ export function ClassicEditor({
     if (!listFeature) return;
     const editor = editableRef.current;
     if (!editor) return;
+    normalizeListNesting(editor);
     if (!restoreSavedSelection()) safeSelectRange(getSelectionRangeInEditor());
-    // List toolbar actions intentionally use the DOM-preserving path below.
-    // The core bridge is authoritative for canonical document commands, but
-    // its structural selection model cannot yet represent a browser range
-    // that starts in a paragraph and ends inside a nested list. Routing that
-    // range through the bridge can collapse the selection to one block and
-    // lose descendants. The DOM path preserves the complete subtree and is
-    // also shared by list-style dropdown actions.
     const setListActiveState = (active: boolean) => {
       setActiveState((current) => ({
         ...current,
@@ -2362,6 +2456,7 @@ export function ClassicEditor({
       const selectedListItems = resolveSelectedListItems(range);
       if (selectedListItems.length > 0) {
         const selectedPlainBlocks = blocks.filter((block) => !block.closest("ul,ol"));
+        const commonSelectedList = resolveCommonSelectedList(selectedListItems);
         let outermostItems = selectedListItems.filter((item) =>
           !selectedListItems.some((candidate) => candidate !== item && candidate.contains(item))
         );
@@ -2377,16 +2472,26 @@ export function ClassicEditor({
             return;
           }
         } else {
-          if (selectedPlainBlocks.length === 0) {
-            const containingLists = new Set(outermostItems.map((item) => item.parentElement));
-            outermostItems = Array.from(containingLists).flatMap((list) =>
-              list
-                ? Array.from(list.children).filter(
-                    (child): child is HTMLElement => child instanceof HTMLElement && child.tagName === "LI"
-                  )
-                : []
-            );
-          }
+          const containingLists = new Set<HTMLElement | null>(
+            selectedPlainBlocks.length === 0 && commonSelectedList
+              ? [commonSelectedList]
+              : outermostItems.map((item) => {
+              let list = item.parentElement?.matches("ul,ol") ? item.parentElement as HTMLElement : null;
+              if (selectedPlainBlocks.length > 0) {
+                while (list?.parentElement?.closest("li")?.parentElement?.matches("ul,ol")) {
+                  list = list.parentElement.closest("li")!.parentElement as HTMLElement;
+                }
+              }
+              return list;
+            }),
+          );
+          outermostItems = Array.from(containingLists).flatMap((list) =>
+            list
+              ? Array.from(list.children).filter(
+                  (child): child is HTMLElement => child instanceof HTMLElement && child.tagName === "LI"
+                )
+              : []
+          );
           outermostItems.forEach((item) => restyleDescendantLists(item, listTag));
           const lastItem = restyleSelectedListItems(
             outermostItems,
@@ -2396,7 +2501,7 @@ export function ClassicEditor({
           const convertedPlainBlocks = convertSelectedBlocksToList(
             selectedPlainBlocks,
             listTag,
-            defaultListStyleAtDepth(listTag, 0)
+            defaultListStyleAtDepth(listTag, 0),
           );
           if (!convertedPlainBlocks && lastItem) focusElementEnd(lastItem);
           setListActiveState(true);
@@ -3701,8 +3806,53 @@ export function ClassicEditor({
     const el = editableRef.current;
     if (!el) return;
     fixNegativeMargins(el);
+    normalizeListNesting(el);
     ensureTableWrappers(el);
     addTableResizeHandles();
+  };
+
+  /** Repairs list markup emitted by Google Docs and browsers where a nested
+   * list is serialized as a sibling of its parent LI instead of a child. */
+  const normalizeListNesting = (root: HTMLElement) => {
+    root.querySelectorAll<HTMLElement>("ul,ol").forEach((list) => {
+      let currentItem: HTMLElement | null = null;
+      Array.from(list.children).forEach((child) => {
+        if (!(child instanceof HTMLElement)) return;
+        if (child.tagName === "LI") {
+          currentItem = child;
+          return;
+        }
+        if (currentItem && child.parentElement === list && (child.tagName === "UL" || child.tagName === "OL")) {
+          currentItem.appendChild(child);
+        }
+      });
+      const firstItem = list.querySelector(":scope > li") as HTMLElement | null;
+      if (!list.style.listStyleType && firstItem?.style.listStyleType) {
+        list.style.listStyleType = firstItem.style.listStyleType;
+      }
+      // Imported document HTML often places list-style-type on every LI.
+      // That overrides later changes made on the UL/OL and makes the toolbar
+      // appear inert. The canonical DOM stores marker style on the list only.
+      list.querySelectorAll<HTMLElement>(":scope > li").forEach((item) => {
+        item.style.removeProperty("list-style-type");
+      });
+      list.querySelectorAll<HTMLElement>(":scope > li > ul, :scope > li > ol").forEach((nested) => {
+        const nestedItem = nested.querySelector(":scope > li") as HTMLElement | null;
+        if (!nested.style.listStyleType && nestedItem?.style.listStyleType) {
+          nested.style.listStyleType = nestedItem.style.listStyleType;
+        }
+      });
+    });
+    root.querySelectorAll<HTMLElement>("ul[data-srte-list-preset],ol[data-srte-list-preset]").forEach((list) => {
+      const preset = list.dataset.srteListPreset;
+      if (!isSmartListPreset(preset)) {
+        clearListPreset(list);
+        return;
+      }
+      const ancestorWithPreset = list.parentElement?.closest("ul[data-srte-list-preset],ol[data-srte-list-preset]") as HTMLElement | null;
+      if (ancestorWithPreset?.dataset.srteListPreset === preset) return;
+      applyListPresetHierarchy(list, preset);
+    });
   };
 
   const insertHtmlAtEnd = (html: string) => {
@@ -3904,6 +4054,7 @@ export function ClassicEditor({
     
     // Auto-fix negative margins that might cause visibility issues
     fixNegativeMargins(el);
+    normalizeListNesting(el);
     // Quotes are document blocks and cannot be nested by drag and drop.
     normalizeInvalidQuoteNesting(el);
     // Code blocks are document blocks and cannot be nested by drag and drop.
@@ -5616,7 +5767,13 @@ export function ClassicEditor({
             title: "Bulleted list",
             active: activeState.unorderedList,
             action: () => toggleList("ul"),
-            options: [["bullet:disc", "• Disc"], ["bullet:circle", "○ Circle"], ["bullet:square", "▪ Square"]],
+            options: [
+              ...SMART_LIST_PRESETS.filter((preset) => preset.kind === "bullet")
+                .map((preset) => [`bullet-preset:${preset.id}`, preset.label, false] as const),
+              ["bullet:disc", "• Disc", true] as const,
+              ["bullet:circle", "○ Circle", true] as const,
+              ["bullet:square", "▪ Square", true] as const,
+            ],
           },
           {
             key: "ordered",
@@ -5625,7 +5782,15 @@ export function ClassicEditor({
             title: "Numbered list",
             active: activeState.orderedList,
             action: () => toggleList("ol"),
-            options: [["ordered:decimal", "1. 2. 3."], ["ordered:lower-alpha", "a. b. c."], ["ordered:upper-alpha", "A. B. C."], ["ordered:lower-roman", "i. ii. iii."], ["ordered:upper-roman", "I. II. III."]],
+            options: [
+              ...SMART_LIST_PRESETS.filter((preset) => preset.kind === "ordered")
+                .map((preset) => [`ordered-preset:${preset.id}`, preset.label, false] as const),
+              ["ordered:decimal", "1. 2. 3.", true] as const,
+              ["ordered:lower-alpha", "a. b. c.", true] as const,
+              ["ordered:upper-alpha", "A. B. C.", true] as const,
+              ["ordered:lower-roman", "i. ii. iii.", true] as const,
+              ["ordered:upper-roman", "I. II. III.", true] as const,
+            ],
           },
         ].filter((control) => control.enabled).map((control) => (
           <span key={control.key} className="srte-split-control">
@@ -5654,7 +5819,7 @@ export function ClassicEditor({
               }}
             >
               <option value="" disabled>Style</option>
-              {control.options.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              {control.options.map(([value, label, hidden]) => <option key={value} value={value} hidden={hidden}>{label}</option>)}
             </select>
           </span>
         ))}

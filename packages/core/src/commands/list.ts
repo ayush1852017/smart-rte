@@ -5,6 +5,7 @@ import {
   type SmartBlockNode,
   type SmartDocument,
   type SmartListNode,
+  type SmartListPreset,
   type SmartTableCellNode,
   type SmartTableNode,
 } from "../model.js";
@@ -13,6 +14,8 @@ import { listFromBlocks } from "../table.js";
 import { replaceNodeAtPath } from "../tree.js";
 import type { SmartSelection } from "../selection.js";
 import type { SmartTransaction } from "../transaction.js";
+import { resolveListSelectionScope } from "../listScope.js";
+import { listStyleForPresetDepth } from "../listPresets.js";
 
 export type ListStyle = SmartListNode["style"];
 
@@ -22,6 +25,7 @@ export interface ToggleTableCellListInput {
   column: number;
   blockIndexes: readonly number[];
   style: ListStyle;
+  preset?: SmartListPreset;
 }
 
 export interface CommandResult {
@@ -31,6 +35,7 @@ export interface CommandResult {
 
 export interface ToggleListInput {
   style: ListStyle;
+  preset?: SmartListPreset;
   /**
    * Toolbar list buttons use `containing-list` semantics by default, matching
    * document editors that change the whole list when selection is inside it.
@@ -44,7 +49,8 @@ export interface ToggleListInput {
 
 type ListTarget =
   | { kind: "range"; containerPath: Path; start: number; end: number }
-  | { kind: "items"; listPath: Path; start: number; end: number };
+  | { kind: "items"; listPath: Path; start: number; end: number }
+  | { kind: "mixed"; containerPath: Path; blockIndex: number; listPath: Path; itemStart: number; itemEnd: number };
 
 const samePath = (left: Path, right: Path) =>
   left.length === right.length && left.every((part, index) => part === right[index]);
@@ -84,45 +90,13 @@ const structuralUnit = (
 };
 
 const resolveListTarget = (context: CommandContext): ListTarget | null => {
-  if (context.selection.type === "all") {
-    return {
-      kind: "range",
-      containerPath: [],
-      start: 0,
-      end: context.document.children.length - 1,
-    };
-  }
-  const paths = selectionPaths(context.selection);
-  if (!paths) return null;
-  const anchor = structuralUnit(context.document, paths[0]);
-  const focus = structuralUnit(context.document, paths[1]);
-  if (!anchor || !focus) return null;
-
-  if (samePath(anchor.path, focus.path)) {
-    const node = getNodeAtPath(context.document, anchor.path);
-    if (
-      (node as SmartListNode | undefined)?.type === "list" &&
-      anchor.listItemIndex !== undefined &&
-      focus.listItemIndex !== undefined
-    ) {
-      return {
-        kind: "items",
-        listPath: anchor.path,
-        start: Math.min(anchor.listItemIndex, focus.listItemIndex),
-        end: Math.max(anchor.listItemIndex, focus.listItemIndex),
-      };
-    }
-  }
-
-  const anchorParent = anchor.path.slice(0, -1);
-  const focusParent = focus.path.slice(0, -1);
-  if (!samePath(anchorParent, focusParent)) return null;
-  return {
-    kind: "range",
-    containerPath: anchorParent,
-    start: Math.min(anchor.path[anchor.path.length - 1], focus.path[focus.path.length - 1]),
-    end: Math.max(anchor.path[anchor.path.length - 1], focus.path[focus.path.length - 1]),
-  };
+  const scope = resolveListSelectionScope(context.document, context.selection);
+  if (scope.kind === "none") return null;
+  if (scope.kind === "all") return { kind: "range", containerPath: [], start: 0, end: context.document.children.length - 1 };
+  if (scope.kind === "blocks") return { kind: "range", containerPath: scope.containerPath, start: scope.start, end: scope.end };
+  if (scope.kind === "list") return { kind: "items", listPath: scope.listPath, start: scope.start, end: scope.end };
+  if (scope.kind === "mixed") return { kind: "mixed", containerPath: scope.containerPath, blockIndex: scope.blockIndex, listPath: scope.listPath, itemStart: scope.itemStart, itemEnd: scope.itemEnd };
+  return null;
 };
 
 const itemFromBlock = (block: SmartBlockNode) => ({
@@ -211,11 +185,54 @@ const transformListItems = (
   };
 };
 
+const transformMixedRange = (
+  document: SmartDocument,
+  target: Extract<ListTarget, { kind: "mixed" }>,
+  style: ListStyle,
+) => {
+  const container = getNodeAtPath(document, target.containerPath) as { children?: SmartBlockNode[] } | undefined;
+  const source = getNodeAtPath(document, target.listPath) as SmartListNode | undefined;
+  if (!container?.children || source?.type !== "list") throw new Error("Mixed list selection is invalid.");
+  const selectedItems = source.children.slice(target.itemStart, target.itemEnd + 1);
+  const mixedList: SmartListNode = {
+    type: "list",
+    style,
+    children: [
+      itemFromBlock(container.children[target.blockIndex]),
+      ...selectedItems,
+    ],
+  };
+  const remaining = source.children.filter((_, index) => index < target.itemStart || index > target.itemEnd);
+  const replacement: SmartBlockNode[] = remaining.length > 0
+    ? [mixedList, { ...source, children: remaining }]
+    : [mixedList];
+  const children = [...container.children];
+  children.splice(Math.min(target.blockIndex, target.listPath[target.listPath.length - 1]), 2, ...replacement);
+  return {
+    document: replaceContainerChildren(document, target.containerPath, children),
+    path: [...target.containerPath, Math.min(target.blockIndex, target.listPath[target.listPath.length - 1])],
+  };
+};
+
 const cascadeListStyles = (list: SmartListNode, depth = 0): SmartListNode => {
-  const ordered = ["decimal", "lower-alpha", "lower-roman"] as const;
+  if (list.preset) {
+    return {
+      ...list,
+      style: listStyleForPresetDepth(list.preset, depth),
+      children: list.children.map((item) => ({
+        ...item,
+        children: item.children.map((child) =>
+          child.type === "list"
+            ? cascadeListStyles({ ...child, preset: list.preset }, depth + 1)
+            : child),
+      })),
+    };
+  }
+  const ordered = ["decimal", "lower-alpha", "lower-roman", "upper-alpha", "upper-roman"] as const;
   const unordered = ["disc", "circle", "square"] as const;
-  const family = ordered.includes(list.style as typeof ordered[number]) ? ordered : unordered;
-  const style = family[Math.min(depth, family.length - 1)];
+  const orderedStyle = list.style === "decimal-leading-zero" || ordered.includes(list.style as typeof ordered[number]);
+  const family = orderedStyle ? ordered : unordered;
+  const style = depth === 0 ? list.style : family[Math.min(depth, family.length - 1)];
   return {
     ...list,
     style,
@@ -278,9 +295,25 @@ export const toggleList: SmartCommand<ToggleListInput> = {
         context.document,
         effectiveTarget,
         input.style,
-        input.checklist,
+        input.checklist || Boolean(input.preset),
       )
-      : transformListItems(context.document, effectiveTarget, input.style);
+      : effectiveTarget.kind === "items"
+        ? transformListItems(context.document, effectiveTarget, input.style)
+        : transformMixedRange(context.document, effectiveTarget, input.style);
+    if (input.preset) {
+      const transformed = getNodeAtPath(result.document, result.path);
+      if ((transformed as SmartListNode | undefined)?.type === "list") {
+        const list = transformed as SmartListNode;
+        result = {
+          ...result,
+          document: replaceNodeAtPath(result.document, result.path, {
+            ...list,
+            preset: input.preset,
+            style: listStyleForPresetDepth(input.preset, 0),
+          }),
+        };
+      }
+    }
     if (input.checklist) {
       const transformed = getNodeAtPath(result.document, result.path);
       if ((transformed as SmartListNode | undefined)?.type === "list") {

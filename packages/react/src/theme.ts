@@ -233,6 +233,34 @@ export const SRTE_DEFAULT_CSS = `
   align-items: start;
   padding-left: 0;
 }
+.srte-editor [contenteditable] ol[data-srte-list-preset="ordered-decimal-paren"][data-srte-list-depth="0"] > li::marker {
+  content: counter(list-item, decimal) ")  ";
+}
+.srte-editor [contenteditable] ol[data-srte-list-preset="ordered-decimal-paren"][data-srte-list-depth="1"] > li::marker {
+  content: counter(list-item, lower-alpha) ")  ";
+}
+.srte-editor [contenteditable] ol[data-srte-list-preset="ordered-decimal-paren"][data-srte-list-depth="2"] > li::marker,
+.srte-editor [contenteditable] ol[data-srte-list-preset="ordered-decimal-paren"][data-srte-list-depth="3"] > li::marker {
+  content: counter(list-item, lower-roman) ")  ";
+}
+.srte-editor [contenteditable] ol[data-srte-list-preset="ordered-outline"] > li::marker {
+  content: counters(list-item, ".") ".  ";
+}
+.srte-editor [contenteditable] ul[data-srte-list-preset="bullet-diamond"][data-srte-list-depth="0"] > li::marker { content: "❖  "; }
+.srte-editor [contenteditable] ul[data-srte-list-preset="bullet-diamond"][data-srte-list-depth="1"] > li::marker { content: "➢  "; }
+.srte-editor [contenteditable] ul[data-srte-list-preset="bullet-diamond"][data-srte-list-depth="2"] > li::marker { content: "■  "; }
+.srte-editor [contenteditable] ul[data-srte-list-preset="bullet-square"][data-srte-list-depth="0"] > li::marker { content: "□  "; }
+.srte-editor [contenteditable] ul[data-srte-list-preset="bullet-square"][data-srte-list-depth="1"] > li::marker { content: "▣  "; }
+.srte-editor [contenteditable] ul[data-srte-list-preset="bullet-square"][data-srte-list-depth="2"] > li::marker { content: "▪  "; }
+.srte-editor [contenteditable] ul[data-srte-list-preset="bullet-arrow"][data-srte-list-depth="0"] > li::marker { content: "➜  "; }
+.srte-editor [contenteditable] ul[data-srte-list-preset="bullet-arrow"][data-srte-list-depth="1"] > li::marker { content: "◆  "; }
+.srte-editor [contenteditable] ul[data-srte-list-preset="bullet-arrow"][data-srte-list-depth="2"] > li::marker { content: "●  "; }
+.srte-editor [contenteditable] ul[data-srte-list-preset="bullet-star"][data-srte-list-depth="0"] > li::marker { content: "★  "; }
+.srte-editor [contenteditable] ul[data-srte-list-preset="bullet-star"][data-srte-list-depth="1"] > li::marker { content: "○  "; }
+.srte-editor [contenteditable] ul[data-srte-list-preset="bullet-star"][data-srte-list-depth="2"] > li::marker { content: "■  "; }
+.srte-editor [contenteditable] ul[data-srte-list-preset="bullet-arrow-circle"][data-srte-list-depth="0"] > li::marker { content: "➢  "; }
+.srte-editor [contenteditable] ul[data-srte-list-preset="bullet-arrow-circle"][data-srte-list-depth="1"] > li::marker { content: "○  "; }
+.srte-editor [contenteditable] ul[data-srte-list-preset="bullet-arrow-circle"][data-srte-list-depth="2"] > li::marker { content: "■  "; }
 .srte-editor [contenteditable] ul[data-srte-checklist="true"] > li > [data-srte-check] {
   display: inline-flex;
   grid-column: 1;

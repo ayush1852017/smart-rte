@@ -8,6 +8,7 @@ import {
   type SmartTextNode,
   type TextAlignment,
 } from "smartrte-core";
+import { isSmartListPreset } from "smartrte-core";
 import { isEditorOnlyElement } from "./domSelectionBridge.js";
 
 const blockTags = new Set(["p", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "blockquote", "pre", "table", "img", "video", "audio"]);
@@ -142,7 +143,7 @@ const parseBlocks = (parent: Element): SmartBlockNode[] => directBlockChildren(p
 const parseList = (element: Element): SmartBlockNode => {
   const requestedStyle = (element as HTMLElement).style.listStyleType;
   const supportedStyles = new Set([
-    "disc", "circle", "square", "decimal", "lower-alpha", "upper-alpha",
+    "disc", "circle", "square", "decimal", "decimal-leading-zero", "lower-alpha", "upper-alpha",
     "lower-roman", "upper-roman",
   ]);
   const fallbackStyle = element.tagName.toLowerCase() === "ol" ? "decimal" : "disc";
@@ -165,10 +166,12 @@ const parseList = (element: Element): SmartBlockNode => {
       };
     });
   const checklist = element.getAttribute("data-srte-checklist") === "true";
+  const requestedPreset = element.getAttribute("data-srte-list-preset");
   return {
     type: "list",
     indent: indentFor(element),
     style,
+    ...(isSmartListPreset(requestedPreset) ? { preset: requestedPreset } : {}),
     ...(checklist ? { checklist: true } : {}),
     ...(checklist && element.getAttribute("data-srte-checklist-strike") === "true"
       ? { strikeCompleted: true }
@@ -316,13 +319,14 @@ const serializeBlock = (block: SmartBlockNode): string => {
     return `<${tag}${blockStyleAttribute(block)} controls src="${escapeHtml(block.src)}"${block.title ? ` title="${escapeHtml(block.title)}"` : ""}${block.mimeType ? ` type="${escapeHtml(block.mimeType)}"` : ""}></${tag}>`;
   }
   if (block.type === "list") {
-    const ordered = ["decimal", "lower-alpha", "upper-alpha", "lower-roman", "upper-roman"].includes(block.style);
+    const ordered = ["decimal", "decimal-leading-zero", "lower-alpha", "upper-alpha", "lower-roman", "upper-roman"].includes(block.style);
     const tag = ordered ? "ol" : "ul";
     const style = blockStyleAttribute(block, `list-style-type:${block.style}`);
     const checklist = block.checklist
       ? ` data-srte-checklist="true" data-srte-checklist-strike="${block.strikeCompleted ? "true" : "false"}"`
       : "";
-    return `<${tag}${style}${checklist}>${block.children.map((item) => `<li${item.checked !== undefined ? ` data-srte-checked="${item.checked ? "true" : "false"}"` : ""}${alignmentAttribute(item.alignment)}>${item.children.map(serializeBlock).join("")}</li>`).join("")}</${tag}>`;
+    const preset = block.preset ? ` data-srte-list-preset="${block.preset}"` : "";
+    return `<${tag}${style}${preset}${checklist}>${block.children.map((item) => `<li${item.checked !== undefined ? ` data-srte-checked="${item.checked ? "true" : "false"}"` : ""}${alignmentAttribute(item.alignment)}>${item.children.map(serializeBlock).join("")}</li>`).join("")}</${tag}>`;
   }
   const columns = block.columnWidths?.length
     ? `<colgroup>${block.columnWidths.map((width) => `<col style="width:${width}px">`).join("")}</colgroup>`

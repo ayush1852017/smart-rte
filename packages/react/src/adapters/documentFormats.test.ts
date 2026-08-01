@@ -51,6 +51,22 @@ describe("document format adapters", () => {
     expect(exportTextDocument("html", model)).toContain("list-style-type:lower-alpha");
   });
 
+  it("round-trips list preset identity with a portable marker fallback", () => {
+    const model = importTextDocument(
+      "html",
+      '<ol data-srte-list-preset="ordered-decimal-paren" style="list-style-type:decimal"><li>One</li></ol>',
+      { ownerDocument: document },
+    );
+    expect(model.children[0]).toMatchObject({
+      type: "list",
+      style: "decimal",
+      preset: "ordered-decimal-paren",
+    });
+    const exported = exportTextDocument("html", model);
+    expect(exported).toContain('data-srte-list-preset="ordered-decimal-paren"');
+    expect(exported).toContain("list-style-type:decimal");
+  });
+
   it("round-trips Markdown lists, marks, formulas, and inline images", () => {
     const markdown = [
       "## **Title**",

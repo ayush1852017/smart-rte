@@ -43,6 +43,30 @@ describe("DOM command bridge", () => {
     expect(root.textContent).toContain("Sibling");
   });
 
+  it("executes a paragraph-to-nested-list range through the canonical core transform", () => {
+    document.body.innerHTML = `
+      <div id="editor">
+        <p>Heading</p>
+        <ul><li><p>Parent</p><ul><li><p>Child one</p></li><li><p>Child two</p></li></ul></li><li><p>Sibling</p></li></ul>
+      </div>`;
+    const root = document.getElementById("editor") as HTMLElement;
+    const heading = root.querySelector(":scope > p")!.firstChild as Text;
+    const child = root.querySelector(":scope > ul > li > ul > li p")!.firstChild as Text;
+
+    const result = executeDomCommand({
+      root,
+      plugins: [listPlugin],
+      commandId: "list.toggle",
+      input: { style: "decimal" },
+      selection: select(heading, 0, child, child.data.length),
+    });
+
+    expect(result).not.toBeNull();
+    expect(root.querySelector(":scope > ol > li")?.textContent).toContain("Heading");
+    expect(root.querySelectorAll(":scope > ol > li > ul > li")).toHaveLength(2);
+    expect(root.textContent).toContain("Sibling");
+  });
+
   it("toggles an existing ordered list off without losing its items", () => {
     document.body.innerHTML = '<div id="editor"><ol><li><p>A</p></li><li><p>B</p></li></ol></div>';
     const root = document.getElementById("editor") as HTMLElement;

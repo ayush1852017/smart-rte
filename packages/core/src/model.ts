@@ -62,10 +62,22 @@ export interface SmartListItemNode {
   children: SmartBlockNode[];
 }
 
+export type SmartListStyle =
+  | "disc" | "circle" | "square"
+  | "decimal" | "decimal-leading-zero"
+  | "lower-alpha" | "upper-alpha" | "lower-roman" | "upper-roman";
+
+export type SmartListPreset =
+  | "bullet-disc" | "bullet-diamond" | "bullet-square" | "bullet-arrow" | "bullet-star" | "bullet-arrow-circle"
+  | "ordered-decimal" | "ordered-decimal-paren" | "ordered-outline"
+  | "ordered-upper-alpha" | "ordered-upper-roman" | "ordered-leading-zero";
+
 export interface SmartListNode {
   type: "list";
   indent?: number;
-  style: "disc" | "circle" | "square" | "decimal" | "lower-alpha" | "upper-alpha" | "lower-roman" | "upper-roman";
+  style: SmartListStyle;
+  /** Marker family applied to this list hierarchy. `style` remains the portable fallback. */
+  preset?: SmartListPreset;
   checklist?: boolean;
   strikeCompleted?: boolean;
   children: SmartListItemNode[];

@@ -6,6 +6,8 @@ export * from "./plugin.js";
 export * from "./preset.js";
 export * from "./history.js";
 export * from "./selection.js";
+export * from "./listScope.js";
+export * from "./listPresets.js";
 export * from "./selectionMapping.js";
 export * from "./schema.js";
 export * from "./table.js";

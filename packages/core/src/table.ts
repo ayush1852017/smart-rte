@@ -1,4 +1,4 @@
-import { paragraph, type SmartBlockNode, type SmartTableCellNode } from "./model.js";
+import { paragraph, type SmartBlockNode, type SmartListStyle, type SmartTableCellNode } from "./model.js";
 
 /** Ensures table cells have blocks even when imported HTML supplied raw lines. */
 export const normalizeTableCell = (
@@ -16,7 +16,7 @@ export const normalizeTableCell = (
 
 export const listFromBlocks = (
   blocks: readonly SmartBlockNode[],
-  style: "disc" | "circle" | "square" | "decimal" | "lower-alpha" | "upper-alpha" | "lower-roman" | "upper-roman" = "disc"
+  style: SmartListStyle = "disc"
 ) => ({
   type: "list" as const,
   style,

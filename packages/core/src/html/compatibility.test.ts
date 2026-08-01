@@ -70,4 +70,13 @@ describe("HTML compatibility boundary", () => {
     expect(html).toContain('data-srte-checklist-strike="true"');
     expect(html).toContain('data-srte-checked="true"');
   });
+
+  it("preserves list preset identity but removes derived rendering data", () => {
+    const html = normalizeCompatibilityHtml(
+      '<ol data-srte-list-preset="ordered-outline" data-srte-list-depth="0" data-srte-list-marker="x"><li>One</li></ol>',
+    );
+    expect(html).toContain('data-srte-list-preset="ordered-outline"');
+    expect(html).not.toContain("data-srte-list-depth");
+    expect(html).not.toContain("data-srte-list-marker");
+  });
 });

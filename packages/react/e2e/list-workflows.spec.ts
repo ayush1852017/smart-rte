@@ -54,6 +54,128 @@ test.beforeEach(async ({ page }) => {
   await expect(page.locator(editorSelector)).toBeVisible();
 });
 
+test("changes a selected bullet list to an alphabetic ordered list", async ({ page }) => {
+  await setEditorHtml(page, `
+    <ul>
+      <li>Rubella</li>
+      <li>Cytomegalovirus</li>
+      <li>Toxoplasmosis</li>
+      <li>Varicella</li>
+    </ul>
+  `);
+  await selectTextRange(page, "Rubella", 0, "Varicella", "Varicella".length);
+  await page.locator('select[aria-label="Numbered list styles"]').selectOption("ordered:upper-alpha");
+
+  const editor = page.locator(editorSelector);
+  await expect(editor.locator(":scope > ul")).toHaveCount(0);
+  await expect(editor.locator(":scope > ol")).toHaveCount(1);
+  await expect(editor.locator(":scope > ol")).toHaveCSS("list-style-type", "upper-alpha");
+  await expect(editor.locator(":scope > ol > li")).toHaveCount(4);
+});
+
+test("overrides imported per-item marker styles when changing list type", async ({ page }) => {
+  await setEditorHtml(page, `
+    <ul>
+      <li style="list-style-type: disc">Rubella</li>
+      <li style="list-style-type: disc">Cytomegalovirus</li>
+      <li style="list-style-type: disc">Toxoplasmosis</li>
+      <li style="list-style-type: disc">Varicella</li>
+    </ul>
+  `);
+  await selectTextRange(page, "Rubella", 0, "Varicella", "Varicella".length);
+  await page.locator('select[aria-label="Numbered list styles"]').selectOption("ordered:upper-alpha");
+
+  const items = page.locator(`${editorSelector} > ol > li`);
+  await expect(items).toHaveCount(4);
+  for (let index = 0; index < 4; index += 1) {
+    await expect(items.nth(index)).toHaveCSS("list-style-type", "upper-alpha");
+  }
+});
+
+test("changes a mouse-selected bullet list to an alphabetic ordered list", async ({ page }) => {
+  await setEditorHtml(page, `
+    <ul>
+      <li>Rubella</li>
+      <li>Cytomegalovirus</li>
+      <li>Toxoplasmosis</li>
+      <li>Varicella</li>
+    </ul>
+  `);
+  const items = page.locator(`${editorSelector} > ul > li`);
+  const first = await items.first().boundingBox();
+  const last = await items.last().boundingBox();
+  if (!first || !last) throw new Error("List items are not visible.");
+  await page.mouse.move(first.x + 2, first.y + first.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(last.x + last.width - 2, last.y + last.height / 2, { steps: 12 });
+  await page.mouse.up();
+  await expect.poll(() => page.evaluate(() => window.getSelection()?.toString() || ""))
+    .toContain("Toxoplasmosis");
+
+  await page.locator('select[aria-label="Numbered list styles"]').selectOption("ordered:upper-alpha");
+
+  const editor = page.locator(editorSelector);
+  await expect(editor.locator(":scope > ul")).toHaveCount(0);
+  await expect(editor.locator(":scope > ol")).toHaveCSS("list-style-type", "upper-alpha");
+  await expect(editor.locator(":scope > ol > li")).toHaveCount(4);
+});
+
+test("changes the common list hierarchy when selection crosses nested and outer items", async ({ page }) => {
+  await setEditorHtml(page, `
+    <ul>
+      <li>Congenital Toxoplasmosis – Classic Triad:
+        <ul>
+          <li>Chorioretinitis</li>
+          <li>Hydrocephalus</li>
+          <li>Intracranial calcifications</li>
+        </ul>
+      </li>
+      <li>No Patent Ductus Arteriosus</li>
+      <li>No Salt &amp; Pepper Retinopathy</li>
+    </ul>
+  `);
+  await selectTextRange(
+    page,
+    "Intracranial calcifications",
+    0,
+    "No Salt & Pepper Retinopathy",
+    "No Salt & Pepper Retinopathy".length,
+  );
+  await page.locator('select[aria-label="Numbered list styles"]').selectOption("ordered:upper-alpha");
+
+  const editor = page.locator(editorSelector);
+  const outer = editor.locator(":scope > ol");
+  await expect(outer).toHaveCSS("list-style-type", "upper-alpha");
+  await expect(outer.locator(":scope > li")).toHaveCount(3);
+  const nested = outer.locator(":scope > li:first-child > ol");
+  await expect(nested).toHaveCSS("list-style-type", "lower-alpha");
+  await expect(nested.locator(":scope > li")).toHaveCount(3);
+});
+
+test("applies a depth-aware preset to a selected list hierarchy", async ({ page }) => {
+  await setEditorHtml(page, `
+    <ul>
+      <li>Parent<ul><li>Child</li><li>Child two</li></ul></li>
+      <li>Sibling</li>
+    </ul>
+  `);
+  await selectTextRange(page, "Parent", 0, "Sibling", "Sibling".length);
+  await chooseListStyle(page, "ordered-preset:ordered-decimal-paren");
+
+  const editor = page.locator(editorSelector);
+  const outer = editor.locator(":scope > ol");
+  const nested = outer.locator(":scope > li:first-child > ol");
+  await expect(outer).toHaveAttribute("data-srte-list-preset", "ordered-decimal-paren");
+  await expect(outer).toHaveAttribute("data-srte-list-depth", "0");
+  await expect(outer).toHaveCSS("list-style-type", "decimal");
+  await expect(nested).toHaveAttribute("data-srte-list-preset", "ordered-decimal-paren");
+  await expect(nested).toHaveAttribute("data-srte-list-depth", "1");
+  await expect(nested).toHaveCSS("list-style-type", "lower-alpha");
+  await expect.poll(() => outer.locator(":scope > li").first().evaluate((item) =>
+    getComputedStyle(item, "::marker").content
+  )).toContain(")");
+});
+
 test("removes an existing ordered list without losing its items", async ({ page }) => {
   await setEditorHtml(page, `
     <ol type="A">
@@ -159,7 +281,7 @@ test("converts a heading plus a partial nested selection without dropping descen
 
   const editor = page.locator(editorSelector);
   await expect(editor.locator(":scope > ol")).toHaveCount(1);
-  await expect(editor.locator(":scope > ol > li")).toHaveCount(2);
+  await expect(editor.locator(":scope > ol > li")).toHaveCount(4);
   await expect(editor.locator(":scope > ol > li").first()).toContainText("Toxoplasma (Option C):");
   await expect(editor.locator(":scope > ol > li:nth-child(2)")).toContainText("Congenital Toxoplasmosis");
   await expect(editor.locator(":scope > ol > li:nth-child(2) > ol > li")).toHaveCount(3);
@@ -183,7 +305,7 @@ test("main numbered-list button preserves a heading and nested descendants", asy
 
   const editor = page.locator(editorSelector);
   await expect(editor.locator(":scope > ol")).toHaveCount(1);
-  await expect(editor.locator(":scope > ol > li")).toHaveCount(2);
+  await expect(editor.locator(":scope > ol > li")).toHaveCount(4);
   await expect(editor.locator(":scope > ol > li:first-child")).toContainText("Toxoplasma (Option C):");
   await expect(editor.locator(":scope > ol > li:nth-child(2) > ol > li")).toHaveCount(3);
   await expect(editor).toContainText("No Patent Ductus Arteriosus");

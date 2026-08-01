@@ -213,6 +213,7 @@ const tableXml = (block: Extract<SmartBlockNode, { type: "table" }>, context: Do
 
 const listStyleNumId: Record<Extract<SmartBlockNode, { type: "list" }>["style"], number> = {
   disc: 1, circle: 2, square: 3, decimal: 4,
+  "decimal-leading-zero": 4,
   "lower-alpha": 5, "upper-alpha": 6, "lower-roman": 7, "upper-roman": 8,
 };
 

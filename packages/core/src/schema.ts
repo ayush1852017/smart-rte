@@ -10,6 +10,7 @@ import {
   type SmartTableCellNode,
   type SmartTextNode,
 } from "./model.js";
+import { isSmartListPreset } from "./listPresets.js";
 
 export interface SchemaIssue {
   path: Path;
@@ -51,6 +52,7 @@ const listStyles = new Set([
   "circle",
   "square",
   "decimal",
+  "decimal-leading-zero",
   "lower-alpha",
   "upper-alpha",
   "lower-roman",
@@ -156,6 +158,7 @@ const normalizeBlock = (block: SmartBlockNode): SmartBlockNode => {
       type: "list",
       ...(normalizedIndent(block.indent) ? { indent: normalizedIndent(block.indent) } : {}),
       style: listStyles.has(block.style) ? block.style : "disc",
+      ...(isSmartListPreset(block.preset) ? { preset: block.preset } : {}),
       ...(block.checklist ? { checklist: true } : {}),
       ...(block.checklist && block.strikeCompleted ? { strikeCompleted: true } : {}),
       children: children.length ? children : [normalizeListItem({ type: "listItem", children: [] })],
@@ -289,6 +292,7 @@ const validateBlock = (block: SmartBlockNode, path: Path, issues: SchemaIssue[])
   }
   if (block.type === "list") {
     if (!listStyles.has(block.style)) issue(issues, path, "invalid-list-style", "List style is not supported.");
+    if (block.preset !== undefined && !isSmartListPreset(block.preset)) issue(issues, path, "invalid-list-preset", "List preset is not supported.");
     if (!block.children.length) issue(issues, path, "empty-list", "Lists require at least one list item.");
     block.children.forEach((item, itemIndex) => {
       const itemPath = [...path, itemIndex];

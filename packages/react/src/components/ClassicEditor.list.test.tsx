@@ -105,6 +105,59 @@ describe("ClassicEditor lists", () => {
     ]);
   });
 
+  it("changes a selected bullet list to an ordered list style", () => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    act(() => {
+      root = createRoot(host!);
+      root.render(
+        <ClassicEditorComponent value={'<ul><li>Rubella</li><li>CMV</li><li>Toxoplasmosis</li><li>Varicella</li></ul>'} />
+      );
+    });
+    const editor = host.querySelector('[contenteditable="true"]') as HTMLElement;
+    const list = editor.querySelector("ul")!;
+    const range = document.createRange();
+    range.selectNodeContents(list);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+
+    const styles = host.querySelector('select[aria-label="Numbered list styles"]') as HTMLSelectElement;
+    act(() => {
+      styles.value = "ordered:upper-alpha";
+      styles.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    expect(editor.querySelector(":scope > ul")).toBeNull();
+    expect((editor.querySelector(":scope > ol") as HTMLOListElement | null)?.style.listStyleType).toBe("upper-alpha");
+    expect(Array.from(editor.querySelectorAll(":scope > ol > li"), (item) => item.textContent)).toEqual([
+      "Rubella", "CMV", "Toxoplasmosis", "Varicella",
+    ]);
+  });
+
+  it("changes a selected bullet list with the numbered-list toolbar button", () => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    act(() => {
+      root = createRoot(host!);
+      root.render(<ClassicEditorComponent value={'<ul><li>one</li><li>two</li></ul>'} />);
+    });
+    const editor = host.querySelector('[contenteditable="true"]') as HTMLElement;
+    const list = editor.querySelector("ul")!;
+    const range = document.createRange();
+    range.selectNodeContents(list);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+
+    act(() => (host!.querySelector('button[title="Numbered list"]') as HTMLButtonElement).click());
+
+    expect(editor.querySelector(":scope > ul")).toBeNull();
+    expect(editor.querySelectorAll(":scope > ol > li")).toHaveLength(2);
+  });
+
   it("preserves and converts nested descendants in a mixed numbered-list selection", () => {
     host = document.createElement("div");
     document.body.appendChild(host);
@@ -128,22 +181,25 @@ describe("ClassicEditor lists", () => {
     selection.addRange(range);
     document.dispatchEvent(new Event("selectionchange"));
 
-    act(() => (host!.querySelector('button[title="Numbered list"]') as HTMLButtonElement).click());
+    const styles = host.querySelector('select[aria-label="Numbered list styles"]') as HTMLSelectElement;
+    act(() => {
+      styles.value = "ordered:upper-alpha";
+      styles.dispatchEvent(new Event("change", { bubbles: true }));
+    });
 
     const numbered = editor.querySelector(":scope > ol")!;
     expect(Array.from(numbered.children, (item) => item.firstElementChild?.textContent)).toEqual([
       "Toxoplasma (Option C):",
       "Congenital Toxoplasmosis – Classic Triad:",
+      "No PDA",
+      "No salt and pepper retinopathy",
     ]);
     expect(Array.from(numbered.querySelectorAll(":scope > li:nth-child(2) > ol > li"), (item) => item.textContent)).toEqual([
       "Chorioretinitis",
       "Hydrocephalus",
       "Intracranial calcifications",
     ]);
-    expect(Array.from(editor.querySelectorAll(":scope > ul > li"), (item) => item.textContent)).toEqual([
-      "No PDA",
-      "No salt and pepper retinopathy",
-    ]);
+    expect(editor.querySelector(":scope > ul")).toBeNull();
     expect(editor.textContent).toContain("Varicella");
   });
 
@@ -183,6 +239,93 @@ describe("ClassicEditor lists", () => {
     ]);
     expect(editor.textContent).toContain("No Patent Ductus Arteriosus");
     expect(editor.textContent).toContain("No Salt & Pepper Retinopathy");
+  });
+
+  it("converts both a selected heading and list item into one ordered list", () => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    act(() => {
+      root = createRoot(host!);
+      root.render(
+        <ClassicEditorComponent
+          value={'<p>Toxoplasma (Option C):</p><ul><li><p>Congenital Toxoplasmosis</p></li><li><p>No PDA</p></li></ul>'}
+        />
+      );
+    });
+    const editor = host.querySelector('[contenteditable="true"]') as HTMLElement;
+    const heading = editor.querySelector(":scope > p")!;
+    const firstItem = editor.querySelector(":scope > ul > li:first-child")!;
+    const range = document.createRange();
+    range.setStart(heading, 0);
+    range.setEnd(firstItem, firstItem.childNodes.length);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+
+    act(() => (host!.querySelector('button[title="Numbered list"]') as HTMLButtonElement).click());
+
+    expect(Array.from(editor.querySelectorAll(":scope > ol > li"), (item) => item.textContent)).toEqual([
+      "Toxoplasma (Option C):",
+      "Congenital Toxoplasmosis",
+      "No PDA",
+    ]);
+    expect(editor.querySelector(":scope > ul")).toBeNull();
+  });
+
+  it("converts a heading through a partial nested selection without dropping the parent list", () => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    act(() => {
+      root = createRoot(host!);
+      root.render(
+        <ClassicEditorComponent
+          value={'<p>Toxoplasma (Option C):</p><ul><li><p>Congenital Toxoplasmosis</p><ul><li><p>Chorioretinitis</p></li><li><p>Hydrocephalus</p></li></ul></li><li><p>No PDA</p></li></ul>'}
+        />
+      );
+    });
+    const editor = host.querySelector('[contenteditable="true"]') as HTMLElement;
+    const heading = editor.querySelector(":scope > p")!;
+    const hydrocephalus = editor.querySelector(":scope > ul > li:first-child > ul > li:nth-child(2)")!;
+    const range = document.createRange();
+    range.setStart(heading, 0);
+    range.setEnd(hydrocephalus, hydrocephalus.childNodes.length);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+
+    act(() => (host!.querySelector('button[title="Numbered list"]') as HTMLButtonElement).click());
+
+    expect(editor.querySelector(":scope > ol")).not.toBeNull();
+    expect(editor.textContent).toContain("Congenital Toxoplasmosis");
+    expect(editor.textContent).toContain("Hydrocephalus");
+    expect(editor.textContent).toContain("No PDA");
+  });
+
+  it("repairs sibling nested-list markup before changing list type", () => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    act(() => {
+      root = createRoot(host!);
+      root.render(
+        <ClassicEditorComponent
+          value={'<p>Varicella (Option D):</p><ol><li><p>Congenital Varicella Syndrome Features:</p></li><ol><li><p>Limb hypoplasia</p></li><li><p>Cicatricial lesions</p></li></ol><li><p>Patent Ductus Arteriosus (PDA)</p></li></ol>'}
+        />
+      );
+    });
+    const editor = host.querySelector('[contenteditable="true"]') as HTMLElement;
+    const range = document.createRange();
+    range.selectNodeContents(editor);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+    act(() => (host!.querySelector('button[title="Numbered list"]') as HTMLButtonElement).click());
+
+    expect(editor.querySelector(":scope > ol > li > ol")).not.toBeNull();
+    expect(editor.querySelectorAll(":scope > ol > li > ol > li")).toHaveLength(2);
+    expect(editor.textContent).toContain("Patent Ductus Arteriosus (PDA)");
   });
 
   it("converts the containing list and its complete subtree when selection starts in a list", () => {
@@ -258,6 +401,38 @@ describe("ClassicEditor lists", () => {
     expect(editor.querySelectorAll("ol")).toHaveLength(1);
     expect(editor.querySelector("ol")?.style.listStyleType).toBe("lower-alpha");
     expect(Array.from(editor.querySelectorAll("li"), (item) => item.textContent)).toEqual(["four", "five"]);
+  });
+
+  it("applies an ordered preset to the complete selected hierarchy", () => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    act(() => {
+      root = createRoot(host!);
+      root.render(<ClassicEditorComponent value={'<ul><li><p>Parent</p><ul><li><p>Child one</p></li><li><p>Child two</p></li></ul></li><li><p>Sibling</p></li></ul>'} />);
+    });
+
+    const editor = host.querySelector('[contenteditable="true"]') as HTMLElement;
+    const range = document.createRange();
+    range.selectNodeContents(editor.querySelector(":scope > ul")!);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+
+    const styles = host.querySelector('select[aria-label="Numbered list styles"]') as HTMLSelectElement;
+    act(() => {
+      styles.value = "ordered-preset:ordered-upper-alpha";
+      styles.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    const outer = editor.querySelector(":scope > ol") as HTMLOListElement;
+    const nested = outer.querySelector(":scope > li > ol") as HTMLOListElement;
+    expect(outer.dataset.srteListPreset).toBe("ordered-upper-alpha");
+    expect(outer.dataset.srteListDepth).toBe("0");
+    expect(outer.style.listStyleType).toBe("upper-alpha");
+    expect(nested.dataset.srteListPreset).toBe("ordered-upper-alpha");
+    expect(nested.dataset.srteListDepth).toBe("1");
+    expect(nested.style.listStyleType).toBe("lower-alpha");
   });
 
   it("creates an interactive checklist and records its checked state", () => {
@@ -518,7 +693,7 @@ describe("ClassicEditor lists", () => {
     expect(selection.toString()).toBe("twothree");
   });
 
-  it("styles only the selected nested item and leaves its ancestor list unchanged", () => {
+  it("styles the containing nested list and leaves its ancestor list unchanged", () => {
     host = document.createElement("div");
     document.body.appendChild(host);
     act(() => {
@@ -543,8 +718,10 @@ describe("ClassicEditor lists", () => {
     const outer = editor.querySelector(":scope > ol") as HTMLElement;
     expect(outer.style.listStyleType).toBe("decimal");
     expect(outer.querySelector(":scope > li > p")?.textContent).toBe("parent");
-    expect(outer.querySelector('ol[style*="lower-roman"] > li > h3')?.textContent).toBe("child two");
-    expect(outer.querySelector("ul > li > p")?.textContent).toBe("child one");
+    const nested = outer.querySelector('ol[style*="lower-roman"]') as HTMLOListElement;
+    expect(Array.from(nested.children, (item) => item.textContent)).toEqual(["child one", "child two"]);
+    expect(nested.querySelector("li:nth-child(2) > h3")?.textContent).toBe("child two");
+    expect(outer.querySelector(":scope > li:nth-child(2) > p")?.textContent).toBe("outer two");
   });
 
   it("does not convert an existing bullet sublist when indenting an ordered item", () => {
@@ -756,7 +933,7 @@ describe("ClassicEditor lists", () => {
     expect(editor.querySelector("[data-srte-checklist], [data-srte-check]")).toBeNull();
   });
 
-  it("splits an existing list when only middle items change type", () => {
+  it("changes the containing list when only middle items are selected", () => {
     host = document.createElement("div");
     document.body.appendChild(host);
     act(() => {
@@ -779,8 +956,8 @@ describe("ClassicEditor lists", () => {
       styles.dispatchEvent(new Event("change", { bubbles: true }));
     });
 
-    expect(Array.from(editor.children, (node) => node.tagName)).toEqual(["UL", "OL", "UL"]);
-    expect(Array.from(editor.querySelectorAll("ol > li"), (item) => item.textContent)).toEqual(["two", "three"]);
+    expect(Array.from(editor.children, (node) => node.tagName)).toEqual(["OL"]);
+    expect(Array.from(editor.querySelectorAll("ol > li"), (item) => item.textContent)).toEqual(["one", "two", "three", "four"]);
   });
 
   it("converts a mixed selection of existing list items and plain lines", () => {

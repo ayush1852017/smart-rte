@@ -87,6 +87,45 @@ describe("list plugin", () => {
     expect(result.children[1]).toEqual(nested.children[1]);
   });
 
+  it("promotes a preceding paragraph with one selected list item without consuming siblings", () => {
+    const document: SmartDocument = {
+      type: "doc",
+      children: [
+        paragraph("Toxoplasma (Option C):"),
+        {
+          type: "list",
+          style: "disc",
+          children: [
+            {
+              type: "listItem",
+              children: [
+                paragraph("Congenital Toxoplasmosis – Classic Triad:"),
+                {
+                  type: "list",
+                  style: "circle",
+                  children: [
+                    { type: "listItem", children: [paragraph("Chorioretinitis")] },
+                    { type: "listItem", children: [paragraph("Hydrocephalus")] },
+                    { type: "listItem", children: [paragraph("Intracranial calcifications")] },
+                  ],
+                },
+              ],
+            },
+            { type: "listItem", children: [paragraph("No PDA")] },
+          ],
+        },
+      ],
+    };
+    const editor = editorFor(document, [0, 0], [1, 0, 1, 1, 0, 0]);
+    expect(editor.execute("list.toggle", { style: "upper-alpha", cascadeStyles: true })).toBe(true);
+    const result = editor.state.document.children;
+    expect(result[0]).toMatchObject({ type: "list", style: "upper-alpha" });
+    expect((result[0] as SmartListNode).children).toHaveLength(2);
+    expect((result[0] as SmartListNode).children[1].children[1]).toMatchObject({ type: "list", style: "lower-alpha" });
+    expect(result[1]).toMatchObject({ type: "list", style: "disc" });
+    expect((result[1] as SmartListNode).children).toHaveLength(1);
+  });
+
   it("optionally assigns deterministic styles through the selected list hierarchy", () => {
     const list: SmartListNode = {
       type: "list",
