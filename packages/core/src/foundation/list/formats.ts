@@ -61,6 +61,19 @@ const effectiveStyle = (node: SmartElementNode, depth: number): string | undefin
   return styles?.[Math.min(depth, styles.length - 1)];
 };
 
+const blockAttributes = (node: SmartElementNode): string => {
+  const declarations = [
+    typeof node.attrs?.htmlStyle === "string" ? node.attrs.htmlStyle.replace(/;\s*$/, "") : "",
+    typeof node.attrs?.align === "string" ? `text-align:${node.attrs.align}` : "",
+    Number(node.attrs?.indentLevel) > 0 ? `margin-inline-start:${Number(node.attrs?.indentLevel) * 2}em` : "",
+  ].filter(Boolean);
+  return [
+    node.attrs?.align ? ` data-smart-align="${escapeHtml(node.attrs.align)}"` : "",
+    Number(node.attrs?.indentLevel) > 0 ? ` data-smart-indent="${escapeHtml(node.attrs?.indentLevel)}"` : "",
+    declarations.length ? ` style="${escapeHtml(declarations.join(";"))}"` : "",
+  ].join("");
+};
+
 const serializeBlock = (node: SmartElementNode, includeIds: boolean, listDepth = 0): string => {
   if (node.type === "unknown") {
     const raw = node.attrs?.raw as { html?: unknown } | undefined;
@@ -69,8 +82,18 @@ const serializeBlock = (node: SmartElementNode, includeIds: boolean, listDepth =
   const id = includeIds ? ` data-smart-id="${escapeHtml(node.id)}"` : "";
   if (node.type === "paragraph" || node.type === "heading") {
     const tag = node.type === "heading" ? `h${String(node.attrs?.level || 1)}` : "p";
-    const style = typeof node.attrs?.htmlStyle === "string" ? ` style="${escapeHtml(node.attrs.htmlStyle)}"` : "";
-    return `<${tag}${id}${style}>${(node.children || []).map(serializeInline).join("")}</${tag}>`;
+    return `<${tag}${id}${blockAttributes(node)}>${(node.children || []).map(serializeInline).join("")}</${tag}>`;
+  }
+  if (node.type === "blockquote") {
+    return `<blockquote${id}${blockAttributes(node)}>${(node.children || []).map((child) => isTextNode(child) ? serializeInline(child) : serializeBlock(child, includeIds, listDepth)).join("")}</blockquote>`;
+  }
+  if (node.type === "code_block") {
+    const language = typeof node.attrs?.language === "string" && node.attrs.language ? node.attrs.language : undefined;
+    const languageAttrs = language
+      ? ` data-smart-language="${escapeHtml(language)}"><code class="language-${escapeHtml(language)}"`
+      : "><code";
+    const text = (node.children || []).map((child) => isTextNode(child) ? child.text : child.type === "hard_break" ? "\n" : "").join("");
+    return `<pre${id}${blockAttributes(node)}${languageAttrs}>${escapeHtml(text)}</code></pre>`;
   }
   if (node.type === "list") {
     const tag = orderedList(node) ? "ol" : "ul";
@@ -156,17 +179,54 @@ const elementChildren = (node: HtmlNode) => (node.childNodes || []).filter((chil
 const styleValue = (node: HtmlNode, property: string) => attr(node, "style")?.split(";").map((part) => part.split(":"))
   .find(([name]) => name?.trim().toLowerCase() === property)?.[1]?.trim();
 
+const parsedBlockAttrs = (node: HtmlNode): Record<string, unknown> => {
+  const attrs: Record<string, unknown> = {};
+  const align = attr(node, "data-smart-align") || styleValue(node, "text-align");
+  const indent = Number(attr(node, "data-smart-indent"));
+  if (align && ["left", "center", "right", "justify"].includes(align)) attrs.align = align;
+  if (Number.isInteger(indent) && indent > 0) attrs.indentLevel = indent;
+  return attrs;
+};
+
+const rawText = (node: HtmlNode): string => node.nodeName === "#text" ? node.value || ""
+  : node.tagName === "br" ? "\n"
+    : (node.childNodes || []).filter((child) => !isEditorUiNode(child)).map(rawText).join("");
+
 const parseBlock = (node: HtmlNode): SmartElementNode | null => {
   const tag = node.tagName || "";
   if (tag === "p" || /^h[1-6]$/.test(tag)) return {
     type: tag === "p" ? "paragraph" : "heading",
     id: generatedId(node, tag),
-    ...((tag !== "p" || attr(node, "style")) ? { attrs: {
+    ...((tag !== "p" || Object.keys(parsedBlockAttrs(node)).length) ? { attrs: {
       ...(tag !== "p" ? { level: Number(tag.slice(1)) } : {}),
-      ...(attr(node, "style") ? { htmlStyle: attr(node, "style") } : {}),
+      ...parsedBlockAttrs(node),
     } } : {}),
     children: (node.childNodes || []).flatMap((child) => textWithMarks(child)),
   };
+  if (tag === "blockquote") {
+    const children = elementChildren(node).flatMap((child) => {
+      const parsed = parseBlock(child);
+      return parsed ? [parsed] : [];
+    });
+    return {
+      type: "blockquote", id: generatedId(node, "quote"),
+      ...(Object.keys(parsedBlockAttrs(node)).length ? { attrs: parsedBlockAttrs(node) } : {}),
+      children: children.length ? children : [{ type: "paragraph", id: createNodeId(), children: [] }],
+    };
+  }
+  if (tag === "pre") {
+    const code = elementChildren(node).find((child) => child.tagName === "code");
+    const language = attr(node, "data-smart-language")
+      || attr(code || node, "data-smart-language")
+      || attr(code || node, "class")?.split(/\s+/).find((value) => value.startsWith("language-"))?.slice(9);
+    const attrs = { ...parsedBlockAttrs(node), ...(language ? { language } : {}) };
+    const text = rawText(code || node);
+    return {
+      type: "code_block", id: generatedId(node, "code"),
+      ...(Object.keys(attrs).length ? { attrs } : {}),
+      children: text ? [{ type: "text", text }] : [],
+    };
+  }
   if (tag === "ul" || tag === "ol") {
     const listAttrs: Record<string, unknown> = {};
     const preset = attr(node, "data-smart-list-preset") || attr(node, "data-srte-list-preset");
@@ -255,12 +315,26 @@ const markdownList = (list: SmartElementNode, depth: number): string[] => (list.
   return [line, ...continuation, ...nested];
 });
 
-export const serializeCanonicalListMarkdown = (document: SmartDocument): string => document.children.flatMap((node) => {
-  if (isTextNode(node)) return [node.text];
-  return node.type === "list" ? markdownList(node, 0) : [markdownInlineText(node)];
-}).join("\n");
+const markdownBlock = (node: SmartElementNode): string[] => {
+  if (node.type === "list") return markdownList(node, 0);
+  if (node.type === "heading") return [`${"#".repeat(Math.max(1, Math.min(6, Number(node.attrs?.level) || 1)))} ${markdownInlineText(node)}`];
+  if (node.type === "code_block") {
+    const language = typeof node.attrs?.language === "string" ? node.attrs.language : "";
+    return [`\`\`\`${language}\n${plainText(node)}\n\`\`\``];
+  }
+  if (node.type === "blockquote") {
+    const content = (node.children || []).filter((child): child is SmartElementNode => !isTextNode(child))
+      .flatMap(markdownBlock).join("\n");
+    return [content.split("\n").map((line) => `> ${line}`).join("\n")];
+  }
+  return [markdownInlineText(node)];
+};
 
-type MdNode = { type: string; value?: string; url?: string; ordered?: boolean; start?: number; checked?: boolean | null; children?: MdNode[] };
+/** Alignment and indent are unsupported in Markdown; block content survives semantically. */
+export const serializeCanonicalListMarkdown = (document: SmartDocument): string => document.children.flatMap((node) =>
+  isTextNode(node) ? [node.text] : markdownBlock(node)).join("\n");
+
+type MdNode = { type: string; value?: string; url?: string; lang?: string; depth?: number; ordered?: boolean; start?: number; checked?: boolean | null; children?: MdNode[] };
 const markdownText = (node: MdNode): string => node.value || (node.children || []).map(markdownText).join("");
 const markdownInline = (node: MdNode, inherited: readonly SmartMark[] = []): SmartNode[] => {
   if (node.type === "text") return node.value ? [{ type: "text", text: node.value, ...(inherited.length ? { marks: canonicalMarkOrder(inherited) } : {}) }] : [];
@@ -283,20 +357,27 @@ const listFromMarkdown = (node: MdNode): SmartElementNode => {
     }, children: (node.children || []).map((itemNode) => {
       const blocks: SmartElementNode[] = [];
       (itemNode.children || []).forEach((child) => {
-        if (child.type === "list") blocks.push(listFromMarkdown(child));
-        else blocks.push({ type: "paragraph", id: createNodeId(), children: (child.children || []).flatMap((inline) => markdownInline(inline)) });
+        blocks.push(...blocksFromMarkdown(child));
       });
       return { type: "list_item", id: createNodeId(), ...(checkable ? { attrs: { checked: itemNode.checked === true } } : {}), children: blocks.length ? blocks : [{ type: "paragraph", id: createNodeId(), children: [] }] };
     }),
   };
 };
 
+const blocksFromMarkdown = (node: MdNode): SmartElementNode[] => {
+  if (node.type === "list") return [listFromMarkdown(node)];
+  if (node.type === "heading") return [{ type: "heading", id: createNodeId(), attrs: { level: Math.max(1, Math.min(6, node.depth || 1)) }, children: (node.children || []).flatMap((inline) => markdownInline(inline)) }];
+  if (node.type === "code") return [{ type: "code_block", id: createNodeId(), ...(node.lang ? { attrs: { language: node.lang } } : {}), children: node.value ? [{ type: "text", text: node.value }] : [] }];
+  if (node.type === "blockquote") {
+    const children = (node.children || []).flatMap(blocksFromMarkdown);
+    return [{ type: "blockquote", id: createNodeId(), children: children.length ? children : [{ type: "paragraph", id: createNodeId(), children: [] }] }];
+  }
+  return [{ type: "paragraph", id: createNodeId(), children: (node.children || []).flatMap((inline) => markdownInline(inline)) }];
+};
+
 export const parseCanonicalListMarkdown = (markdown: string): SmartDocument => {
   const tree = unified().use(remarkParse).use(remarkGfm).parse(markdown) as unknown as MdNode;
-  const children = (tree.children || []).flatMap((node): SmartElementNode[] => {
-    if (node.type === "list") return [listFromMarkdown(node)];
-    return [{ type: "paragraph", id: createNodeId(), children: (node.children || []).flatMap((inline) => markdownInline(inline)) }];
-  });
+  const children = (tree.children || []).flatMap(blocksFromMarkdown);
   return { type: "doc", id: createNodeId(), children: children.length ? children : [{ type: "paragraph", id: createNodeId(), children: [] }] };
 };
 
