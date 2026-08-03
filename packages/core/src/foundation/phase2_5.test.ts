@@ -241,4 +241,35 @@ describe("Phase 2.5 renderer and input pipeline", () => {
     expect(paste.defaultPrevented).toBe(true);
     pipeline.destroy();
   });
+
+  it("routes code-block Enter, Shift+Enter, Tab, and Ctrl/Cmd+Enter through canonical operations", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const code: SmartDocument = { type: "doc", id: "doc", children: [{
+      type: "code_block", id: "code", attrs: { language: "ts" }, children: [{ type: "text", text: "ab" }],
+    }] };
+    const editor = createFoundationEditor({ document: code, selection: caret(1) });
+    const renderer = createSubtreeRenderer(root);
+    const pipeline = createInputPipeline(editor, renderer, root);
+    const dispatchKey = (key: string, init: KeyboardEventInit = {}) => {
+      const event = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key, ...init });
+      root.dispatchEvent(event);
+      return event;
+    };
+    const paragraphInput = new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "insertParagraph" });
+    root.dispatchEvent(paragraphInput);
+    expect(paragraphInput.defaultPrevented).toBe(true);
+    expect(editor.document.children[0]).toMatchObject({ type: "code_block", id: "code", children: [{ text: "a\nb" }] });
+
+    expect(dispatchKey("Enter", { shiftKey: true }).defaultPrevented).toBe(true);
+    expect(editor.document.children[0]).toMatchObject({ children: [{ text: "a\n\nb" }] });
+    expect(dispatchKey("Tab").defaultPrevented).toBe(true);
+    expect(editor.document.children[0]).toMatchObject({ children: [{ text: "a\n\n\tb" }] });
+
+    expect(dispatchKey("Enter", { ctrlKey: true }).defaultPrevented).toBe(true);
+    expect(editor.document.children).toHaveLength(2);
+    expect(editor.document.children[1]).toMatchObject({ type: "paragraph", children: [] });
+    expect(editor.selection.head).toEqual({ path: [1], offset: 0 });
+    pipeline.destroy();
+  });
 });

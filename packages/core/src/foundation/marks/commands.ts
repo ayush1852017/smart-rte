@@ -52,6 +52,13 @@ const ranges = (scope: ResolvedScope, ctx: MarkCommandContext): SmartRange[] => 
     return content ? [{ from: { path: [...content.from.path], offset: run.from }, to: { path: [...content.to.path], offset: run.to } }] : [];
   }));
 
+const markAllowedInOwner = (document: SmartDocument, range: SmartRange, markType: string, ctx: MarkCommandContext) => {
+  const owner = nodeAtPath(document, range.from.path);
+  if (!owner || isTextNode(owner)) return false;
+  const allowed = ctx.schema.nodes[owner.type]?.marks;
+  return allowed !== "" && (allowed === undefined || allowed === "_all" || allowed.includes(markType));
+};
+
 /** Reports atoms skipped by mark application without changing the command contract. */
 export const reportMarkApplication = (
   document: SmartDocument,
@@ -60,11 +67,13 @@ export const reportMarkApplication = (
   ctx: MarkCommandContext,
 ): MarkApplicationReport => {
   const ownerIds = new Set<string>();
+  const skippedOwners = new Set<string>();
   const skipped = new Set<string>();
   for (const part of inlineScopes(scope)) for (const run of part.runs) {
     ownerIds.add(run.ownerNodeId);
-    if (!run.containsAtoms) continue;
     const content = ctx.positions.contentRangeOf(run.ownerNodeId);
+    if (content && !markAllowedInOwner(document, content, markType, ctx)) skippedOwners.add(run.ownerNodeId);
+    if (!run.containsAtoms) continue;
     const owner = content ? nodeAtPath(document, content.from.path) : undefined;
     if (!owner || isTextNode(owner)) continue;
     let offset = 0;
@@ -77,7 +86,12 @@ export const reportMarkApplication = (
       offset += width;
     }
   }
-  return { ownerCount: ownerIds.size, atomOwnersSkipped: [...skipped], partial: skipped.size > 0 };
+  return {
+    ownerCount: ownerIds.size,
+    ownerIdsSkipped: [...skippedOwners],
+    atomOwnersSkipped: [...skipped],
+    partial: skipped.size > 0 || skippedOwners.size > 0,
+  };
 };
 
 const removalsFor = (document: SmartDocument, range: SmartRange, types: ReadonlySet<string>): SmartOperation[] =>
@@ -86,7 +100,7 @@ const removalsFor = (document: SmartDocument, range: SmartRange, types: Readonly
 export const applyMarkCommand: MarkCommand<MarkApplyParams> = (document, scope, params, ctx) => {
   const mark = markFor(params, ctx);
   const excluded = new Set([mark.type, ...(ctx.schema.marks[mark.type]?.excludes || [])]);
-  return ranges(scope, ctx).flatMap((range) => [
+  return ranges(scope, ctx).filter((range) => markAllowedInOwner(document, range, params.markType, ctx)).flatMap((range) => [
     ...removalsFor(document, range, excluded),
     { type: "addMark" as const, range, mark },
   ]);

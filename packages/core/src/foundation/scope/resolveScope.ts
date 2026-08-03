@@ -109,7 +109,7 @@ const schemaGroup = (node: SmartElementNode, schema: SmartSchema) => {
 
 const contentAcceptsInline = (node: SmartElementNode, schema: SmartSchema) => {
   const expression = schema.nodes[node.type]?.content;
-  return Boolean(expression && /(^|[^A-Za-z0-9_-])inline([^A-Za-z0-9_-]|$)/.test(expression));
+  return Boolean(expression && /(^|[^A-Za-z0-9_-])(?:inline|text)([^A-Za-z0-9_-]|$)/.test(expression));
 };
 
 const buildIndex = (document: SmartDocument, schema: SmartSchema): Index => {

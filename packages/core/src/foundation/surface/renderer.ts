@@ -11,6 +11,8 @@ import { renderMarkedText, stableValue } from "../marks/index.js";
 const tagForNode = (node: SmartElementNode): string => {
   if (node.type === "paragraph") return "p";
   if (node.type === "heading") return `h${String(node.attrs?.level || 1)}`;
+  if (node.type === "blockquote") return "blockquote";
+  if (node.type === "code_block") return "pre";
   if (node.type === "list") {
     const marker = String(node.attrs?.style || node.attrs?.preset || "");
     return /^(?:decimal|lower-|upper-|ordered)/.test(marker) || node.attrs?.start !== undefined ? "ol" : "ul";
@@ -57,6 +59,12 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
   }
 
   private syncNodeAttributes(element: HTMLElement, node: SmartElementNode): void {
+    if (node.attrs?.align) element.style.textAlign = String(node.attrs.align);
+    else if (element.style.textAlign) element.style.removeProperty("text-align");
+    if (node.attrs?.indentLevel) element.style.marginInlineStart = `${Number(node.attrs.indentLevel) * 2}em`;
+    else if (element.style.marginInlineStart) element.style.removeProperty("margin-inline-start");
+    if (node.type === "code_block" && typeof node.attrs?.language === "string") this.setAttribute(element, "data-smart-language", node.attrs.language, node.id);
+    else this.removeAttribute(element, "data-smart-language", node.id);
     if (node.type === "list") {
       const preset = typeof node.attrs?.preset === "string" ? node.attrs.preset : null;
       const style = typeof node.attrs?.style === "string" ? node.attrs.style : null;

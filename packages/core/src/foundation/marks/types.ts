@@ -34,6 +34,7 @@ export interface InlineToolDeclaration {
 
 export interface MarkApplicationReport {
   readonly ownerCount: number;
+  readonly ownerIdsSkipped: readonly string[];
   readonly atomOwnersSkipped: readonly string[];
   readonly partial: boolean;
 }

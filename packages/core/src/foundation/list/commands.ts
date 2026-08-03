@@ -27,6 +27,7 @@ import type {
   SetListStyleParams,
   UnwrapListParams,
 } from "./types.js";
+import { moveContiguousSiblings } from "../structural/move.js";
 
 interface LocatedNode {
   node: SmartElementNode;
@@ -291,26 +292,8 @@ export const setListChecked: ListCommand<SetListCheckedParams> = (document, scop
   });
 
 /** Moves one contiguous item run by one sibling while preserving every item subtree and ID. */
-export const moveListItems: ListCommand<MoveListItemsParams> = (document, scope, params, ctx) =>
-  listScopes(scope).flatMap((entry) => {
-    const located = locate(document, entry.listId, ctx);
-    const runs = contiguousRuns(directItemIndexes(located.node, entry));
-    if (runs.length !== 1) return [];
-    const { start, end } = runs[0];
-    const children = [...(located.node.children || [])];
-    if (params.direction === "up") {
-      if (start === 0) return [];
-      const preceding = children[start - 1];
-      const moved = children.slice(start, end + 1);
-      children.splice(start - 1, moved.length + 1, ...moved, preceding);
-    } else {
-      if (end >= children.length - 1) return [];
-      const following = children[end + 1];
-      const moved = children.slice(start, end + 1);
-      children.splice(start, moved.length + 1, following, ...moved);
-    }
-    return [{ type: "replaceNode", pos: located.pos, before: located.node, after: withChildren(located.node, children) }];
-  });
+export const moveListItems: ListCommand<MoveListItemsParams> = (_document, scope, params, ctx) =>
+  listScopes(scope).flatMap((entry) => moveContiguousSiblings(entry.items.map((item) => item.itemId), params.direction, ctx));
 
 export const restartListNumbering: ListCommand<RestartListNumberingParams> = (document, scope, params, ctx) => {
   if (!Number.isInteger(params.start) || params.start < 1) throw new Error("list.restartNumbering requires a positive integer.");

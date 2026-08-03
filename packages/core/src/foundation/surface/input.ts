@@ -25,6 +25,12 @@ import {
   markKey,
   marksAtInsertion,
 } from "../marks/index.js";
+import {
+  exitCodeBlock,
+  indentInsideCodeBlock,
+  insertCodeBlockNewline,
+  type CodeBlockInputResult,
+} from "../block/index.js";
 
 interface CompositionState {
   id: string;
@@ -176,7 +182,10 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
     return { schema: this.editor.schema, positions: this.editor.positions };
   }
 
-  private commitListResult(result: ListInputResult, source: "input" | "keyboard" = "input"): void {
+  private commitStructuralResult(
+    result: ListInputResult | CodeBlockInputResult,
+    source: "input" | "keyboard" = "input",
+  ): void {
     if (!result.operations.length) return;
     const preview = applyOperations(this.editor.document, result.operations);
     const lookup = createScopeIndex().positions(preview, this.editor.schema);
@@ -215,7 +224,9 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
       const listResult = enterInList(this.editor.document, selection.head, {
         itemId: createNodeId(), blockId: createNodeId(), emptyBlockId: createNodeId(),
       }, this.commandContext());
-      if (listResult) return this.commitListResult(listResult);
+      if (listResult) return this.commitStructuralResult(listResult);
+      const codeResult = insertCodeBlockNewline(this.editor.document, selection.head);
+      if (codeResult) return this.commitStructuralResult(codeResult);
     }
     this.commit((builder) => {
       const caret = collapsed(selection) ? selection.head : queueRangeDeletion(this.editor, builder, normalizedRange(selection));
@@ -234,6 +245,10 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
 
   private insertLineBreak(): void {
     const selection = this.editor.selection;
+    if (collapsed(selection)) {
+      const codeResult = insertCodeBlockNewline(this.editor.document, selection.head);
+      if (codeResult) return this.commitStructuralResult(codeResult);
+    }
     const operations: SmartOperation[] = [];
     const builder = new TransactionBuilder(selection, this.editor.storedMarks ? [...this.editor.storedMarks] : undefined);
     const caret = collapsed(selection) ? selection.head : queueRangeDeletion(this.editor, builder, normalizedRange(selection));
@@ -258,7 +273,7 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
       const structural = inputType.endsWith("Backward")
         ? backspaceAtListItemStart(this.editor.document, selection.head, this.commandContext())
         : deleteAtListItemEnd(this.editor.document, selection.head, this.commandContext());
-      if (structural) return this.commitListResult(structural);
+      if (structural) return this.commitStructuralResult(structural);
       const boundaries = inlineGraphemeBoundaries(owner.children || []);
       const target = inputType.endsWith("Backward")
         ? [...boundaries].reverse().find((boundary) => boundary < offset)
@@ -355,6 +370,14 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
 
   handleKeyDown(event: KeyboardEvent): void {
     const modifier = event.metaKey || event.ctrlKey;
+    if (event.key === "Enter" && modifier && !event.shiftKey) {
+      const result = exitCodeBlock(this.editor.document, this.editor.selection.head, createNodeId());
+      if (result) {
+        event.preventDefault();
+        this.commitStructuralResult(result, "keyboard");
+        return;
+      }
+    }
     // WebKit does not consistently surface Shift+Enter as
     // beforeinput(insertLineBreak). Own the intent at keydown so every browser
     // produces the same atomic hard_break representation.
@@ -389,6 +412,12 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
     }
     if (event.key === "Tab") {
       const active = this.editor.selection.head;
+      const codeResult = indentInsideCodeBlock(this.editor.document, active);
+      if (codeResult) {
+        event.preventDefault();
+        this.commitStructuralResult(codeResult, "keyboard");
+        return;
+      }
       const item = listItemAt(this.editor.document, active);
       const description = this.editor.resolveScope({ want: "describe" });
       if (item && "inTable" in description && !description.inTable) {
@@ -399,7 +428,7 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
             : indentList(this.editor.document, scope, { nestedListIds: [createNodeId()] }, this.commandContext());
           if (operations.length) {
             event.preventDefault();
-            this.commitListResult({ operations, selectionTarget: { ownerId: ownerAt(this.editor, active).id, offset: active.offset }, intent: event.shiftKey ? "outdent" : "indent" }, "keyboard");
+            this.commitStructuralResult({ operations, selectionTarget: { ownerId: ownerAt(this.editor, active).id, offset: active.offset }, intent: event.shiftKey ? "outdent" : "indent" }, "keyboard");
           }
         }
         return;
@@ -420,7 +449,7 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
             const operations = setListChecked(this.editor.document, scope, { checked: itemNode.attrs?.checked !== true }, this.commandContext());
             if (operations.length) {
               event.preventDefault();
-              this.commitListResult({ operations, selectionTarget: { ownerId: ownerAt(this.editor, active).id, offset: active.offset }, intent: "check" }, "keyboard");
+              this.commitStructuralResult({ operations, selectionTarget: { ownerId: ownerAt(this.editor, active).id, offset: active.offset }, intent: "check" }, "keyboard");
               return;
             }
           }

@@ -122,6 +122,7 @@ describe("Phase 4 generic mark engine", () => {
     ]);
     expect(reportMarkApplication(document, scope, "bold", context)).toEqual({
       ownerCount: 1,
+      ownerIdsSkipped: [],
       atomOwnersSkipped: ["break"],
       partial: true,
     });

@@ -177,13 +177,18 @@ export const createSchema = (options: {
 };
 
 const stringAttr: AttributeSpec = { validate: (value) => typeof value === "string" };
+const alignmentAttr: AttributeSpec = { validate: (value) => ["left", "center", "right", "justify"].includes(String(value)) };
+const indentLevelAttr: AttributeSpec = { validate: (value) => Number.isInteger(value) && Number(value) >= 0 && Number(value) <= 10 };
+const blockAttrs = { align: alignmentAttr, indentLevel: indentLevelAttr };
 
 export const foundationSchema = createSchema({
   version: 2,
   nodes: [
     { type: "doc", group: "document", content: "block+" },
-    { type: "paragraph", group: "block", content: "inline*" },
-    { type: "heading", group: "block", content: "inline*", attributes: { level: { required: true, default: 1, validate: (v) => Number.isInteger(v) && Number(v) >= 1 && Number(v) <= 6 } } },
+    { type: "paragraph", group: "block", content: "inline*", attributes: blockAttrs },
+    { type: "heading", group: "block", content: "inline*", attributes: { ...blockAttrs, level: { required: true, default: 1, validate: (v) => Number.isInteger(v) && Number(v) >= 1 && Number(v) <= 6 } } },
+    { type: "blockquote", group: "block", content: "block+", attributes: blockAttrs, defining: true },
+    { type: "code_block", group: "block", content: "text*", marks: "", attributes: { ...blockAttrs, language: stringAttr }, defining: true },
     ...listNodeSpecs,
     { type: "text", group: "inline", marks: "_all" },
     hardBreakNodeSpec,

@@ -9,6 +9,8 @@ export const SMART_NODE_ID_ATTRIBUTE = "data-smart-id";
 const tagForNode = (node: SmartNode): string => {
   if (node.type === "paragraph") return "p";
   if (node.type === "heading") return `h${String(node.attrs?.level || 1)}`;
+  if (node.type === "blockquote") return "blockquote";
+  if (node.type === "code_block") return "pre";
   if (node.type === "list") {
     const marker = String(node.attrs?.style || node.attrs?.preset || "");
     return /^(?:decimal|lower-|upper-|ordered)/.test(marker) || node.attrs?.start !== undefined ? "ol" : "ul";
@@ -23,6 +25,9 @@ const renderNode = (node: SmartNode, ownerDocument: Document): Node => {
   const element = ownerDocument.createElement(tagForNode(node));
   element.setAttribute(SMART_NODE_ID_ATTRIBUTE, node.id);
   element.setAttribute("data-smart-type", node.type);
+  if (node.attrs?.align) element.style.textAlign = String(node.attrs.align);
+  if (node.attrs?.indentLevel) element.style.marginInlineStart = `${Number(node.attrs.indentLevel) * 2}em`;
+  if (node.type === "code_block" && typeof node.attrs?.language === "string") element.setAttribute("data-smart-language", node.attrs.language);
   if (node.type === "list") {
     if (typeof node.attrs?.preset === "string") element.setAttribute("data-smart-list-preset", node.attrs.preset);
     if (typeof node.attrs?.style === "string") {

@@ -18,7 +18,7 @@ export const inlineSize = (node: SmartNode): number => isTextNode(node) ? node.t
 
 export const positionLimit = (node: SmartNode): number => {
   if (isTextNode(node)) return node.text.length;
-  if (node.children && (node.type === "paragraph" || node.type === "heading")) {
+  if (node.children && (node.type === "paragraph" || node.type === "heading" || node.type === "code_block")) {
     return node.children.reduce((total, child) => total + inlineSize(child), 0);
   }
   return node.children?.length || (node.type === "unknown" ? 1 : 0);
@@ -43,7 +43,7 @@ export const resolvePos = (
     current = current.children[index];
     if (!isTextNode(current)) ancestors.push(current);
   }
-  const structural = node.type !== "paragraph" && node.type !== "heading";
+  const structural = node.type !== "paragraph" && node.type !== "heading" && node.type !== "code_block";
   const before = structural && pos.offset > 0 ? node.children?.[pos.offset - 1] || null : null;
   const after = structural && pos.offset < limit ? node.children?.[pos.offset] || null : null;
   return {
