@@ -83,7 +83,17 @@ describe("Phase 3 cross-parent deletion matrix", () => {
 
   it("resolves Backspace to the deepest last descendant, not the sibling", () => {
     const before = tree();
-    expect(resolvePrecedingContentTarget(before, "current", ctx(before))).toEqual({ itemId: "deep-b", ownerId: "deep-b-p" });
+    expect(resolvePrecedingContentTarget(before, "current", ctx(before))).toEqual({
+      ownerId: "deep-b-p",
+      lineage: [
+        { nodeId: "first", type: "list_item" },
+        { nodeId: "nested", type: "list" },
+        { nodeId: "nested-a", type: "list_item" },
+        { nodeId: "deep", type: "list" },
+        { nodeId: "deep-b", type: "list_item" },
+        { nodeId: "deep-b-p", type: "paragraph" },
+      ],
+    });
     const result = backspaceAtListItemStart(before, { path: [0, 1, 0], offset: 0 }, ctx(before));
     expect(result?.intent).toBe("merge-backward");
     const after = apply(before, result);

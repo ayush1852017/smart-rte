@@ -223,6 +223,7 @@ describe("Phase 1 operation algebra", () => {
         { type: "list", id: "l2", attrs: { ordered: false }, children: [{ type: "list_item", id: "i2", children: [{ type: "paragraph", id: "p2", children: [] }] }] },
       ] }, { type: "mergeNode", pos: { path: [], offset: 1 }, depth: 0, retiredId: "l2", splitOffset: 1 }],
       ["setNodeAttributes", doc(), { type: "setNodeAttributes", pos: { path: [0], offset: 0 }, before: {}, after: { role: "note" } }],
+      ["setNodeType", doc(), { type: "setNodeType", pos: { path: [0], offset: 0 }, before: "paragraph", after: "heading", beforeAttrs: {}, afterAttrs: { level: 2 } }],
       ["insertText", doc(), { type: "insertText", pos: { path: [0], offset: 2 }, text: "X", marks: [{ type: "bold" }] }],
       ["deleteText", doc(), { type: "deleteText", pos: { path: [0], offset: 1 }, text: "ell" }],
       ["addMark", doc(), { type: "addMark", range: { from: { path: [0], offset: 1 }, to: { path: [0], offset: 4 } }, mark: { type: "bold" } }],
@@ -284,7 +285,7 @@ describe("Phase 1 operation algebra", () => {
       const operations: SmartOperation[] = [];
       for (let step = 0; step < 16; step += 1) {
         const children = current.children;
-        const choice = Math.floor(random() * 7);
+        const choice = Math.floor(random() * 8);
         let operation: SmartOperation;
         if (choice === 0 || children.length === 1) {
           const offset = Math.floor(random() * (children.length + 1));
@@ -309,6 +310,18 @@ describe("Phase 1 operation algebra", () => {
         } else if (choice === 5) {
           const offset = Math.floor(random() * children.length);
           const node = children[offset];
+          if (node.type === "text" || (node.type !== "paragraph" && node.type !== "heading")) continue;
+          operation = {
+            type: "setNodeType",
+            pos: { path: [offset], offset: 0 },
+            before: node.type,
+            after: node.type === "paragraph" ? "heading" : "paragraph",
+            beforeAttrs: structuredClone(node.attrs || {}),
+            afterAttrs: node.type === "paragraph" ? { level: 2 } : {},
+          };
+        } else if (choice === 6) {
+          const offset = Math.floor(random() * children.length);
+          const node = children[offset];
           if (node.type === "text" || node.type !== "paragraph") continue;
           operation = { type: "splitNode", pos: { path: [offset], offset: Math.floor(random() * ((node.children?.length || 0) + 1)) }, depth: 0, newId: `split-${run}-${step}` };
         } else {
@@ -321,7 +334,12 @@ describe("Phase 1 operation algebra", () => {
         operations.push(operation);
         expect(validate(current)).toEqual([]);
       }
-      const restored = applyOperations(current, invertOperations(operations));
+      let restored: SmartDocument;
+      try {
+        restored = applyOperations(current, invertOperations(operations));
+      } catch (error) {
+        throw new Error(`Structural inversion failed in case ${run}: ${JSON.stringify(operations)}`, { cause: error });
+      }
       expect(restored).toEqual(initial);
       expect(collectNodeIds(restored)).toEqual(collectNodeIds(initial));
     }

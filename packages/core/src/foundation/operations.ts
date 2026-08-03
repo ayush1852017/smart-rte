@@ -237,6 +237,17 @@ const applyToSession = (session: PathCopySession, operation: SmartOperation): bo
     session.replace(operation.pos.path, Object.keys(operation.after).length
       ? { ...withoutAttrs, attrs: structuredClone(operation.after) }
       : withoutAttrs as SmartElementNode);
+  } else if (operation.type === "setNodeType") {
+    const target = session.node(operation.pos.path);
+    if (!target || isTextNode(target) || target.type !== operation.before || !sameValue(target.attrs || {}, operation.beforeAttrs)) {
+      throw new Error("setNodeType before payload does not match.");
+    }
+    session.replace(operation.pos.path, {
+      type: operation.after,
+      id: target.id,
+      ...(Object.keys(operation.afterAttrs).length ? { attrs: structuredClone(operation.afterAttrs) } : {}),
+      ...(target.children ? { children: target.children } : {}),
+    });
   } else if (operation.type === "insertText") insertText(session, operation.pos, operation.text, operation.marks);
   else if (operation.type === "deleteText") deleteText(session, operation.pos, operation.text);
   else if (operation.type === "addMark") applyMark(session, operation.range, operation.mark, true);
@@ -266,6 +277,13 @@ export const invertOperation = (operation: SmartOperation): SmartOperation => {
     return { type: "splitNode", pos: { path: leftPath, offset: operation.splitOffset }, depth: operation.depth, newId: operation.retiredId };
   }
   if (operation.type === "setNodeAttributes") return { ...operation, before: structuredClone(operation.after), after: structuredClone(operation.before) };
+  if (operation.type === "setNodeType") return {
+    ...operation,
+    before: operation.after,
+    after: operation.before,
+    beforeAttrs: structuredClone(operation.afterAttrs),
+    afterAttrs: structuredClone(operation.beforeAttrs),
+  };
   if (operation.type === "insertText") return { type: "deleteText", pos: operation.pos, text: operation.text, ...(operation.marks ? { marks: structuredClone(operation.marks) } : {}) };
   if (operation.type === "deleteText") return { type: "insertText", pos: operation.pos, text: operation.text, ...(operation.marks ? { marks: structuredClone(operation.marks) } : {}) };
   if (operation.type === "addMark") return { type: "removeMark", range: operation.range, mark: structuredClone(operation.mark) };
@@ -379,7 +397,7 @@ export const mapOperation = (operation: SmartOperation, through: SmartOperation)
     const to = map(operation.to);
     return from.deleted ? null : { ...operation, from: from.pos, to: to.pos };
   }
-  if (operation.type === "splitNode" || operation.type === "mergeNode" || operation.type === "setNodeAttributes" || operation.type === "insertText" || operation.type === "deleteText") {
+  if (operation.type === "splitNode" || operation.type === "mergeNode" || operation.type === "setNodeAttributes" || operation.type === "setNodeType" || operation.type === "insertText" || operation.type === "deleteText") {
     const result = map(operation.pos);
     return result.deleted ? null : { ...operation, pos: result.pos };
   }

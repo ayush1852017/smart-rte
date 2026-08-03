@@ -116,6 +116,7 @@ export type SmartOperation =
   | { type: "splitNode"; pos: SmartPos; depth: number; newId: string }
   | { type: "mergeNode"; pos: SmartPos; depth: number; retiredId: string; splitOffset: number }
   | { type: "setNodeAttributes"; pos: SmartPos; before: Attrs; after: Attrs }
+  | { type: "setNodeType"; pos: SmartPos; before: string; after: string; beforeAttrs: Attrs; afterAttrs: Attrs }
   | { type: "insertText"; pos: SmartPos; text: string; marks?: SmartMark[] }
   | { type: "deleteText"; pos: SmartPos; text: string; marks?: SmartMark[] }
   | { type: "addMark"; range: SmartRange; mark: SmartMark }

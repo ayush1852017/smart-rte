@@ -3,6 +3,7 @@ import { nodeAtPath } from "../positions.js";
 import type { ListSelectionScope } from "../scope/types.js";
 import type { SmartDocument, SmartElementNode, SmartNode, SmartOperation, SmartPos } from "../types.js";
 import { outdentList, unwrapList } from "./commands.js";
+import { resolvePrecedingContentTarget as resolveSharedPrecedingContentTarget } from "../structural/contentTarget.js";
 import type { CommandContext } from "./types.js";
 
 export interface ListSelectionTarget {
@@ -97,19 +98,6 @@ const firstContentOwner = (item: SmartElementNode): SmartElementNode | null => {
   for (const child of item.children || []) if (!isTextNode(child) && child.type !== "list" && isInlineOwner(child)) return child;
   return null;
 };
-const lastContentOwner = (item: SmartElementNode): SmartElementNode | null => {
-  for (let index = (item.children?.length || 0) - 1; index >= 0; index -= 1) {
-    const child = item.children?.[index];
-    if (child && !isTextNode(child) && child.type !== "list" && isInlineOwner(child)) return child;
-  }
-  return null;
-};
-
-const deepestLastItem = (item: SmartElementNode): SmartElementNode => {
-  const nested = nestedList(item);
-  const last = nested?.children?.[nested.children.length - 1];
-  return last && !isTextNode(last) ? deepestLastItem(last) : item;
-};
 const deepestFirstItem = (item: SmartElementNode): SmartElementNode => {
   const nested = nestedList(item);
   const first = nested?.children?.[0];
@@ -117,20 +105,6 @@ const deepestFirstItem = (item: SmartElementNode): SmartElementNode => {
 };
 
 /** Backspace target: deepest last visible descendant of the preceding sibling. */
-export const resolvePrecedingContentTarget = (
-  document: SmartDocument,
-  itemId: string,
-  ctx: CommandContext,
-): { itemId: string; ownerId: string } | null => {
-  const position = ctx.positions.positionOf(itemId);
-  if (!position || position.parent.type !== "list" || position.pos.offset === 0) return null;
-  const sibling = position.parent.children?.[position.pos.offset - 1];
-  if (!sibling || isTextNode(sibling)) return null;
-  const target = deepestLastItem(sibling);
-  const owner = lastContentOwner(target);
-  return owner ? { itemId: target.id, ownerId: owner.id } : null;
-};
-
 /** Delete target: first visible descendant when present, otherwise next sibling. */
 export const resolveFollowingContentTarget = (
   document: SmartDocument,
@@ -340,7 +314,9 @@ export const backspaceAtListItemStart = (
     selectionTarget: { ownerId: context.owner.id, offset: 0 },
     intent: "unwrap",
   };
-  const target = resolvePrecedingContentTarget(document, context.item.id, ctx);
+  const resolved = resolveSharedPrecedingContentTarget(document, context.item.id, ctx);
+  const targetItem = resolved && [...resolved.lineage].reverse().find((entry) => entry.type === "list_item");
+  const target = resolved && targetItem ? { itemId: targetItem.nodeId, ownerId: resolved.ownerId } : null;
   return target ? mergeItems(document, context.item.id, target.itemId, context.owner.id, target.ownerId, true, ctx) : null;
 };
 

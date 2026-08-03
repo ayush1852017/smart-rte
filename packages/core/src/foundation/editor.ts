@@ -76,6 +76,17 @@ export class TransactionBuilder {
     this.operations.push({ type: "setNodeAttributes", pos: position.pos, before: structuredClone(before), after: structuredClone(after) });
   }
 
+  setNodeType(position: ResolvedPos, before: string, after: string, beforeAttrs: Attrs, afterAttrs: Attrs) {
+    this.operations.push({
+      type: "setNodeType",
+      pos: position.pos,
+      before,
+      after,
+      beforeAttrs: structuredClone(beforeAttrs),
+      afterAttrs: structuredClone(afterAttrs),
+    });
+  }
+
   insertText(position: ResolvedPos, text: string, marks?: SmartMark[]) {
     this.operations.push({ type: "insertText", pos: position.pos, text, ...(marks?.length ? { marks: structuredClone(marks) } : {}) });
   }
