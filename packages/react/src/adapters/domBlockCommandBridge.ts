@@ -6,7 +6,7 @@ import {
   createSmartEditor,
   type SetBlockTypeInput,
   type TextAlignment,
-} from "smartrte-core";
+} from "smartrte-core/legacy";
 import { serializeSmartDocument, smartDocumentFromHtml } from "./domSmartDocument.js";
 
 export type DomBlockCommand =

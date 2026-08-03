@@ -1,4 +1,4 @@
-import type { CommandContext, SmartCommand } from "../command.js";
+import type { LegacyCommandContext, SmartCommand } from "../command.js";
 import {
   getNodeAtPath,
   type Path,
@@ -15,7 +15,7 @@ export interface InlineAtomPathInput {
 }
 
 const resolveAtom = (
-  context: CommandContext,
+  context: LegacyCommandContext,
   input: InlineAtomPathInput | undefined,
   expectedType: SmartInlineAtom["type"],
 ) => {

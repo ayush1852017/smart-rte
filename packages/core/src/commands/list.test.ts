@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { paragraph, toggleTableCellList, type SmartDocument, type SmartTableNode } from "../index.js";
+import { paragraph, toggleTableCellList, type LegacySmartDocument, type SmartTableNode } from "../index.js";
 
 describe("toggleTableCellList", () => {
   it("changes only selected blocks in one table cell", () => {
@@ -13,7 +13,7 @@ describe("toggleTableCellList", () => {
         }],
       }],
     };
-    const document: SmartDocument = { type: "doc", children: [table] };
+    const document: LegacySmartDocument = { type: "doc", children: [table] };
 
     const result = toggleTableCellList(
       document,

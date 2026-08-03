@@ -3,7 +3,7 @@ import {
   getNodeAtPath,
   mediaPlugin,
   type SmartInlineImageNode,
-} from "smartrte-core";
+} from "smartrte-core/legacy";
 import { selectionFromDom } from "./domSelectionBridge.js";
 import { smartDocumentFromEditorRoot } from "./domSmartDocument.js";
 import { inlineAtomPathFromDom } from "./domInlineAtomCommandBridge.js";

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import { checklistPlugin, formulaPlugin, listPlugin } from "smartrte-core";
+import { checklistPlugin, formulaPlugin, listPlugin } from "smartrte-core/legacy";
 import { executeDomCommand } from "./domCommandBridge.js";
 
 const select = (start: Text, startOffset: number, end: Text, endOffset: number) => {

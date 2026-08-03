@@ -1,8 +1,8 @@
 import {
   createSmartEditor,
   type SmartRtePlugin,
-  type SmartSelection,
-} from "smartrte-core";
+  type LegacySmartSelection,
+} from "smartrte-core/legacy";
 import { restoreSelectionToDom, selectionFromDom } from "./domSelectionBridge.js";
 import {
   serializeSmartDocument,
@@ -11,7 +11,7 @@ import {
 
 export interface DomCommandResult {
   html: string;
-  selection: SmartSelection;
+  selection: LegacySmartSelection;
 }
 
 /**
@@ -28,7 +28,7 @@ export const executeDomCommand = <Input>(args: {
   input?: Input;
   selection?: Selection | null;
 }): DomCommandResult | null => {
-  // These nodes are not represented by SmartDocument yet. Falling back is
+  // These nodes are not represented by LegacySmartDocument yet. Falling back is
   // mandatory so a supported command can never erase unsupported content.
   if (args.root.querySelector("img,video,audio,iframe")) {
     return null;

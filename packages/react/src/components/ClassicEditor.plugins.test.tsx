@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { formulaPlugin } from "smartrte-core";
+import { formulaPlugin } from "smartrte-core/legacy";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { ClassicEditorProps } from "./ClassicEditor.js";
 import type { ReactEditorPlugin } from "../pluginRuntime.js";

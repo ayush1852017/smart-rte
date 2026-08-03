@@ -1,7 +1,9 @@
 import { useState } from "react";
 import { ClassicEditor } from "smartrte-react";
+import CanonicalSurface from "./CanonicalSurface";
 
 function App() {
+  if (new URLSearchParams(window.location.search).has("canonical")) return <CanonicalSurface />;
   const [theme, setTheme] = useState<"light" | "dark">("light");
 
   return (

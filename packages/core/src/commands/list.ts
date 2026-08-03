@@ -3,17 +3,17 @@ import {
   paragraph,
   type Path,
   type SmartBlockNode,
-  type SmartDocument,
+  type LegacySmartDocument,
   type SmartListNode,
   type SmartListPreset,
   type SmartTableCellNode,
   type SmartTableNode,
 } from "../model.js";
-import type { CommandContext, SmartCommand } from "../command.js";
+import type { LegacyCommandContext, SmartCommand } from "../command.js";
 import { listFromBlocks } from "../table.js";
 import { replaceNodeAtPath } from "../tree.js";
-import type { SmartSelection } from "../selection.js";
-import type { SmartTransaction } from "../transaction.js";
+import type { LegacySmartSelection } from "../selection.js";
+import type { LegacySmartTransaction } from "../transaction.js";
 import { resolveListSelectionScope } from "../listScope.js";
 import { listStyleForPresetDepth } from "../listPresets.js";
 
@@ -29,8 +29,8 @@ export interface ToggleTableCellListInput {
 }
 
 export interface CommandResult {
-  document: SmartDocument;
-  transaction: SmartTransaction;
+  document: LegacySmartDocument;
+  transaction: LegacySmartTransaction;
 }
 
 export interface ToggleListInput {
@@ -60,14 +60,14 @@ const isBlock = (node: unknown): node is SmartBlockNode =>
   ["paragraph", "heading", "list", "blockquote", "codeBlock", "table"]
     .includes((node as { type?: string }).type || "");
 
-const selectionPaths = (selection: SmartSelection): [Path, Path] | null => {
+const selectionPaths = (selection: LegacySmartSelection): [Path, Path] | null => {
   if (selection.type === "text") return [selection.anchor.path, selection.focus.path];
   if (selection.type === "node") return [selection.path, selection.path];
   return null;
 };
 
 const structuralUnit = (
-  document: SmartDocument,
+  document: LegacySmartDocument,
   path: Path,
 ): { path: Path; listItemIndex?: number } | null => {
   let firstBlockPath: Path | null = null;
@@ -89,7 +89,7 @@ const structuralUnit = (
   return firstBlockPath ? { path: firstBlockPath } : null;
 };
 
-const resolveListTarget = (context: CommandContext): ListTarget | null => {
+const resolveListTarget = (context: LegacyCommandContext): ListTarget | null => {
   const scope = resolveListSelectionScope(context.document, context.selection);
   if (scope.kind === "none") return null;
   if (scope.kind === "all") return { kind: "range", containerPath: [], start: 0, end: context.document.children.length - 1 };
@@ -108,7 +108,7 @@ const blocksFromItem = (item: SmartListNode["children"][number]): SmartBlockNode
   item.children.length ? item.children : [paragraph()];
 
 const replaceContainerChildren = (
-  document: SmartDocument,
+  document: LegacySmartDocument,
   containerPath: Path,
   children: SmartBlockNode[],
 ) => {
@@ -118,11 +118,11 @@ const replaceContainerChildren = (
 };
 
 const transformBlockRange = (
-  document: SmartDocument,
+  document: LegacySmartDocument,
   target: Extract<ListTarget, { kind: "range" }>,
   style: ListStyle,
   forceList = false,
-): { document: SmartDocument; path: Path } => {
+): { document: LegacySmartDocument; path: Path } => {
   const container = getNodeAtPath(document, target.containerPath) as { children?: SmartBlockNode[] } | undefined;
   if (!container?.children || target.start < 0 || target.end >= container.children.length) {
     throw new Error("Selected block range is out of bounds.");
@@ -150,10 +150,10 @@ const transformBlockRange = (
 };
 
 const transformListItems = (
-  document: SmartDocument,
+  document: LegacySmartDocument,
   target: Extract<ListTarget, { kind: "items" }>,
   style: ListStyle,
-): { document: SmartDocument; path: Path } => {
+): { document: LegacySmartDocument; path: Path } => {
   const list = getNodeAtPath(document, target.listPath) as SmartListNode | undefined;
   if (!list || list.type !== "list" || target.start < 0 || target.end >= list.children.length) {
     throw new Error("Selected list-item range is out of bounds.");
@@ -186,7 +186,7 @@ const transformListItems = (
 };
 
 const transformMixedRange = (
-  document: SmartDocument,
+  document: LegacySmartDocument,
   target: Extract<ListTarget, { kind: "mixed" }>,
   style: ListStyle,
 ) => {
@@ -358,7 +358,7 @@ export const toggleList: SmartCommand<ToggleListInput> = {
 };
 
 const deepestListUnit = (
-  document: SmartDocument,
+  document: LegacySmartDocument,
   path: Path,
 ): { listPath: Path; itemIndex: number } | null => {
   let result: { listPath: Path; itemIndex: number } | null = null;
@@ -372,7 +372,7 @@ const deepestListUnit = (
   return result;
 };
 
-const listItemTarget = (context: CommandContext): Extract<ListTarget, { kind: "items" }> | null => {
+const listItemTarget = (context: LegacyCommandContext): Extract<ListTarget, { kind: "items" }> | null => {
   const paths = selectionPaths(context.selection);
   if (!paths) return null;
   const anchor = deepestListUnit(context.document, paths[0]);
@@ -388,10 +388,10 @@ const listItemTarget = (context: CommandContext): Extract<ListTarget, { kind: "i
 
 const listTransaction = (
   id: string,
-  context: CommandContext,
-  document: SmartDocument,
-  selectionAfter: SmartSelection,
-): SmartTransaction => ({
+  context: LegacyCommandContext,
+  document: LegacySmartDocument,
+  selectionAfter: LegacySmartSelection,
+): LegacySmartTransaction => ({
   id,
   source: "user",
   operations: [{ type: "replaceNode", path: [], node: document }],
@@ -405,12 +405,12 @@ const pathStartsWith = (path: Path, prefix: Path) =>
   prefix.length <= path.length && prefix.every((part, index) => path[index] === part);
 
 const mapSelectedTextItems = (
-  selection: SmartSelection,
+  selection: LegacySmartSelection,
   listPath: Path,
   start: number,
   end: number,
   mapPath: (itemIndex: number, suffix: Path) => Path,
-): SmartSelection | null => {
+): LegacySmartSelection | null => {
   if (selection.type !== "text") return null;
   const mapPoint = (point: typeof selection.anchor) => {
     if (!pathStartsWith(point.path, listPath) || point.path.length <= listPath.length) return null;
@@ -558,8 +558,8 @@ export const outdentListItems: SmartCommand<void> = {
  * list. No DOM ranges, wrappers, or React state participate in this command.
  */
 export const toggleTableCellList = (
-  document: SmartDocument,
-  selection: SmartSelection,
+  document: LegacySmartDocument,
+  selection: LegacySmartSelection,
   input: ToggleTableCellListInput
 ): CommandResult => {
   const table = getNodeAtPath(document, input.tablePath) as SmartTableNode | undefined;
@@ -591,7 +591,7 @@ export const toggleTableCellList = (
   const cellPath = [...input.tablePath, input.row, input.column] as const;
   const nextDocument = replaceNodeAtPath(document, cellPath, nextCell);
   const listPath = [...cellPath, firstIndex] as const;
-  const selectionAfter: SmartSelection = { type: "node", path: listPath };
+  const selectionAfter: LegacySmartSelection = { type: "node", path: listPath };
 
   return {
     document: nextDocument,

@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { paragraph, toggleCodeBlocks, type SmartDocument } from "../index.js";
+import { paragraph, toggleCodeBlocks, type LegacySmartDocument } from "../index.js";
 
 describe("toggleCodeBlocks", () => {
   it("converts only the selected paragraph beside an existing code block", () => {
-    const document: SmartDocument = {
+    const document: LegacySmartDocument = {
       type: "doc",
       children: [paragraph("first"), paragraph("second"), { type: "codeBlock", text: "third" }],
     };
@@ -23,7 +23,7 @@ describe("toggleCodeBlocks", () => {
   });
 
   it("converts only the selected code block back to a paragraph", () => {
-    const document: SmartDocument = {
+    const document: LegacySmartDocument = {
       type: "doc",
       children: [{ type: "codeBlock", text: "first" }, { type: "codeBlock", text: "second" }],
     };

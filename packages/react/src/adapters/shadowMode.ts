@@ -1,11 +1,11 @@
 import {
   applyTransaction,
   normalizeCompatibilityHtml,
-  type CommandContext,
+  type LegacyCommandContext,
   type SmartCommand,
   type SmartEditorState,
-  type SmartTransaction,
-} from "smartrte-core";
+  type LegacySmartTransaction,
+} from "smartrte-core/legacy";
 import { isShadowModeFlagEnabled } from "./internalFlags.js";
 
 export interface ShadowComparison {
@@ -43,12 +43,12 @@ export const reportShadowDifference = (comparison: ShadowComparison): void => {
  */
 export const runShadowCommand = <Input>(args: {
   command: SmartCommand<Input>;
-  context: CommandContext;
+  context: LegacyCommandContext;
   input?: Input;
   state: SmartEditorState;
   legacyHtml: string;
   serialize: (state: SmartEditorState) => string;
-}): SmartTransaction | null => {
+}): LegacySmartTransaction | null => {
   if (!isShadowModeEnabled() || !args.command.isEnabled(args.context, args.input)) return null;
   const transaction = args.command.execute(args.context, args.input);
   const coreHtml = args.serialize(applyTransaction(args.state, transaction));

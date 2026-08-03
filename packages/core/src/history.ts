@@ -1,25 +1,25 @@
-import type { Path, SmartDocument, SmartTextNode } from "./model.js";
+import type { Path, LegacySmartDocument, LegacySmartTextNode } from "./model.js";
 import { mapSelectionThroughOperation } from "./selectionMapping.js";
-import type { SmartSelection } from "./selection.js";
+import type { LegacySmartSelection } from "./selection.js";
 import { normalizeSmartDocument } from "./schema.js";
 import {
   applyOperationToState,
   applyTransaction,
   getMoveDestinationAfterRemoval,
   type SmartEditorState,
-  type SmartOperation,
-  type SmartTransaction,
+  type LegacySmartOperation,
+  type LegacySmartTransaction,
 } from "./transaction.js";
 import { getNodeAtTreePath, isSmartContainer } from "./tree.js";
 
-export interface HistoryEntry {
-  forward: SmartTransaction;
-  inverse: SmartTransaction;
+export interface LegacyHistoryEntry {
+  forward: LegacySmartTransaction;
+  inverse: LegacySmartTransaction;
 }
 
 export interface SmartHistoryState {
-  undo: HistoryEntry[];
-  redo: HistoryEntry[];
+  undo: LegacyHistoryEntry[];
+  redo: LegacyHistoryEntry[];
   limit: number;
 }
 
@@ -38,10 +38,10 @@ export const createHistoryState = (limit = 100): SmartHistoryState => ({
 const parentPath = (path: Path) => path.slice(0, -1);
 
 const inverseForOperation = (
-  document: SmartDocument,
-  selection: SmartSelection,
-  operation: SmartOperation
-): SmartOperation[] => {
+  document: LegacySmartDocument,
+  selection: LegacySmartSelection,
+  operation: LegacySmartOperation
+): LegacySmartOperation[] => {
   if (operation.type === "insertNode") return [{ type: "removeNode", path: operation.path }];
   if (operation.type === "removeNode") {
     return [{ type: "insertNode", path: operation.path, node: getNodeAtTreePath(document, operation.path) }];
@@ -71,7 +71,7 @@ const inverseForOperation = (
     ];
     const left = getNodeAtTreePath(document, leftPath);
     const position = (left as { type?: unknown })?.type === "text"
-      ? (left as SmartTextNode).text.length
+      ? (left as LegacySmartTextNode).text.length
       : isSmartContainer(left)
         ? left.children.length
         : 0;
@@ -85,7 +85,7 @@ const inverseForOperation = (
     return [{ type: "setNodeAttrs", path: operation.path, attrs }];
   }
   if (operation.type === "replaceText") {
-    const node = getNodeAtTreePath(document, operation.path) as SmartTextNode;
+    const node = getNodeAtTreePath(document, operation.path) as LegacySmartTextNode;
     return [{
       type: "replaceText",
       path: operation.path,
@@ -101,13 +101,13 @@ const inverseForOperation = (
   return [{ type: "setSelection", selection }];
 };
 
-export const invertTransaction = (
+export const invertLegacyTransaction = (
   state: SmartEditorState,
-  transaction: SmartTransaction
-): SmartTransaction => {
+  transaction: LegacySmartTransaction
+): LegacySmartTransaction => {
   let document = state.document;
   let selection = state.selection;
-  const inverseGroups: SmartOperation[][] = [];
+  const inverseGroups: LegacySmartOperation[][] = [];
 
   transaction.operations.forEach((operation) => {
     inverseGroups.unshift(inverseForOperation(document, selection, operation));
@@ -133,9 +133,9 @@ export const invertTransaction = (
 export const applyTransactionWithHistory = (
   state: SmartEditorState,
   history: SmartHistoryState,
-  transaction: SmartTransaction
+  transaction: LegacySmartTransaction
 ): HistoryResult => {
-  let inverse = invertTransaction(state, transaction);
+  let inverse = invertLegacyTransaction(state, transaction);
   const nextState = applyTransaction(state, transaction);
   const restored = applyTransaction(nextState, inverse);
   const expectedDocument = normalizeSmartDocument(state.document);
@@ -157,7 +157,7 @@ export const applyTransactionWithHistory = (
     transaction.historyGroup &&
     previous?.forward.historyGroup === transaction.historyGroup
   );
-  const entry: HistoryEntry = canGroup
+  const entry: LegacyHistoryEntry = canGroup
     ? {
         forward: {
           ...previous.forward,

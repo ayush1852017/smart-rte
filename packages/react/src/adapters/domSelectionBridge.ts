@@ -1,4 +1,4 @@
-import type { Path, SmartSelection } from "smartrte-core";
+import type { Path, LegacySmartSelection } from "smartrte-core/legacy";
 
 type Point = { path: Path; offset: number };
 
@@ -157,7 +157,7 @@ const pointForDomPoint = (editor: HTMLElement, container: Node, offset: number):
   return null;
 };
 
-const nodeSelectionFromRange = (editor: HTMLElement, range: Range): SmartSelection | null => {
+const nodeSelectionFromRange = (editor: HTMLElement, range: Range): LegacySmartSelection | null => {
   const nodes = Array.from(editor.querySelectorAll<HTMLElement>(
     "img, [data-formula], [data-srte-node-selection='true']",
   ));
@@ -174,7 +174,7 @@ const nodeSelectionFromRange = (editor: HTMLElement, range: Range): SmartSelecti
 };
 
 /** Converts browser selection into a core selection without exposing editor UI nodes. */
-export const selectionFromDom = (editor: HTMLElement, selection: Selection | null): SmartSelection | null => {
+export const selectionFromDom = (editor: HTMLElement, selection: Selection | null): LegacySmartSelection | null => {
   if (!selection || selection.rangeCount === 0) return null;
   const range = selection.getRangeAt(0);
   if (!editor.contains(range.commonAncestorContainer)) return null;
@@ -208,7 +208,7 @@ const domPointForSmartPoint = (editor: HTMLElement, point: Point): { node: Text;
 };
 
 /** Restores a text selection from core paths after the editor DOM is rebuilt. */
-export const restoreSelectionToDom = (editor: HTMLElement, smartSelection: SmartSelection): boolean => {
+export const restoreSelectionToDom = (editor: HTMLElement, smartSelection: LegacySmartSelection): boolean => {
   if (smartSelection.type === "node") {
     const element = elementAtPath(editor, smartSelection.path);
     if (!element) return false;

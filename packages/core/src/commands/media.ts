@@ -1,4 +1,4 @@
-import type { CommandContext, SmartCommand } from "../command.js";
+import type { LegacyCommandContext, SmartCommand } from "../command.js";
 import {
   getNodeAtPath,
   type Path,
@@ -7,7 +7,7 @@ import {
   type SmartInlineImageNode,
   type SmartInlineNode,
   type SmartMediaNode,
-  type SmartTextNode,
+  type LegacySmartTextNode,
 } from "../model.js";
 import { isSmartContainer } from "../tree.js";
 import { createDeleteInlineAtomCommand } from "./inlineAtoms.js";
@@ -26,7 +26,7 @@ const canContainBlocks = (node: unknown) => {
     type === "tableCell" || type === "tableHeaderCell";
 };
 
-const resolveInsertionPath = (context: CommandContext, explicit?: Path): Path | null => {
+const resolveInsertionPath = (context: LegacyCommandContext, explicit?: Path): Path | null => {
   if (explicit) {
     const parent = getNodeAtPath(context.document, explicit.slice(0, -1));
     const index = explicit[explicit.length - 1];
@@ -65,7 +65,7 @@ const resolveInsertionPath = (context: CommandContext, explicit?: Path): Path | 
 };
 
 const insertBlockTransaction = (
-  context: CommandContext,
+  context: LegacyCommandContext,
   id: string,
   path: Path,
   node: SmartImageNode | SmartMediaNode,
@@ -115,7 +115,7 @@ export const insertImage: SmartCommand<InsertImageInput> = {
   },
 };
 
-const resolveInlineImageTarget = (context: CommandContext) => {
+const resolveInlineImageTarget = (context: LegacyCommandContext) => {
   if (context.selection.type !== "text") return null;
   const { anchor, focus } = context.selection;
   if (
@@ -123,7 +123,7 @@ const resolveInlineImageTarget = (context: CommandContext) => {
     anchor.path.length !== focus.path.length ||
     !anchor.path.every((part, index) => focus.path[index] === part)
   ) return null;
-  const node = getNodeAtPath(context.document, anchor.path) as SmartTextNode | undefined;
+  const node = getNodeAtPath(context.document, anchor.path) as LegacySmartTextNode | undefined;
   const parentPath = anchor.path.slice(0, -1);
   const parent = getNodeAtPath(context.document, parentPath);
   if (

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { paragraph, resolveListSelectionScope, type SmartDocument } from "./index.js";
+import { paragraph, resolveListSelectionScope, type LegacySmartDocument } from "./index.js";
 
 const selection = (anchor: number[], focus: number[]) => ({
   type: "text" as const,
@@ -7,7 +7,7 @@ const selection = (anchor: number[], focus: number[]) => ({
   focus: { path: focus, offset: 1 },
 });
 
-const document: SmartDocument = {
+const document: LegacySmartDocument = {
   type: "doc",
   children: [
     paragraph("Heading"),

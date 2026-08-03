@@ -1,4 +1,4 @@
-import { createSmartEditor, movePlugin } from "smartrte-core";
+import { createSmartEditor, movePlugin } from "smartrte-core/legacy";
 import { smartDocumentFromHtml } from "./domSmartDocument.js";
 
 export type DomMoveDirection = "up" | "down" | "left" | "right";

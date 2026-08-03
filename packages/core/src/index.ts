@@ -1,3 +1,4 @@
+export * from "./foundation/index.js";
 export * from "./model.js";
 export * from "./command.js";
 export * from "./editor.js";

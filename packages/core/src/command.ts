@@ -1,15 +1,15 @@
-import type { SmartDocument } from "./model.js";
-import type { SmartSelection } from "./selection.js";
-import type { SmartTransaction } from "./transaction.js";
+import type { LegacySmartDocument } from "./model.js";
+import type { LegacySmartSelection } from "./selection.js";
+import type { LegacySmartTransaction } from "./transaction.js";
 
-export interface CommandContext {
-  document: SmartDocument;
-  selection: SmartSelection;
+export interface LegacyCommandContext {
+  document: LegacySmartDocument;
+  selection: LegacySmartSelection;
   now?: () => number;
 }
 
 export interface SmartCommand<Input = unknown> {
   id: string;
-  isEnabled(context: CommandContext, input?: Input): boolean;
-  execute(context: CommandContext, input?: Input): SmartTransaction;
+  isEnabled(context: LegacyCommandContext, input?: Input): boolean;
+  execute(context: LegacyCommandContext, input?: Input): LegacySmartTransaction;
 }

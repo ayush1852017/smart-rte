@@ -1,5 +1,5 @@
-import type { SmartDocument } from "smartrte-core";
-import { normalizeSmartDocument } from "smartrte-core";
+import type { LegacySmartDocument } from "smartrte-core/legacy";
+import { normalizeSmartDocument } from "smartrte-core/legacy";
 import { exportTextDocument } from "./documentFormats.js";
 import { smartDocumentFromHtml } from "./domSmartDocument.js";
 
@@ -20,7 +20,7 @@ export interface PdfPageSnapshot {
 }
 
 export interface PdfImportResult {
-  document: SmartDocument;
+  document: LegacySmartDocument;
   layoutHtml: string;
   pages: number;
 }
@@ -190,7 +190,7 @@ export const importPdfDocument = async (
   return reconstructPdfPages(pages, ownerDocument);
 };
 
-export const buildPdfPrintDocument = (document: SmartDocument) => {
+export const buildPdfPrintDocument = (document: LegacySmartDocument) => {
   const html = exportTextDocument("html", document);
   return `<!doctype html>
 <html lang="en">
@@ -221,7 +221,7 @@ export const buildPdfPrintDocument = (document: SmartDocument) => {
 };
 
 export const printSmartDocumentAsPdf = (
-  document: SmartDocument,
+  document: LegacySmartDocument,
   hostWindow: Window,
   delayMs = 150,
 ): boolean => {

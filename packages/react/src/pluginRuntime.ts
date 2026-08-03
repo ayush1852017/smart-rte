@@ -4,7 +4,7 @@ import {
   type CoreFeatureConfig,
   type CoreFeatureId,
   type SmartRtePlugin,
-} from "smartrte-core";
+} from "smartrte-core/legacy";
 import type { ReactNode } from "react";
 import type { EditorFormatDefinition } from "./formatRuntime.js";
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { paragraph, setTextAlignment, type SmartDocument, type SmartSelection } from "../index.js";
+import { paragraph, setTextAlignment, type LegacySmartDocument, type LegacySmartSelection } from "../index.js";
 
-const selection: SmartSelection = {
+const selection: LegacySmartSelection = {
   type: "text",
   anchor: { path: [0, 0], offset: 0 },
   focus: { path: [1, 0], offset: 3 },
@@ -9,7 +9,7 @@ const selection: SmartSelection = {
 
 describe("setTextAlignment", () => {
   it("aligns every requested block in one history transaction", () => {
-    const document: SmartDocument = { type: "doc", children: [paragraph("one"), paragraph("two")] };
+    const document: LegacySmartDocument = { type: "doc", children: [paragraph("one"), paragraph("two")] };
     const result = setTextAlignment(document, selection, { paths: [[0], [1]], alignment: "center" });
 
     expect(result.document.children).toEqual([
@@ -22,7 +22,7 @@ describe("setTextAlignment", () => {
   });
 
   it("stores left alignment as the document default", () => {
-    const document: SmartDocument = {
+    const document: LegacySmartDocument = {
       type: "doc",
       children: [{ ...paragraph("one"), alignment: "right" }],
     };

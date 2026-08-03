@@ -1,11 +1,11 @@
 import JSZip from "jszip";
-import { normalizeSmartDocument, type SmartDocument } from "smartrte-core";
+import { normalizeSmartDocument, type LegacySmartDocument } from "smartrte-core/legacy";
 import { restorePortableDocxAtoms } from "./portableDocxAtoms.js";
 import { serializeSmartDocument, smartDocumentFromHtml } from "./domSmartDocument.js";
 import { importDocxDocumentWithMammoth } from "./docxFormat.js";
 
 export interface StyledDocxImportResult {
-  document: SmartDocument;
+  document: LegacySmartDocument;
   layoutHtml: string;
   source: "wordprocessingml" | "mammoth";
 }

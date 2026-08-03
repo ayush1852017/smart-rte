@@ -8,7 +8,7 @@ import {
   importTextDocument,
   roundTripTextDocument,
 } from "./documentFormats.js";
-import { normalizeSmartDocument, type SmartDocument } from "smartrte-core";
+import { normalizeSmartDocument, type LegacySmartDocument } from "smartrte-core/legacy";
 
 describe("document format adapters", () => {
   it("exposes stable format metadata", () => {
@@ -85,7 +85,7 @@ describe("document format adapters", () => {
   });
 
   it("round-trips the canonical HTML table and checklist contract", () => {
-    const source: SmartDocument = {
+    const source: LegacySmartDocument = {
       type: "doc",
       children: [
         {

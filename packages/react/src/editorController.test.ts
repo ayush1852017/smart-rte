@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
-import { basicFormattingPlugin, tablePlugin } from "smartrte-core";
+import { basicFormattingPlugin, tablePlugin } from "smartrte-core/legacy";
 import { createDomEditorController } from "./editorController.js";
 
 const rootWithSelection = () => {

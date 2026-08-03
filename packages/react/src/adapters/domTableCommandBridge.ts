@@ -10,7 +10,7 @@ import {
   type TableColumnInput,
   type TableRowInput,
   type ToggleTableCellBorderInput,
-} from "smartrte-core";
+} from "smartrte-core/legacy";
 import { serializeSmartDocument, smartDocumentFromHtml } from "./domSmartDocument.js";
 
 export type DomTableCommand =

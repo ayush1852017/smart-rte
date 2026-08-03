@@ -2,13 +2,13 @@ import {
   paragraph,
   type Path,
   type SmartBlockNode,
-  type SmartDocument,
+  type LegacySmartDocument,
   type SmartInlineNode,
   type SmartInlineImageNode,
   type SmartListItemNode,
-  type SmartMark,
+  type LegacySmartMark,
   type SmartTableCellNode,
-  type SmartTextNode,
+  type LegacySmartTextNode,
 } from "./model.js";
 import { isSmartListPreset } from "./listPresets.js";
 
@@ -25,17 +25,17 @@ export interface SchemaValidationResult {
 
 export interface SmartSchemaExtension {
   id: string;
-  normalize?: (document: SmartDocument) => SmartDocument;
-  validate?: (document: SmartDocument) => SchemaIssue[];
+  normalize?: (document: LegacySmartDocument) => LegacySmartDocument;
+  validate?: (document: LegacySmartDocument) => SchemaIssue[];
 }
 
-export interface SmartSchema {
+export interface LegacySmartSchema {
   extensions: readonly SmartSchemaExtension[];
 }
 
 export const createSmartSchema = (
   extensions: readonly SmartSchemaExtension[] = [],
-): SmartSchema => {
+): LegacySmartSchema => {
   const ids = new Set<string>();
   extensions.forEach((extension) => {
     if (!extension.id.trim()) throw new Error("Schema extension id cannot be empty.");
@@ -59,11 +59,11 @@ const listStyles = new Set([
   "upper-roman",
 ]);
 
-const markKey = (mark: SmartMark) => JSON.stringify(mark);
+const markKey = (mark: LegacySmartMark) => JSON.stringify(mark);
 const normalizedIndent = (value: number | undefined) =>
   Number.isInteger(value) && (value || 0) > 0 ? Math.min(value || 0, 10) : undefined;
 
-const normalizeMarks = (marks: SmartMark[] | undefined) => {
+const normalizeMarks = (marks: LegacySmartMark[] | undefined) => {
   if (!marks?.length) return undefined;
   const seen = new Set<string>();
   const normalized = marks.filter((mark) => {
@@ -75,7 +75,7 @@ const normalizeMarks = (marks: SmartMark[] | undefined) => {
   return normalized.length ? normalized : undefined;
 };
 
-const normalizeText = (node: SmartTextNode): SmartTextNode => {
+const normalizeText = (node: LegacySmartTextNode): LegacySmartTextNode => {
   const marks = normalizeMarks(node.marks);
   return marks ? { type: "text", text: String(node.text ?? ""), marks } : { type: "text", text: String(node.text ?? "") };
 };
@@ -235,15 +235,15 @@ const normalizeBlock = (block: SmartBlockNode): SmartBlockNode => {
   };
 };
 
-const normalizeBuiltInDocument = (document: SmartDocument): SmartDocument => {
+const normalizeBuiltInDocument = (document: LegacySmartDocument): LegacySmartDocument => {
   const children = (document.children || []).map(normalizeBlock);
   return { type: "doc", children: children.length ? children : [paragraph()] };
 };
 
 export const normalizeSmartDocument = (
-  document: SmartDocument,
-  schema: SmartSchema = defaultSmartSchema,
-): SmartDocument => schema.extensions.reduce(
+  document: LegacySmartDocument,
+  schema: LegacySmartSchema = defaultSmartSchema,
+): LegacySmartDocument => schema.extensions.reduce(
   (current, extension) => normalizeBuiltInDocument(
     extension.normalize ? extension.normalize(current) : current,
   ),
@@ -357,8 +357,8 @@ const validateBlock = (block: SmartBlockNode, path: Path, issues: SchemaIssue[])
 };
 
 export const validateSmartDocument = (
-  document: SmartDocument,
-  schema: SmartSchema = defaultSmartSchema,
+  document: LegacySmartDocument,
+  schema: LegacySmartSchema = defaultSmartSchema,
 ): SchemaValidationResult => {
   const issues: SchemaIssue[] = [];
   if (document.type !== "doc") issue(issues, [], "invalid-root", "The document root must have type doc.");

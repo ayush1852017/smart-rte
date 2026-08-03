@@ -2,8 +2,8 @@ import {
   compatibilityHtmlToMarkdown,
   markdownToCompatibilityHtml,
   normalizeSmartDocument,
-  type SmartDocument,
-} from "smartrte-core";
+  type LegacySmartDocument,
+} from "smartrte-core/legacy";
 import { serializeSmartDocument, smartDocumentFromHtml } from "./domSmartDocument.js";
 
 export type TextDocumentFormat = "html" | "markdown";
@@ -16,8 +16,8 @@ export interface DocumentFormatAdapter {
   id: string;
   mediaType: string;
   extension: string;
-  importDocument: (source: string, context: DocumentImportContext) => SmartDocument;
-  exportDocument: (document: SmartDocument) => string;
+  importDocument: (source: string, context: DocumentImportContext) => LegacySmartDocument;
+  exportDocument: (document: LegacySmartDocument) => string;
 }
 
 const htmlAdapter: DocumentFormatAdapter = {
@@ -85,16 +85,16 @@ export const importTextDocument = (
   format: TextDocumentFormat,
   source: string,
   context: DocumentImportContext,
-): SmartDocument => getDocumentFormatAdapter(format).importDocument(source, context);
+): LegacySmartDocument => getDocumentFormatAdapter(format).importDocument(source, context);
 
 export const exportTextDocument = (
   format: TextDocumentFormat,
-  document: SmartDocument,
+  document: LegacySmartDocument,
 ): string => getDocumentFormatAdapter(format).exportDocument(document);
 
 export const roundTripTextDocument = (
   format: TextDocumentFormat,
-  document: SmartDocument,
+  document: LegacySmartDocument,
   context: DocumentImportContext,
-): SmartDocument =>
+): LegacySmartDocument =>
   importTextDocument(format, exportTextDocument(format, document), context);

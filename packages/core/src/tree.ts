@@ -1,4 +1,4 @@
-import type { Path, SmartDocument } from "./model.js";
+import type { Path, LegacySmartDocument } from "./model.js";
 
 export interface SmartContainer {
   children: unknown[];
@@ -7,7 +7,7 @@ export interface SmartContainer {
 export const isSmartContainer = (value: unknown): value is SmartContainer =>
   Boolean(value) && typeof value === "object" && Array.isArray((value as SmartContainer).children);
 
-export const getNodeAtTreePath = (document: SmartDocument, path: Path): unknown => {
+export const getNodeAtTreePath = (document: LegacySmartDocument, path: Path): unknown => {
   let node: unknown = document;
   for (const index of path) {
     if (!isSmartContainer(node) || !Number.isInteger(index) || index < 0 || index >= node.children.length) {
@@ -18,7 +18,7 @@ export const getNodeAtTreePath = (document: SmartDocument, path: Path): unknown 
   return node;
 };
 
-const parentAndIndex = (document: SmartDocument, path: Path) => {
+const parentAndIndex = (document: LegacySmartDocument, path: Path) => {
   if (path.length === 0) throw new Error("Operation path cannot target the document root.");
   const index = path[path.length - 1];
   if (!Number.isInteger(index) || index < 0) throw new Error("Path index must be a non-negative integer.");
@@ -29,11 +29,11 @@ const parentAndIndex = (document: SmartDocument, path: Path) => {
 };
 
 export const replaceNodeAtPath = <T>(
-  document: SmartDocument,
+  document: LegacySmartDocument,
   path: Path,
   replacement: T
-): SmartDocument => {
-  if (path.length === 0) return replacement as SmartDocument;
+): LegacySmartDocument => {
+  if (path.length === 0) return replacement as LegacySmartDocument;
 
   const replace = (node: unknown, depth: number): unknown => {
     if (!isSmartContainer(node)) throw new Error("Path does not resolve to a document container.");
@@ -46,10 +46,10 @@ export const replaceNodeAtPath = <T>(
     return { ...(node as object), children };
   };
 
-  return replace(document, 0) as SmartDocument;
+  return replace(document, 0) as LegacySmartDocument;
 };
 
-export const insertNodeAtPath = <T>(document: SmartDocument, path: Path, node: T): SmartDocument => {
+export const insertNodeAtPath = <T>(document: LegacySmartDocument, path: Path, node: T): LegacySmartDocument => {
   const { parent, parentPath, index } = parentAndIndex(document, path);
   if (index > parent.children.length) throw new Error("Insert path is out of bounds.");
   return replaceNodeAtPath(document, parentPath, {
@@ -59,9 +59,9 @@ export const insertNodeAtPath = <T>(document: SmartDocument, path: Path, node: T
 };
 
 export const removeNodeAtPath = (
-  document: SmartDocument,
+  document: LegacySmartDocument,
   path: Path
-): { document: SmartDocument; node: unknown } => {
+): { document: LegacySmartDocument; node: unknown } => {
   const { parent, parentPath, index } = parentAndIndex(document, path);
   if (index >= parent.children.length) throw new Error("Remove path is out of bounds.");
   const node = parent.children[index];

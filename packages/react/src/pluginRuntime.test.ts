@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checklistPlugin, formulaPlugin, listPlugin, type SmartRtePlugin } from "smartrte-core";
+import { checklistPlugin, formulaPlugin, listPlugin, type SmartRtePlugin } from "smartrte-core/legacy";
 import { createReactEditorPluginRuntime, matchesPluginShortcut } from "./pluginRuntime.js";
 
 describe("React editor plugin runtime", () => {

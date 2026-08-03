@@ -1,5 +1,5 @@
-import type { SmartDocument, Path, SmartMark, SmartTextNode } from "./model.js";
-import type { SmartSelection } from "./selection.js";
+import type { LegacySmartDocument, Path, LegacySmartMark, LegacySmartTextNode } from "./model.js";
+import type { LegacySmartSelection } from "./selection.js";
 import { mapSelectionThroughOperation } from "./selectionMapping.js";
 import { normalizeSmartDocument } from "./schema.js";
 import { addMark, removeMark, type InlineMarkType } from "./marks.js";
@@ -11,7 +11,7 @@ import {
   replaceNodeAtPath,
 } from "./tree.js";
 
-export type SmartOperation =
+export type LegacySmartOperation =
   | { type: "insertNode"; path: Path; node: unknown }
   | { type: "removeNode"; path: Path }
   | { type: "replaceNode"; path: Path; node: unknown }
@@ -20,36 +20,36 @@ export type SmartOperation =
   | { type: "mergeNode"; path: Path }
   | { type: "setNodeAttrs"; path: Path; attrs: Record<string, unknown> }
   | { type: "replaceText"; path: Path; start: number; end: number; text: string }
-  | { type: "addMark"; path: Path; start: number; end: number; mark: SmartMark }
+  | { type: "addMark"; path: Path; start: number; end: number; mark: LegacySmartMark }
   | { type: "removeMark"; path: Path; start: number; end: number; markType: InlineMarkType }
-  | { type: "setSelection"; selection: SmartSelection };
+  | { type: "setSelection"; selection: LegacySmartSelection };
 
-export interface SmartTransaction {
+export interface LegacySmartTransaction {
   id: string;
   source: "user" | "paste" | "api" | "history" | "normalizer";
-  operations: SmartOperation[];
-  selectionBefore: SmartSelection;
-  selectionAfter?: SmartSelection;
+  operations: LegacySmartOperation[];
+  selectionBefore: LegacySmartSelection;
+  selectionAfter?: LegacySmartSelection;
   addToHistory: boolean;
   historyGroup?: string;
   timestamp: number;
 }
 
 export interface SmartEditorState {
-  document: SmartDocument;
-  selection: SmartSelection;
+  document: LegacySmartDocument;
+  selection: LegacySmartSelection;
 }
 
 const splitTextNode = (
-  node: SmartTextNode,
+  node: LegacySmartTextNode,
   start: number,
   end: number,
-  mutateMarks: (marks: SmartMark[] | undefined) => SmartMark[] | undefined
-): SmartTextNode[] => {
+  mutateMarks: (marks: LegacySmartMark[] | undefined) => LegacySmartMark[] | undefined
+): LegacySmartTextNode[] => {
   if (start < 0 || end < start || end > node.text.length) {
     throw new Error("Mark operation range is out of bounds.");
   }
-  const result: SmartTextNode[] = [];
+  const result: LegacySmartTextNode[] = [];
   if (start > 0) result.push({ ...node, text: node.text.slice(0, start) });
   const selectedText = node.text.slice(start, end);
   if (selectedText) result.push({ type: "text", text: selectedText, marks: mutateMarks(node.marks) });
@@ -58,10 +58,10 @@ const splitTextNode = (
 };
 
 const replaceTextAtPath = (
-  document: SmartDocument,
+  document: LegacySmartDocument,
   path: Path,
-  replacement: SmartTextNode[]
-): SmartDocument => {
+  replacement: LegacySmartTextNode[]
+): LegacySmartDocument => {
   if (path.length === 0) throw new Error("A text node path cannot be empty.");
   const parentPath = path.slice(0, -1);
   const textIndex = path[path.length - 1];
@@ -75,7 +75,7 @@ const replaceTextAtPath = (
     throw new Error("Mark operation parent is not a text container.");
   }
   const children = (parent as { children: unknown[] }).children;
-  const target = children[textIndex] as SmartTextNode | undefined;
+  const target = children[textIndex] as LegacySmartTextNode | undefined;
   if (!target || target.type !== "text") throw new Error("Mark operation path does not resolve to text.");
   const nextParent = {
     ...(parent as object),
@@ -113,10 +113,10 @@ const sameAttributes = (
 ) => JSON.stringify(nodeAttributes(left, contentKey)) === JSON.stringify(nodeAttributes(right, contentKey));
 
 export const applyOperationToState = (
-  document: SmartDocument,
-  selection: SmartSelection,
-  operation: SmartOperation
-): { document: SmartDocument; selection: SmartSelection } => {
+  document: LegacySmartDocument,
+  selection: LegacySmartSelection,
+  operation: LegacySmartOperation
+): { document: LegacySmartDocument; selection: LegacySmartSelection } => {
   if (operation.type === "insertNode") {
     return { document: insertNodeAtPath(document, operation.path, operation.node), selection };
   }
@@ -147,7 +147,7 @@ export const applyOperationToState = (
     let left: unknown;
     let right: unknown;
     if ((node as { type?: unknown }).type === "text") {
-      const textNode = node as SmartTextNode;
+      const textNode = node as LegacySmartTextNode;
       if (position > textNode.text.length) throw new Error("Text split position is out of bounds.");
       left = { ...textNode, text: textNode.text.slice(0, position) };
       right = { ...textNode, text: textNode.text.slice(position) };
@@ -174,8 +174,8 @@ export const applyOperationToState = (
     }
     let merged: unknown;
     if ((left as { type?: unknown }).type === "text" && (right as { type?: unknown }).type === "text") {
-      const leftText = left as SmartTextNode;
-      const rightText = right as SmartTextNode;
+      const leftText = left as LegacySmartTextNode;
+      const rightText = right as LegacySmartTextNode;
       if (!sameAttributes(left as unknown as Record<string, unknown>, right as unknown as Record<string, unknown>, "text")) {
         throw new Error("Text nodes with different marks cannot be merged.");
       }
@@ -205,7 +205,7 @@ export const applyOperationToState = (
     return { document: replaceNodeAtPath(document, operation.path, replacement), selection };
   }
   if (operation.type === "replaceText") {
-    const node = getNodeAtTreePath(document, operation.path) as SmartTextNode;
+    const node = getNodeAtTreePath(document, operation.path) as LegacySmartTextNode;
     if (!node || node.type !== "text") throw new Error("Text operation path does not resolve to text.");
     if (
       !Number.isInteger(operation.start) ||
@@ -225,7 +225,7 @@ export const applyOperationToState = (
     };
   }
   if (operation.type === "addMark") {
-    const node = getNodeAtTreePath(document, operation.path) as SmartTextNode;
+    const node = getNodeAtTreePath(document, operation.path) as LegacySmartTextNode;
     if (!node || node.type !== "text") throw new Error("Mark operation path does not resolve to text.");
     return {
       document: replaceTextAtPath(
@@ -237,7 +237,7 @@ export const applyOperationToState = (
     };
   }
   if (operation.type === "removeMark") {
-    const node = getNodeAtTreePath(document, operation.path) as SmartTextNode;
+    const node = getNodeAtTreePath(document, operation.path) as LegacySmartTextNode;
     if (!node || node.type !== "text") throw new Error("Mark operation path does not resolve to text.");
     return {
       document: replaceTextAtPath(
@@ -251,7 +251,7 @@ export const applyOperationToState = (
   return { document, selection: operation.selection };
 };
 
-export const applyTransaction = (state: SmartEditorState, transaction: SmartTransaction): SmartEditorState => {
+export const applyTransaction = (state: SmartEditorState, transaction: LegacySmartTransaction): SmartEditorState => {
   let document = state.document;
   let selection = state.selection;
 

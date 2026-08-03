@@ -1,6 +1,6 @@
-import { getNodeAtPath, paragraph, type Path, type SmartBlockNode, type SmartCodeBlockNode, type SmartDocument } from "../model.js";
-import type { SmartSelection } from "../selection.js";
-import type { SmartTransaction } from "../transaction.js";
+import { getNodeAtPath, paragraph, type Path, type SmartBlockNode, type SmartCodeBlockNode, type LegacySmartDocument } from "../model.js";
+import type { LegacySmartSelection } from "../selection.js";
+import type { LegacySmartTransaction } from "../transaction.js";
 import { isSmartContainer, replaceNodeAtPath } from "../tree.js";
 import type { SmartCommand } from "../command.js";
 
@@ -10,8 +10,8 @@ export interface ToggleCodeBlocksInput {
 }
 
 export interface CodeCommandResult {
-  document: SmartDocument;
-  transaction: SmartTransaction;
+  document: LegacySmartDocument;
+  transaction: LegacySmartTransaction;
 }
 
 const toCodeBlock = (block: SmartBlockNode): SmartCodeBlockNode => {
@@ -34,8 +34,8 @@ const toParagraph = (block: SmartBlockNode) =>
 
 /** Converts selected sibling blocks only; neighbours are never inferred or changed. */
 export const toggleCodeBlocks = (
-  document: SmartDocument,
-  selection: SmartSelection,
+  document: LegacySmartDocument,
+  selection: LegacySmartSelection,
   input: ToggleCodeBlocksInput
 ): CodeCommandResult => {
   const parent = getNodeAtPath(document, input.parentPath);
@@ -60,7 +60,7 @@ export const toggleCodeBlocks = (
     }),
   };
   const nextDocument = replaceNodeAtPath(document, input.parentPath, nextParent);
-  const selectionAfter: SmartSelection = {
+  const selectionAfter: LegacySmartSelection = {
     type: "node",
     path: [...input.parentPath, indexes[0]],
   };

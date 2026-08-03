@@ -1,12 +1,12 @@
 import type { SmartCommand } from "./command.js";
-import type { SmartDocument } from "./model.js";
+import type { LegacySmartDocument } from "./model.js";
 import type { SmartSchemaExtension } from "./schema.js";
-import type { SmartTransaction } from "./transaction.js";
+import type { LegacySmartTransaction } from "./transaction.js";
 
 // Commands intentionally carry heterogeneous input types inside a plugin map.
 // The runtime restores the concrete input type at execute/canExecute boundaries.
 export type SmartPluginCommand = SmartCommand<any>;
-export type SmartNormalizer = (document: SmartDocument) => SmartDocument;
+export type SmartNormalizer = (document: LegacySmartDocument) => LegacySmartDocument;
 
 export interface SmartRtePlugin {
   id: string;
@@ -14,7 +14,7 @@ export interface SmartRtePlugin {
   commands?: Record<string, SmartPluginCommand>;
   schema?: Omit<SmartSchemaExtension, "id">;
   normalizers?: SmartNormalizer[];
-  onTransaction?: (transaction: SmartTransaction) => void;
+  onTransaction?: (transaction: LegacySmartTransaction) => void;
 }
 
 export const orderPlugins = (plugins: readonly SmartRtePlugin[]): SmartRtePlugin[] => {

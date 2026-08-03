@@ -1,5 +1,5 @@
 import React, { useEffect, useId, useRef, useState } from "react";
-import { normalizeLinkInput } from "smartrte-core";
+import { normalizeLinkInput } from "smartrte-core/legacy";
 
 export interface LinkEditorApplyValue {
   href: string;

@@ -1,6 +1,6 @@
-import type { Path, SmartDocument, SmartTextNode } from "./model.js";
-import type { SmartPoint, SmartSelection } from "./selection.js";
-import type { SmartOperation } from "./transaction.js";
+import type { Path, LegacySmartDocument, LegacySmartTextNode } from "./model.js";
+import type { SmartPoint, LegacySmartSelection } from "./selection.js";
+import type { LegacySmartOperation } from "./transaction.js";
 import { getNodeAtTreePath, isSmartContainer } from "./tree.js";
 
 const samePath = (left: Path, right: Path) =>
@@ -125,8 +125,8 @@ const mapTextSplitPoint = (
 
 const mapPoint = (
   point: SmartPoint,
-  operation: SmartOperation,
-  documentBefore: SmartDocument
+  operation: LegacySmartOperation,
+  documentBefore: LegacySmartDocument
 ): SmartPoint | null => {
   if (operation.type === "insertNode") {
     return { ...point, path: insertionAdjustedPath(point.path, operation.path) };
@@ -159,7 +159,7 @@ const mapPoint = (
     ];
     const left = getNodeAtTreePath(documentBefore, leftPath);
     const leftLength = (left as { type?: unknown })?.type === "text"
-      ? (left as SmartTextNode).text.length
+      ? (left as LegacySmartTextNode).text.length
       : isSmartContainer(left)
         ? left.children.length
         : 0;
@@ -180,22 +180,22 @@ const mapPoint = (
   if (
     (operation.type === "addMark" || operation.type === "removeMark")
   ) {
-    const node = getNodeAtTreePath(documentBefore, operation.path) as SmartTextNode;
+    const node = getNodeAtTreePath(documentBefore, operation.path) as LegacySmartTextNode;
     return mapTextSplitPoint(point, operation.path, operation.start, operation.end, node.text.length);
   }
   return { ...point, path: [...point.path] };
 };
 
-const fallbackForRemovedPath = (path: Path): SmartSelection => ({
+const fallbackForRemovedPath = (path: Path): LegacySmartSelection => ({
   type: "node",
   path: path.length ? path.slice(0, -1) : [],
 });
 
 export const mapSelectionThroughOperation = (
-  selection: SmartSelection,
-  operation: SmartOperation,
-  documentBefore: SmartDocument
-): SmartSelection => {
+  selection: LegacySmartSelection,
+  operation: LegacySmartOperation,
+  documentBefore: LegacySmartDocument
+): LegacySmartSelection => {
   if (operation.type === "setSelection") return operation.selection;
   if (selection.type === "all") return selection;
   if (selection.type === "node") {

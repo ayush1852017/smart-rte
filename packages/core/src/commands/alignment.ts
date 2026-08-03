@@ -1,6 +1,6 @@
-import { getNodeAtPath, type Path, type SmartDocument, type TextAlignment } from "../model.js";
-import type { SmartSelection } from "../selection.js";
-import type { SmartTransaction } from "../transaction.js";
+import { getNodeAtPath, type Path, type LegacySmartDocument, type TextAlignment } from "../model.js";
+import type { LegacySmartSelection } from "../selection.js";
+import type { LegacySmartTransaction } from "../transaction.js";
 import { replaceNodeAtPath } from "../tree.js";
 import type { SmartCommand } from "../command.js";
 
@@ -10,14 +10,14 @@ export interface SetTextAlignmentInput {
 }
 
 export const setTextAlignment = (
-  document: SmartDocument,
-  selection: SmartSelection,
+  document: LegacySmartDocument,
+  selection: LegacySmartSelection,
   input: SetTextAlignmentInput
 ) => {
   const uniquePaths = Array.from(new Map(input.paths.map((path) => [path.join("."), path])).values());
   if (uniquePaths.length === 0) throw new Error("At least one aligned block path is required.");
   let nextDocument = document;
-  const operations: SmartTransaction["operations"] = [];
+  const operations: LegacySmartTransaction["operations"] = [];
 
   uniquePaths.forEach((path) => {
     const node = getNodeAtPath(nextDocument, path) as { type?: string; alignment?: TextAlignment } | undefined;

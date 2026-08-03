@@ -4,12 +4,12 @@ import {
   normalizeSmartDocument,
   paragraph,
   validateSmartDocument,
-  type SmartDocument,
+  type LegacySmartDocument,
 } from "./index.js";
 
-describe("SmartDocument schema", () => {
+describe("LegacySmartDocument schema", () => {
   it("preserves a row fully covered by a rowspan without synthesizing a cell", () => {
-    const document: SmartDocument = {
+    const document: LegacySmartDocument = {
       type: "doc",
       children: [{
         type: "table",
@@ -34,7 +34,7 @@ describe("SmartDocument schema", () => {
   });
 
   it("accepts a valid nested document", () => {
-    const document: SmartDocument = {
+    const document: LegacySmartDocument = {
       type: "doc",
       children: [
         {
@@ -75,7 +75,7 @@ describe("SmartDocument schema", () => {
           children: [{ type: "tableCell", colspan: 0, children: [] }],
         }],
       }],
-    } as unknown as SmartDocument;
+    } as unknown as LegacySmartDocument;
 
     const result = validateSmartDocument(malformed);
     expect(result.valid).toBe(false);
@@ -94,7 +94,7 @@ describe("SmartDocument schema", () => {
         { type: "list", style: "unsupported", children: [] },
         { type: "table", children: [] },
       ],
-    } as unknown as SmartDocument;
+    } as unknown as LegacySmartDocument;
 
     const normalized = normalizeSmartDocument(malformed);
     expect(validateSmartDocument(normalized).valid).toBe(true);
@@ -148,7 +148,7 @@ describe("SmartDocument schema", () => {
           }],
         },
       ],
-    } as unknown as SmartDocument;
+    } as unknown as LegacySmartDocument;
 
     const normalized = normalizeSmartDocument(malformed);
     expect(normalized.children[0]).toMatchObject({
@@ -170,7 +170,7 @@ describe("SmartDocument schema", () => {
         style: "decimal",
         children: [{ type: "listItem", children: [] }],
       }],
-    } as unknown as SmartDocument;
+    } as unknown as LegacySmartDocument;
     const snapshot = structuredClone(input);
     const once = normalizeSmartDocument(input);
     const twice = normalizeSmartDocument(once);
@@ -229,7 +229,7 @@ describe("SmartDocument schema", () => {
         { type: "image", src: "image.png", width: -1, height: 200 },
         { type: "media", src: "movie.mp4", mediaType: "unsupported" },
       ],
-    } as unknown as SmartDocument;
+    } as unknown as LegacySmartDocument;
 
     const normalized = normalizeSmartDocument(malformed);
     expect(normalized.children[0]).toMatchObject({

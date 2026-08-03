@@ -293,4 +293,15 @@ describe("ClassicEditor headings and font size", () => {
     expect(editor.innerHTML).toBe("<p>x<sub>2</sub></p>");
     expect(editor.querySelector("sup")).toBeNull();
   });
+
+  it("exposes partial mark coverage as an indeterminate pressed state", () => {
+    const editor = renderEditor("<p><strong>bold</strong> plain</p>");
+    const bold = editor.querySelector("strong")!.firstChild!;
+    const plain = editor.querySelector("p")!.lastChild!;
+    setRange(bold, 0, plain, plain.textContent!.length);
+
+    const button = host!.querySelector('button[title="Bold"]') as HTMLButtonElement;
+    expect(button.getAttribute("aria-pressed")).toBe("mixed");
+    expect(button.dataset.srteMarkCoverage).toBe("partial");
+  });
 });

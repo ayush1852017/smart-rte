@@ -3,7 +3,7 @@ import {
   createSmartEditor,
   listPlugin,
   paragraph,
-  type SmartDocument,
+  type LegacySmartDocument,
   type SmartEditorState,
   type SmartListNode,
 } from "../index.js";
@@ -14,7 +14,7 @@ const textSelection = (anchor: readonly number[], focus: readonly number[]) => (
   focus: { path: focus, offset: 1 },
 });
 
-const editorFor = (document: SmartDocument, anchor: readonly number[], focus: readonly number[]) =>
+const editorFor = (document: LegacySmartDocument, anchor: readonly number[], focus: readonly number[]) =>
   createSmartEditor({
     state: { document, selection: textSelection(anchor, focus) },
     plugins: [listPlugin],
@@ -32,7 +32,7 @@ describe("list plugin", () => {
   });
 
   it("converts a selected block range and toggles the same list style off", () => {
-    const document: SmartDocument = {
+    const document: LegacySmartDocument = {
       type: "doc",
       children: [paragraph("one"), paragraph("two"), paragraph("three")],
     };
@@ -88,7 +88,7 @@ describe("list plugin", () => {
   });
 
   it("promotes a preceding paragraph with one selected list item without consuming siblings", () => {
-    const document: SmartDocument = {
+    const document: LegacySmartDocument = {
       type: "doc",
       children: [
         paragraph("Toxoplasma (Option C):"),
@@ -180,7 +180,7 @@ describe("list plugin", () => {
   });
 
   it("works inside a table cell without changing the table structure", () => {
-    const document: SmartDocument = {
+    const document: LegacySmartDocument = {
       type: "doc",
       children: [{
         type: "table",
@@ -206,7 +206,7 @@ describe("list plugin", () => {
   });
 
   it("undoes and redoes conversion as one transaction", () => {
-    const document: SmartDocument = { type: "doc", children: [paragraph("one"), paragraph("two")] };
+    const document: LegacySmartDocument = { type: "doc", children: [paragraph("one"), paragraph("two")] };
     const editor = editorFor(document, [0, 0], [1, 0]);
     editor.execute("list.toggle", { style: "disc" });
     expect(editor.undo()).toBe(true);

@@ -2,14 +2,14 @@ import { describe, expect, it } from "vitest";
 import {
   applyTransaction,
   paragraph,
-  type SmartDocument,
+  type LegacySmartDocument,
   type SmartEditorState,
-  type SmartOperation,
-  type SmartSelection,
-  type SmartTransaction,
+  type LegacySmartOperation,
+  type LegacySmartSelection,
+  type LegacySmartTransaction,
 } from "./index.js";
 
-const selection: SmartSelection = {
+const selection: LegacySmartSelection = {
   type: "text",
   anchor: { path: [0, 0], offset: 0 },
   focus: { path: [0, 0], offset: 0 },
@@ -21,9 +21,9 @@ const state = (...texts: string[]): SmartEditorState => ({
 });
 
 const transaction = (
-  operations: SmartOperation[],
-  selectionAfter: SmartSelection = selection
-): SmartTransaction => ({
+  operations: LegacySmartOperation[],
+  selectionAfter: LegacySmartSelection = selection
+): LegacySmartTransaction => ({
   id: "test-transaction",
   source: "user",
   operations,
@@ -33,7 +33,7 @@ const transaction = (
   timestamp: 1,
 });
 
-const paragraphTexts = (document: SmartDocument) =>
+const paragraphTexts = (document: LegacySmartDocument) =>
   document.children.map((block) =>
     block.type === "paragraph" ? block.children.map((node) => node.text).join("") : block.type
   );
@@ -198,8 +198,8 @@ describe("applyTransaction", () => {
   });
 
   it("applies explicit selection operations in order and returns selectionAfter", () => {
-    const intermediate: SmartSelection = { type: "node", path: [0] };
-    const finalSelection: SmartSelection = { type: "all" };
+    const intermediate: LegacySmartSelection = { type: "node", path: [0] };
+    const finalSelection: LegacySmartSelection = { type: "all" };
     const next = applyTransaction(
       state("one"),
       transaction([{ type: "setSelection", selection: intermediate }], finalSelection)

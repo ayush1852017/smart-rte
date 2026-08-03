@@ -261,6 +261,27 @@ test("undoes and redoes a nested list conversion as one history step", async ({ 
   await expect(editor.locator("ol li")).toHaveCount(4);
 });
 
+test("moves a list item up and down through the canonical product route", async ({ page }) => {
+  await setEditorHtml(page, "<ul><li>one</li><li>two<ul><li>child</li></ul></li><li>three</li></ul>");
+  await selectTextRange(page, "two", 0, "two", "two".length);
+  await page.locator('summary[aria-label="Move and indent"]').click();
+  await page.getByTitle("Move selected block up").click();
+
+  const items = page.locator(`${editorSelector} > ul > li`);
+  await expect(items).toHaveCount(3);
+  await expect(items.nth(0)).toContainText("twochild");
+  await expect(items.nth(0).locator(":scope > ul > li")).toHaveText("child");
+
+  await selectTextRange(page, "two", 0, "two", "two".length);
+  await page.locator('summary[aria-label="Move and indent"]').click();
+  await page.getByTitle("Move selected block down").click();
+  await expect(items.nth(0)).toHaveText("one");
+  await expect(items.nth(1)).toContainText("twochild");
+
+  await page.getByRole("button", { name: "Undo" }).click();
+  await expect(items.nth(0)).toContainText("twochild");
+});
+
 test("converts a heading plus a partial nested selection without dropping descendants", async ({ page }) => {
   await setEditorHtml(page, `
     <p>Toxoplasma (Option C):</p>

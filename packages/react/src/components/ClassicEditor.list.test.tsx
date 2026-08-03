@@ -816,11 +816,14 @@ describe("ClassicEditor lists", () => {
     selection.addRange(range);
     document.dispatchEvent(new Event("selectionchange"));
 
-    act(() => editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true })));
+    const tab = new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true });
+    act(() => editor.dispatchEvent(tab));
 
     expect(editor.querySelectorAll("tr > td")).toHaveLength(2);
     expect(cell.style.border).toContain("red");
-    expect(cell.querySelector("ol > li > ol > li")?.textContent).toBe("two");
+    expect(tab.defaultPrevented).toBe(false);
+    expect(Array.from(cell.querySelectorAll(":scope > ol > li"), (item) => item.textContent)).toEqual(["one", "two"]);
+    expect(cell.querySelector("ol > li > ol")).toBeNull();
     expect(editor.querySelector("tr > ol, tbody > ol, table > ol")).toBeNull();
   });
 
@@ -882,6 +885,42 @@ describe("ClassicEditor lists", () => {
     act(() => (host!.querySelector('button[title="Move selected block right"]') as HTMLButtonElement).click());
     expect(Array.from(editor.querySelectorAll(":scope > ul > li:first-child > ul > li"), (item) => item.textContent)).toEqual(["two", "three"]);
     expect(selection.toString()).toBe("twothree");
+  });
+
+  it("moves selected list items up and down through the pure canonical command", () => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    act(() => {
+      root = createRoot(host!);
+      root.render(<ClassicEditorComponent value={"<ul><li><p>one</p></li><li><p>two</p></li><li><p>three</p></li></ul>"} />);
+    });
+    const editor = host.querySelector('[contenteditable="true"]') as HTMLElement;
+    const selectItemText = (itemIndex: number) => {
+      const text = editor.querySelectorAll(":scope > ul > li")[itemIndex].querySelector("p")!.firstChild!;
+      const range = document.createRange();
+      range.selectNodeContents(text);
+      const selection = window.getSelection()!;
+      selection.removeAllRanges();
+      selection.addRange(range);
+      document.dispatchEvent(new Event("selectionchange"));
+    };
+    const order = () => Array.from(editor.querySelectorAll(":scope > ul > li"), (item) => item.textContent);
+    const openMoveMenu = () => {
+      const trigger = host!.querySelector('summary[aria-label="Move and indent"]') as HTMLElement;
+      act(() => trigger.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true })));
+      trigger.focus();
+      window.getSelection()!.removeAllRanges();
+    };
+
+    selectItemText(1);
+    openMoveMenu();
+    act(() => (host!.querySelector('button[title="Move selected block up"]') as HTMLButtonElement).click());
+    expect(order()).toEqual(["two", "one", "three"]);
+
+    selectItemText(0);
+    openMoveMenu();
+    act(() => (host!.querySelector('button[title="Move selected block down"]') as HTMLButtonElement).click());
+    expect(order()).toEqual(["one", "two", "three"]);
   });
 
   it("applies code formatting to the selected nested item rather than its ancestor", () => {

@@ -1,4 +1,4 @@
-import { checklistPlugin, createSmartEditor, listPlugin } from "smartrte-core";
+import { checklistPlugin, createSmartEditor, listPlugin } from "smartrte-core/legacy";
 import { smartDocumentFromHtml } from "./domSmartDocument.js";
 
 /**

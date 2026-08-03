@@ -1,7 +1,7 @@
 export type Path = readonly number[];
 export type TextAlignment = "left" | "center" | "right" | "justify";
 
-export type SmartMark =
+export type LegacySmartMark =
   | { type: "bold" }
   | { type: "italic" }
   | { type: "underline" }
@@ -16,10 +16,10 @@ export type SmartMark =
   | { type: "formula"; value: string }
   | { type: "link"; href: string; target?: string };
 
-export interface SmartTextNode {
+export interface LegacySmartTextNode {
   type: "text";
   text: string;
-  marks?: SmartMark[];
+  marks?: LegacySmartMark[];
 }
 
 /** An indivisible inline node. Text commands must treat these as length-one atoms. */
@@ -38,7 +38,7 @@ export interface SmartInlineImageNode {
   height?: number;
 }
 
-export type SmartInlineNode = SmartTextNode | SmartFormulaNode | SmartInlineImageNode;
+export type SmartInlineNode = LegacySmartTextNode | SmartFormulaNode | SmartInlineImageNode;
 
 export interface SmartParagraphNode {
   type: "paragraph";
@@ -150,7 +150,7 @@ export type SmartBlockNode =
   | SmartMediaNode
   | SmartTableNode;
 
-export interface SmartDocument {
+export interface LegacySmartDocument {
   type: "doc";
   children: SmartBlockNode[];
 }
@@ -160,7 +160,7 @@ export const paragraph = (text = ""): SmartParagraphNode => ({
   children: [{ type: "text", text }],
 });
 
-export const getNodeAtPath = (document: SmartDocument, path: Path): unknown => {
+export const getNodeAtPath = (document: LegacySmartDocument, path: Path): unknown => {
   let node: unknown = document;
   for (const index of path) {
     if (!node || typeof node !== "object" || !Array.isArray((node as { children?: unknown[] }).children)) {

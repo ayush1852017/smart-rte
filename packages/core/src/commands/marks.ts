@@ -1,15 +1,15 @@
-import type { CommandContext, SmartCommand } from "../command.js";
+import type { LegacyCommandContext, SmartCommand } from "../command.js";
 import { addMark, hasMark, removeMark, type InlineMarkType } from "../marks.js";
 import {
   getNodeAtPath,
   type Path,
   type SmartInlineNode,
-  type SmartMark,
-  type SmartTextNode,
+  type LegacySmartMark,
+  type LegacySmartTextNode,
 } from "../model.js";
 import { sanitizeLinkAttrs } from "../security/urlPolicy.js";
 import type { SmartTextSelection } from "../selection.js";
-import type { SmartTransaction } from "../transaction.js";
+import type { LegacySmartTransaction } from "../transaction.js";
 
 const samePath = (left: Path, right: Path) => left.length === right.length && left.every((part, index) => part === right[index]);
 
@@ -23,7 +23,7 @@ type TextRange = {
   nodes: SmartInlineNode[];
 };
 
-const getTextRange = (context: CommandContext): TextRange | null => {
+const getTextRange = (context: LegacyCommandContext): TextRange | null => {
   if (context.selection.type !== "text") return null;
   const { anchor, focus } = context.selection;
   const parentPath = anchor.path.slice(0, -1);
@@ -47,7 +47,7 @@ const getTextRange = (context: CommandContext): TextRange | null => {
   return { selection: context.selection, parentPath, startIndex, endIndex, startOffset, endOffset, nodes };
 };
 
-const replaceRange = (range: TextRange, mutate: (marks: SmartMark[] | undefined) => SmartMark[] | undefined): { children: SmartInlineNode[]; start: number; end: number } => {
+const replaceRange = (range: TextRange, mutate: (marks: LegacySmartMark[] | undefined) => LegacySmartMark[] | undefined): { children: SmartInlineNode[]; start: number; end: number } => {
   const children: SmartInlineNode[] = [];
   let selectionStart = 0;
   let selectionEnd = 0;
@@ -72,20 +72,20 @@ const replaceRange = (range: TextRange, mutate: (marks: SmartMark[] | undefined)
   return { children, start: selectionStart, end: selectionEnd };
 };
 
-const hasLink = (marks: readonly SmartMark[] | undefined) =>
+const hasLink = (marks: readonly LegacySmartMark[] | undefined) =>
   marks?.some((mark) => mark.type === "link") || false;
 
 const selectedTextNodes = (range: TextRange) =>
   range.nodes
     .slice(range.startIndex, range.endIndex + 1)
-    .filter((node): node is SmartTextNode => node.type === "text");
+    .filter((node): node is LegacySmartTextNode => node.type === "text");
 
 const createMarkTransaction = <Input>(
   id: string,
-  context: CommandContext,
+  context: LegacyCommandContext,
   input: Input,
-  mutate: (marks: SmartMark[] | undefined, range: TextRange) => SmartMark[] | undefined,
-): SmartTransaction => {
+  mutate: (marks: LegacySmartMark[] | undefined, range: TextRange) => LegacySmartMark[] | undefined,
+): LegacySmartTransaction => {
   const range = getTextRange(context);
   if (!range) throw new Error(`${id} requires text in one inline container.`);
   const result = replaceRange(range, (marks) => mutate(marks, range));
@@ -107,10 +107,10 @@ const createMarkTransaction = <Input>(
     selectionAfter,
     addToHistory: true,
     timestamp: context.now?.() ?? Date.now(),
-  } as SmartTransaction;
+  } as LegacySmartTransaction;
 };
 
-const createMarkCommand = <Input>(id: string, nextMark: (input: Input) => SmartMark, toggle: boolean): SmartCommand<Input> => ({
+const createMarkCommand = <Input>(id: string, nextMark: (input: Input) => LegacySmartMark, toggle: boolean): SmartCommand<Input> => ({
   id,
   isEnabled: (context) => Boolean(getTextRange(context)),
   execute: (context, input) => {
@@ -124,7 +124,7 @@ const createMarkCommand = <Input>(id: string, nextMark: (input: Input) => SmartM
   },
 });
 
-const toggle = (id: string, type: InlineMarkType) => createMarkCommand<void>(id, () => ({ type } as SmartMark), true);
+const toggle = (id: string, type: InlineMarkType) => createMarkCommand<void>(id, () => ({ type } as LegacySmartMark), true);
 const toggleScript = (id: string, type: "superscript" | "subscript"):
   SmartCommand<void> => ({
   id,

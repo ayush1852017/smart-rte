@@ -1,6 +1,6 @@
 import JSZip from "jszip";
 import mammoth from "mammoth";
-import { normalizeSmartDocument, type SmartBlockNode, type SmartDocument, type SmartInlineNode, type SmartMark } from "smartrte-core";
+import { normalizeSmartDocument, type SmartBlockNode, type LegacySmartDocument, type SmartInlineNode, type LegacySmartMark } from "smartrte-core/legacy";
 import { portableFormulaMarker, portableImageMarker, restorePortableDocxAtoms } from "./portableDocxAtoms.js";
 import { smartDocumentFromHtml } from "./domSmartDocument.js";
 
@@ -20,7 +20,7 @@ const colorValue = (value: string) => {
     : "";
 };
 
-const runProperties = (marks: readonly SmartMark[] = []) => marks.map((mark) => {
+const runProperties = (marks: readonly LegacySmartMark[] = []) => marks.map((mark) => {
   if (mark.type === "bold") return "<w:b/>";
   if (mark.type === "italic") return "<w:i/>";
   if (mark.type === "underline") return '<w:u w:val="single"/>';
@@ -271,7 +271,7 @@ const numberingXml = () => {
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">${abstracts}${instances}</w:numbering>`;
 };
 
-const serializeDocxDocument = (document: SmartDocument) => {
+const serializeDocxDocument = (document: LegacySmartDocument) => {
   const normalized = normalizeSmartDocument(document);
   const context = createSerializationContext();
   const body = normalized.children.map((block) => blockXml(block, context)).join("");
@@ -282,10 +282,10 @@ const serializeDocxDocument = (document: SmartDocument) => {
   };
 };
 
-export const smartDocumentToDocxXml = (document: SmartDocument) =>
+export const smartDocumentToDocxXml = (document: LegacySmartDocument) =>
   serializeDocxDocument(document).documentXml;
 
-export const exportDocxDocument = async (document: SmartDocument): Promise<Blob> => {
+export const exportDocxDocument = async (document: LegacySmartDocument): Promise<Blob> => {
   const zip = new JSZip();
   const serialized = serializeDocxDocument(document);
   const imageTypes = [...new Set(serialized.media.map(({ filename, mimeType }) => ({
@@ -313,7 +313,7 @@ export const exportDocxDocument = async (document: SmartDocument): Promise<Blob>
 export const importDocxDocumentWithMammoth = async (
   arrayBuffer: ArrayBuffer,
   ownerDocument: Document,
-): Promise<SmartDocument> => {
+): Promise<LegacySmartDocument> => {
   // Mammoth's browser entry reads `arrayBuffer`, while its Node entry reads
   // `buffer`. Supplying both keeps the adapter portable across bundlers/tests.
   const result = await mammoth.convertToHtml({ arrayBuffer, buffer: arrayBuffer } as Parameters<typeof mammoth.convertToHtml>[0]);

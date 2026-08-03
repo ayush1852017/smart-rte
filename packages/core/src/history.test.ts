@@ -6,12 +6,12 @@ import {
   redoHistory,
   undoHistory,
   type SmartEditorState,
-  type SmartOperation,
-  type SmartSelection,
-  type SmartTransaction,
+  type LegacySmartOperation,
+  type LegacySmartSelection,
+  type LegacySmartTransaction,
 } from "./index.js";
 
-const caret = (path: readonly number[], offset: number): SmartSelection => ({
+const caret = (path: readonly number[], offset: number): LegacySmartSelection => ({
   type: "text",
   anchor: { path, offset },
   focus: { path, offset },
@@ -36,10 +36,10 @@ const state = (): SmartEditorState => ({
 
 const transaction = (
   id: string,
-  operations: SmartOperation[],
-  selectionAfter?: SmartSelection,
+  operations: LegacySmartOperation[],
+  selectionAfter?: LegacySmartSelection,
   historyGroup?: string
-): SmartTransaction => ({
+): LegacySmartTransaction => ({
   id,
   source: "user",
   operations,
@@ -51,7 +51,7 @@ const transaction = (
 });
 
 describe("core history", () => {
-  it.each<[string, SmartOperation[]]>([
+  it.each<[string, LegacySmartOperation[]]>([
     ["insert", [{ type: "insertNode", path: [1], node: paragraph("inserted") }]],
     ["remove", [{ type: "removeNode", path: [1] }]],
     ["replace", [{ type: "replaceNode", path: [1], node: paragraph("replacement") }]],
@@ -105,7 +105,7 @@ describe("core history", () => {
         "typing"
       )
     );
-    const secondTransaction: SmartTransaction = {
+    const secondTransaction: LegacySmartTransaction = {
       ...transaction(
         "typing-2",
         [{ type: "replaceText", path: [0, 0], start: 4, end: 4, text: "!" }],

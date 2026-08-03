@@ -1,7 +1,7 @@
-import { getNodeAtPath, type Path, type SmartBlockNode, type SmartDocument } from "./model.js";
-import type { SmartSelection } from "./selection.js";
+import { getNodeAtPath, type Path, type SmartBlockNode, type LegacySmartDocument } from "./model.js";
+import type { LegacySmartSelection } from "./selection.js";
 
-export type ListSelectionScope =
+export type LegacyListSelectionScope =
   | { kind: "all"; containerPath: Path }
   | { kind: "blocks"; containerPath: Path; start: number; end: number }
   | { kind: "list"; listPath: Path; start: number; end: number }
@@ -17,7 +17,7 @@ const isBlock = (node: unknown): node is SmartBlockNode =>
     (node as { type?: string }).type || "",
   );
 
-const structuralUnit = (document: SmartDocument, path: Path) => {
+const structuralUnit = (document: LegacySmartDocument, path: Path) => {
   let firstBlockPath: Path | null = null;
   let deepestList: { path: Path; listItemIndex?: number } | null = null;
   for (let depth = 1; depth <= path.length; depth += 1) {
@@ -40,9 +40,9 @@ const structuralUnit = (document: SmartDocument, path: Path) => {
 
 /** Resolves the semantic list scope without inspecting DOM details. */
 export const resolveListSelectionScope = (
-  document: SmartDocument,
-  selection: SmartSelection,
-): ListSelectionScope => {
+  document: LegacySmartDocument,
+  selection: LegacySmartSelection,
+): LegacyListSelectionScope => {
   if (selection.type === "all") return { kind: "all", containerPath: [] };
   if (selection.type !== "text" && selection.type !== "node") return { kind: "none" };
   const paths = selection.type === "text"

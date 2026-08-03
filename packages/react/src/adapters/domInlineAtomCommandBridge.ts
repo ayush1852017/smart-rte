@@ -5,7 +5,7 @@ import {
   mediaPlugin,
   type Path,
   type SmartFormulaNode,
-} from "smartrte-core";
+} from "smartrte-core/legacy";
 import { isEditorOnlyElement, pathForDomElement, selectionFromDom } from "./domSelectionBridge.js";
 import { smartDocumentFromEditorRoot } from "./domSmartDocument.js";
 

@@ -5,7 +5,7 @@ import {
   type SmartCommand,
   type SmartEditorState,
   type SmartRtePlugin,
-  type SmartTransaction,
+  type LegacySmartTransaction,
 } from "./index.js";
 
 const state = (): SmartEditorState => ({
@@ -123,7 +123,7 @@ describe("SmartEditor runtime", () => {
       state: { ...state(), document: { type: "doc", children: [paragraph("a")] } },
       plugins: [plugin],
     });
-    const tx: SmartTransaction = {
+    const tx: LegacySmartTransaction = {
       id: "trigger",
       source: "api",
       operations: [],

@@ -11,11 +11,11 @@ import {
   toggleSuperscript,
   toggleUnderline,
   updateLink,
-  type SmartDocument,
+  type LegacySmartDocument,
   type SmartEditorState,
 } from "../index.js";
 
-const stateFor = (document: SmartDocument, path: readonly number[], start: number, end: number): SmartEditorState => ({
+const stateFor = (document: LegacySmartDocument, path: readonly number[], start: number, end: number): SmartEditorState => ({
   document,
   selection: {
     type: "text",
@@ -26,7 +26,7 @@ const stateFor = (document: SmartDocument, path: readonly number[], start: numbe
 
 describe("inline mark commands", () => {
   it("applies and replaces a font-size mark", () => {
-    const document: SmartDocument = { type: "doc", children: [paragraph("hello")] };
+    const document: LegacySmartDocument = { type: "doc", children: [paragraph("hello")] };
     const state = stateFor(document, [0, 0], 0, 5);
     const sized = applyTransaction(state, applyFontSize.execute(state, 24));
     const resized = applyTransaction(sized, applyFontSize.execute(sized, 18));
@@ -36,7 +36,7 @@ describe("inline mark commands", () => {
     ]);
   });
   it("marks only the selected text and preserves adjacent text", () => {
-    const document: SmartDocument = { type: "doc", children: [paragraph("hello"), paragraph("unchanged")] };
+    const document: LegacySmartDocument = { type: "doc", children: [paragraph("hello"), paragraph("unchanged")] };
     const state = stateFor(document, [0, 0], 1, 4);
 
     const transaction = toggleBold.execute({ ...state, now: () => 10 });
@@ -58,7 +58,7 @@ describe("inline mark commands", () => {
   });
 
   it("preserves existing links and colors while adding a mark", () => {
-    const document: SmartDocument = {
+    const document: LegacySmartDocument = {
       type: "doc",
       children: [{
         type: "paragraph",
@@ -84,7 +84,7 @@ describe("inline mark commands", () => {
   });
 
   it("marks a selection spanning adjacent marked text nodes without changing unselected text", () => {
-    const document: SmartDocument = {
+    const document: LegacySmartDocument = {
       type: "doc",
       children: [{
         type: "paragraph",
@@ -111,7 +111,7 @@ describe("inline mark commands", () => {
   });
 
   it("works inside table cells and blockquotes without affecting neighbours", () => {
-    const document: SmartDocument = {
+    const document: LegacySmartDocument = {
       type: "doc",
       children: [
         {
@@ -136,7 +136,7 @@ describe("inline mark commands", () => {
   });
 
   it("toggles superscript and subscript without changing unselected text", () => {
-    const document: SmartDocument = { type: "doc", children: [paragraph("x2 y3")] };
+    const document: LegacySmartDocument = { type: "doc", children: [paragraph("x2 y3")] };
     const superscriptState = stateFor(document, [0, 0], 1, 2);
     const superscripted = applyTransaction(superscriptState, toggleSuperscript.execute(superscriptState));
     const subscriptState = stateFor(superscripted.document, [0, 2], 2, 3);
@@ -151,7 +151,7 @@ describe("inline mark commands", () => {
   });
 
   it("replaces the opposite script mark instead of nesting script types", () => {
-    const document: SmartDocument = {
+    const document: LegacySmartDocument = {
       type: "doc",
       children: [{
         type: "paragraph",
@@ -167,14 +167,14 @@ describe("inline mark commands", () => {
   });
 
   it("rejects non-text selections", () => {
-    const document: SmartDocument = { type: "doc", children: [paragraph("text")] };
+    const document: LegacySmartDocument = { type: "doc", children: [paragraph("text")] };
     expect(toggleBold.isEnabled({ document, selection: { type: "node", path: [0] } })).toBe(false);
   });
 });
 
 describe("link mark commands", () => {
   it("applies a sanitized link to selected text only", () => {
-    const document: SmartDocument = { type: "doc", children: [paragraph("before selected after")] };
+    const document: LegacySmartDocument = { type: "doc", children: [paragraph("before selected after")] };
     const state = stateFor(document, [0, 0], 7, 15);
 
     const next = applyTransaction(state, applyLink.execute(state, { href: " example.test/path " }));
@@ -187,7 +187,7 @@ describe("link mark commands", () => {
   });
 
   it("updates an existing link while preserving other marks", () => {
-    const document: SmartDocument = {
+    const document: LegacySmartDocument = {
       type: "doc",
       children: [{
         type: "paragraph",
@@ -205,7 +205,7 @@ describe("link mark commands", () => {
   });
 
   it("removes a link without removing other marks", () => {
-    const document: SmartDocument = {
+    const document: LegacySmartDocument = {
       type: "doc",
       children: [{
         type: "paragraph",
@@ -227,7 +227,7 @@ describe("link mark commands", () => {
   it.each(["javascript:alert(1)", " vbscript:msgbox(1)", "file:///etc/passwd", "data:text/html,<script>alert(1)</script>", "relative/path"])(
     "rejects unsafe href %s",
     (href) => {
-      const document: SmartDocument = { type: "doc", children: [paragraph("link")] };
+      const document: LegacySmartDocument = { type: "doc", children: [paragraph("link")] };
       const state = stateFor(document, [0, 0], 0, 4);
 
       expect(applyLink.isEnabled(state, { href })).toBe(false);
@@ -238,7 +238,7 @@ describe("link mark commands", () => {
   it.each(["http://example.test", "https://example.test", "example.test", "user@example.test", "mailto:user@example.test", "+1 555 123 4567", "tel:+15551234567"])(
     "accepts safe href %s",
     (href) => {
-      const document: SmartDocument = { type: "doc", children: [paragraph("link")] };
+      const document: LegacySmartDocument = { type: "doc", children: [paragraph("link")] };
       const state = stateFor(document, [0, 0], 0, 4);
 
       expect(applyLink.isEnabled(state, { href })).toBe(true);
@@ -246,7 +246,7 @@ describe("link mark commands", () => {
   );
 
   it("applies links inside table cells and blockquotes without changing neighbours", () => {
-    const document: SmartDocument = {
+    const document: LegacySmartDocument = {
       type: "doc",
       children: [
         {
@@ -273,7 +273,7 @@ describe("link mark commands", () => {
   });
 
   it("formats text across inline atoms without changing the atoms", () => {
-    const document: SmartDocument = {
+    const document: LegacySmartDocument = {
       type: "doc",
       children: [{
         type: "paragraph",

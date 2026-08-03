@@ -27,7 +27,7 @@ export interface SmartAllSelection {
   type: "all";
 }
 
-export type SmartSelection =
+export type LegacySmartSelection =
   | SmartTextSelection
   | SmartNodeSelection
   | SmartCellSelection

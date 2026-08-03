@@ -1,4 +1,4 @@
-import type { CommandContext, SmartCommand } from "../command.js";
+import type { LegacyCommandContext, SmartCommand } from "../command.js";
 import { getNodeAtPath, type Path, type SmartListItemNode } from "../model.js";
 import { toggleList } from "./list.js";
 

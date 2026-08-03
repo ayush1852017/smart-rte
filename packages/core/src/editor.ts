@@ -6,15 +6,15 @@ import {
   undoHistory,
   type SmartHistoryState,
 } from "./history.js";
-import type { SmartDocument } from "./model.js";
+import type { LegacySmartDocument } from "./model.js";
 import {
   createSmartSchema,
   normalizeSmartDocument,
   validateSmartDocument,
-  type SmartSchema,
+  type LegacySmartSchema,
 } from "./schema.js";
 import { orderPlugins, type SmartRtePlugin } from "./plugin.js";
-import { applyTransaction, type SmartEditorState, type SmartTransaction } from "./transaction.js";
+import { applyTransaction, type SmartEditorState, type LegacySmartTransaction } from "./transaction.js";
 
 export interface CreateSmartEditorOptions {
   state: SmartEditorState;
@@ -25,17 +25,17 @@ export interface CreateSmartEditorOptions {
 
 export type SmartEditorListener = (
   state: SmartEditorState,
-  transaction: SmartTransaction
+  transaction: LegacySmartTransaction
 ) => void;
 
-const sameDocument = (left: SmartDocument, right: SmartDocument) =>
+const sameDocument = (left: LegacySmartDocument, right: LegacySmartDocument) =>
   JSON.stringify(left) === JSON.stringify(right);
 
 export class SmartEditor {
   private currentState: SmartEditorState;
   private currentHistory: SmartHistoryState;
   private readonly plugins: SmartRtePlugin[];
-  private readonly schema: SmartSchema;
+  private readonly schema: LegacySmartSchema;
   private readonly commands = new Map<string, SmartCommand<any>>();
   private readonly listeners = new Set<SmartEditorListener>();
   private readOnly: boolean;
@@ -87,7 +87,7 @@ export class SmartEditor {
     return this.dispatch(command.execute(this.currentState, input));
   }
 
-  dispatch(transaction: SmartTransaction): boolean {
+  dispatch(transaction: LegacySmartTransaction): boolean {
     if (this.readOnly && transaction.source === "user") return false;
     const prepared = this.withPluginNormalization(transaction);
     const result = applyTransactionWithHistory(this.currentState, this.currentHistory, prepared);
@@ -125,7 +125,7 @@ export class SmartEditor {
     return () => this.listeners.delete(listener);
   }
 
-  private withPluginNormalization(transaction: SmartTransaction): SmartTransaction {
+  private withPluginNormalization(transaction: LegacySmartTransaction): LegacySmartTransaction {
     const base = applyTransaction(this.currentState, transaction);
     let document = base.document;
     for (let pass = 0; pass < 10; pass += 1) {

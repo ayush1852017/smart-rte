@@ -1,4 +1,4 @@
-import type { SmartDocument } from "smartrte-core";
+import type { LegacySmartDocument } from "smartrte-core/legacy";
 import { createBuiltInFormatDefinitions } from "./builtInFormatDefinitions.js";
 
 export type BuiltInDocumentFormat = "html" | "markdown" | "docx" | "pdf";
@@ -10,7 +10,7 @@ export interface EditorFormatImportContext {
 }
 
 export interface EditorFormatImportResult {
-  document: SmartDocument;
+  document: LegacySmartDocument;
   layoutHtml?: string;
   preserveColors?: boolean;
   preserveDocumentLayout?: boolean;
@@ -36,7 +36,7 @@ export interface EditorFormatDefinition {
   confirmImportWhenNotEmpty?: boolean;
   importFile?: (file: File, context: EditorFormatImportContext) => Promise<EditorFormatImportResult>;
   exportDocument?: (
-    document: SmartDocument,
+    document: LegacySmartDocument,
     context: EditorFormatExportContext,
   ) => EditorFormatExportResult | Promise<EditorFormatExportResult>;
 }

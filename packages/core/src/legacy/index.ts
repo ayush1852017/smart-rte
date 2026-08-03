@@ -1,0 +1,45 @@
+/**
+ * Compatibility API for features that have not migrated to the foundation
+ * contracts. Contract names are deliberately prefixed with `Legacy`; the
+ * canonical unprefixed names belong to the package root/foundation kernel.
+ */
+export * from "../model.js";
+export * from "../command.js";
+export * from "../editor.js";
+export * from "../marks.js";
+export * from "../plugin.js";
+export * from "../preset.js";
+export * from "../history.js";
+export * from "../selection.js";
+export * from "../listScope.js";
+export * from "../listPresets.js";
+export * from "../selectionMapping.js";
+export * from "../schema.js";
+export * from "../table.js";
+export * from "../transaction.js";
+export * from "../tree.js";
+export * from "../commands/list.js";
+export * from "../commands/code.js";
+export * from "../commands/marks.js";
+export * from "../commands/alignment.js";
+export * from "../commands/checklist.js";
+export * from "../commands/media.js";
+export * from "../commands/formula.js";
+export * from "../commands/inlineAtoms.js";
+export * from "../commands/blocks.js";
+export * from "../commands/table.js";
+export * from "../commands/move.js";
+export * from "../plugins/basicFormatting.js";
+export * from "../plugins/list.js";
+export * from "../plugins/checklist.js";
+export * from "../plugins/media.js";
+export * from "../plugins/formula.js";
+export * from "../plugins/alignment.js";
+export * from "../plugins/codeBlock.js";
+export * from "../plugins/blockType.js";
+export * from "../plugins/blockquote.js";
+export * from "../plugins/table.js";
+export * from "../plugins/move.js";
+export * from "../html/compatibility.js";
+export * from "../markdown/compatibility.js";
+export * from "../security/urlPolicy.js";

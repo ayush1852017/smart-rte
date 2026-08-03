@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
-import { applyLink, applyTransaction, getNodeAtPath, removeLink, toggleBold } from "smartrte-core";
+import { applyLink, applyTransaction, getNodeAtPath, removeLink, toggleBold } from "smartrte-core/legacy";
 import { selectionFromDom } from "./domSelectionBridge.js";
 import {
   cleanEditorHtml,
@@ -31,7 +31,7 @@ const setRange = (range: Range) => {
   return selection;
 };
 
-describe("live SmartDocument adapter", () => {
+describe("live LegacySmartDocument adapter", () => {
   it("round-trips merged table cells without losing spans or covered rows", () => {
     const document = smartDocumentFromHtml(
       '<table><tbody><tr><td colspan="2" rowspan="2"><p>Merged</p></td></tr><tr></tr></tbody></table>',

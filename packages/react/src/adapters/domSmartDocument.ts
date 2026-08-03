@@ -2,13 +2,13 @@ import {
   normalizeCompatibilityHtml,
   sanitizeLinkAttrs,
   type SmartBlockNode,
-  type SmartDocument,
+  type LegacySmartDocument,
   type SmartInlineNode,
-  type SmartMark,
-  type SmartTextNode,
+  type LegacySmartMark,
+  type LegacySmartTextNode,
   type TextAlignment,
-} from "smartrte-core";
-import { isSmartListPreset } from "smartrte-core";
+} from "smartrte-core/legacy";
+import { isSmartListPreset } from "smartrte-core/legacy";
 import { isEditorOnlyElement } from "./domSelectionBridge.js";
 
 const blockTags = new Set(["p", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "blockquote", "pre", "table", "img", "video", "audio"]);
@@ -32,10 +32,10 @@ export const cleanEditorHtml = (root: HTMLElement): string => {
   return normalizeCompatibilityHtml(clone.innerHTML);
 };
 
-const addMark = (marks: SmartMark[], mark: SmartMark) =>
+const addMark = (marks: LegacySmartMark[], mark: LegacySmartMark) =>
   marks.some((candidate) => candidate.type === mark.type) ? marks : [...marks, mark];
 
-const marksFor = (element: Element, inherited: SmartMark[]): SmartMark[] => {
+const marksFor = (element: Element, inherited: LegacySmartMark[]): LegacySmartMark[] => {
   const tag = element.tagName.toLowerCase();
   let marks = inherited;
   if (tag === "strong" || tag === "b") marks = addMark(marks, { type: "bold" });
@@ -73,7 +73,7 @@ const marksFor = (element: Element, inherited: SmartMark[]): SmartMark[] => {
   return marks;
 };
 
-const inlineNodes = (nodes: NodeListOf<ChildNode> | ChildNode[], inherited: SmartMark[] = []): SmartInlineNode[] => {
+const inlineNodes = (nodes: NodeListOf<ChildNode> | ChildNode[], inherited: LegacySmartMark[] = []): SmartInlineNode[] => {
   const result: SmartInlineNode[] = [];
   Array.from(nodes).forEach((node) => {
     if (node.nodeType === Node.TEXT_NODE) {
@@ -256,20 +256,20 @@ const parseBlock = (element: Element): SmartBlockNode[] => {
   return [];
 };
 
-export const smartDocumentFromHtml = (html: string, ownerDocument: Document): SmartDocument => {
+export const smartDocumentFromHtml = (html: string, ownerDocument: Document): LegacySmartDocument => {
   const container = ownerDocument.createElement("div");
   container.innerHTML = normalizeCompatibilityHtml(html);
   return { type: "doc", children: parseBlocks(container) };
 };
 
-export const smartDocumentFromEditorRoot = (root: HTMLElement): { document: SmartDocument; html: string } => {
+export const smartDocumentFromEditorRoot = (root: HTMLElement): { document: LegacySmartDocument; html: string } => {
   const html = cleanEditorHtml(root);
   return { document: smartDocumentFromHtml(html, root.ownerDocument), html };
 };
 
 const escapeHtml = (value: string) => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\"/g, "&quot;");
 
-const serializeText = (node: SmartTextNode) => {
+const serializeText = (node: LegacySmartTextNode) => {
   let html = escapeHtml(node.text).replace(/\n/g, "<br>");
   (node.marks || []).forEach((mark) => {
     if (mark.type === "bold") html = `<strong>${html}</strong>`;
@@ -344,4 +344,4 @@ const serializeBlock = (block: SmartBlockNode): string => {
 };
 
 /** Serializes the shadow-only model. It is not used for persisted editor HTML. */
-export const serializeSmartDocument = (document: SmartDocument) => document.children.map(serializeBlock).join("");
+export const serializeSmartDocument = (document: LegacySmartDocument) => document.children.map(serializeBlock).join("");

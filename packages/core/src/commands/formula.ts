@@ -1,5 +1,5 @@
 import type { SmartCommand } from "../command.js";
-import { getNodeAtPath, type SmartInlineNode, type SmartTextNode } from "../model.js";
+import { getNodeAtPath, type SmartInlineNode, type LegacySmartTextNode } from "../model.js";
 import { isSmartContainer } from "../tree.js";
 import { createDeleteInlineAtomCommand } from "./inlineAtoms.js";
 
@@ -19,7 +19,7 @@ const resolveFormulaTarget = (
     anchor.path.length !== focus.path.length ||
     !anchor.path.every((part, index) => focus.path[index] === part)
   ) return null;
-  const node = getNodeAtPath(context.document, anchor.path) as SmartTextNode | undefined;
+  const node = getNodeAtPath(context.document, anchor.path) as LegacySmartTextNode | undefined;
   const parentPath = anchor.path.slice(0, -1);
   const parent = getNodeAtPath(context.document, parentPath);
   if (node?.type !== "text" || !isSmartContainer(parent) ||

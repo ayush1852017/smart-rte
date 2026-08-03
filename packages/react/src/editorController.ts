@@ -1,12 +1,12 @@
 import type {
-  SmartDocument,
+  LegacySmartDocument,
   SmartEditorState,
   SmartRtePlugin,
-  SmartSelection,
-  SmartTransaction,
-} from "smartrte-core";
-import { applyTransaction, invertTransaction } from "smartrte-core";
-import { createSmartEditor } from "smartrte-core";
+  LegacySmartSelection,
+  LegacySmartTransaction,
+} from "smartrte-core/legacy";
+import { applyTransaction, invertLegacyTransaction } from "smartrte-core/legacy";
+import { createSmartEditor } from "smartrte-core/legacy";
 import { executeDomCommand, type DomCommandResult } from "./adapters/domCommandBridge.js";
 import {
   executeDomBlockCommand,
@@ -36,8 +36,8 @@ import {
 } from "./adapters/domSmartDocument.js";
 
 export interface DomEditorControllerSnapshot {
-  document: SmartDocument;
-  selection: SmartSelection | null;
+  document: LegacySmartDocument;
+  selection: LegacySmartSelection | null;
   html: string;
 }
 
@@ -50,16 +50,16 @@ export type DomEditorControllerListener = (change: DomEditorControllerChange) =>
 
 interface DomHistorySnapshot {
   html: string;
-  selection: SmartSelection | null;
+  selection: LegacySmartSelection | null;
   version: number;
   canonical?: {
-    forward: SmartTransaction;
-    inverse: SmartTransaction;
+    forward: LegacySmartTransaction;
+    inverse: LegacySmartTransaction;
   };
 }
 
 /**
- * Owns the canonical boundary between a contenteditable root and SmartDocument.
+ * Owns the canonical boundary between a contenteditable root and LegacySmartDocument.
  *
  * React remains responsible for rendering UI and legacy DOM-only commands while
  * model commands, document snapshots, serialization, and replacement flow
@@ -110,7 +110,7 @@ export class DomEditorController {
     return snapshot;
   }
 
-  getDocument(): SmartDocument {
+  getDocument(): LegacySmartDocument {
     return this.snapshot()?.document || { type: "doc", children: [] };
   }
 
@@ -310,7 +310,7 @@ export class DomEditorController {
     return true;
   }
 
-  replaceDocument(document: SmartDocument, selection?: SmartSelection) {
+  replaceDocument(document: LegacySmartDocument, selection?: LegacySmartSelection) {
     if (!this.root || this.readOnly) return false;
     this.root.innerHTML = serializeSmartDocument(document);
     if (selection) restoreSelectionToDom(this.root, selection);
@@ -344,7 +344,7 @@ export class DomEditorController {
     if (JSON.stringify(beforeDocument) === JSON.stringify(after.document)) return;
     const beforeSelection = entry.selection || { type: "all" as const };
     const afterSelection = after.selection || { type: "all" as const };
-    const forward: SmartTransaction = {
+    const forward: LegacySmartTransaction = {
       id: commandId,
       source: "user",
       operations: [{ type: "replaceNode", path: [], node: after.document }],
@@ -355,7 +355,7 @@ export class DomEditorController {
     };
     entry.canonical = {
       forward,
-      inverse: invertTransaction(
+      inverse: invertLegacyTransaction(
         { document: beforeDocument, selection: beforeSelection },
         forward,
       ),
