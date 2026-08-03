@@ -182,7 +182,13 @@ const styleValue = (node: HtmlNode, property: string) => attr(node, "style")?.sp
 const parsedBlockAttrs = (node: HtmlNode): Record<string, unknown> => {
   const attrs: Record<string, unknown> = {};
   const align = attr(node, "data-smart-align") || styleValue(node, "text-align");
-  const indent = Number(attr(node, "data-smart-indent"));
+  const explicitIndent = Number(attr(node, "data-smart-indent"));
+  const legacyIndent = styleValue(node, "margin-left");
+  const logicalIndent = styleValue(node, "margin-inline-start");
+  const cssIndent = legacyIndent || logicalIndent;
+  const computedIndent = cssIndent?.endsWith("px") ? Number.parseFloat(cssIndent) / 24
+    : cssIndent?.endsWith("em") ? Number.parseFloat(cssIndent) / 2 : 0;
+  const indent = Number.isFinite(explicitIndent) && explicitIndent > 0 ? explicitIndent : computedIndent;
   if (align && ["left", "center", "right", "justify"].includes(align)) attrs.align = align;
   if (Number.isInteger(indent) && indent > 0) attrs.indentLevel = indent;
   return attrs;

@@ -49,4 +49,58 @@ describe("DOM block command bridge", () => {
     const children = Array.from(document.querySelector("div")!.children) as HTMLElement[];
     expect(executeDomBlockCommand([children[0], children[2]], { id: "code-block.toggle" })).toBeNull();
   });
+
+  it("preserves block identity and marks across paragraph/heading toggles", () => {
+    document.body.innerHTML = '<div><p data-smart-id="stable"><strong>Marked</strong></p></div>';
+    const root = document.querySelector("div")!;
+    const result = executeDomBlockCommand([root.firstElementChild as HTMLElement], {
+      id: "block-type.set", input: { type: "heading", level: 4 },
+    });
+    expect(result?.[0]).toMatchObject({ tagName: "H4" });
+    expect(result?.[0].dataset.smartId).toBe("stable");
+    expect(result?.[0].querySelector("strong")?.textContent).toBe("Marked");
+  });
+
+  it("wraps a complete list shell in one quote rather than individual items", () => {
+    document.body.innerHTML = '<div><ul><li><p>One</p></li><li><p>Two</p></li></ul><p>After</p></div>';
+    const root = document.querySelector("div")!;
+    executeDomBlockCommand([root.firstElementChild as HTMLElement], { id: "blockquote.toggle" });
+    expect(root.querySelectorAll(":scope > blockquote")).toHaveLength(1);
+    expect(root.querySelectorAll(":scope > blockquote > ul > li")).toHaveLength(2);
+  });
+
+  it("shares canonical movement and attribute indentation across block tools", () => {
+    document.body.innerHTML = '<div><p data-smart-id="a">A</p><p data-smart-id="b">B</p></div>';
+    const root = document.querySelector("div")!;
+    let block = root.firstElementChild as HTMLElement;
+    expect(executeDomBlockCommand([block], { id: "block.move", input: { direction: "down" } })).not.toBeNull();
+    expect(Array.from(root.children).map((node) => node.textContent)).toEqual(["B", "A"]);
+    block = root.lastElementChild as HTMLElement;
+    expect(executeDomBlockCommand([block], { id: "block.indent" })?.[0]).toBe(block);
+    expect(block.dataset.smartIndent).toBe("1");
+    expect(block.style.marginInlineStart).toBe("2em");
+  });
+
+  it("strips marks when entering a code block and emits pre/code semantics", () => {
+    document.body.innerHTML = '<div><p><strong>const x = 1;</strong></p></div>';
+    const root = document.querySelector("div")!;
+    const result = executeDomBlockCommand([root.firstElementChild as HTMLElement], { id: "code-block.toggle" });
+    expect(result?.[0].tagName).toBe("PRE");
+    expect(result?.[0].querySelector("code")?.textContent).toBe("const x = 1;");
+    expect(result?.[0].querySelector("strong")).toBeNull();
+  });
+
+  it.each(["blockquote.toggle", "code-block.toggle"] as const)("preserves reverse native selection through %s", (id) => {
+    document.body.innerHTML = '<div><p>First text</p><p>Second text</p></div>';
+    const root = document.querySelector("div")!;
+    const first = root.firstElementChild!.firstChild!;
+    const second = root.lastElementChild!.firstChild!;
+    document.getSelection()?.setBaseAndExtent(second, 4, first, 2);
+    executeDomBlockCommand(Array.from(root.children) as HTMLElement[], { id });
+    const selection = document.getSelection()!;
+    expect(selection.anchorNode?.textContent).toBe("Second text");
+    expect(selection.anchorOffset).toBe(4);
+    expect(selection.focusNode?.textContent).toBe("First text");
+    expect(selection.focusOffset).toBe(2);
+  });
 });

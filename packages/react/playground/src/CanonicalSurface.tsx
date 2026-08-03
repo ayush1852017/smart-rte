@@ -12,6 +12,7 @@ import {
 } from "smartrte-core/foundation";
 import { runDualEngineListShadowCorpus } from "../../src/adapters/legacyListShadowComparator.js";
 import { runInlineShadowCorpus } from "../../src/test-harness/inlineShadowComparator.js";
+import { runBlockShadowCorpus } from "../../src/test-harness/blockShadowComparator.js";
 
 declare global {
   interface Window {
@@ -23,6 +24,7 @@ declare global {
       blockCount: number;
       runShadowCorpus: (scenarios?: number) => ReturnType<typeof runDualEngineListShadowCorpus>;
       runInlineShadowCorpus: (scenarios?: number) => ReturnType<typeof runInlineShadowCorpus>;
+      runBlockShadowCorpus: (scenarios?: number) => ReturnType<typeof runBlockShadowCorpus>;
     };
   }
 }
@@ -147,6 +149,7 @@ export default function CanonicalSurface() {
       editor, renderer, pipeline, lastInputPaintMs: null, blockCount: count,
       runShadowCorpus: (scenarios = 1_000) => runDualEngineListShadowCorpus(scenarios),
       runInlineShadowCorpus: (scenarios = 1_000) => runInlineShadowCorpus(scenarios),
+      runBlockShadowCorpus: (scenarios = 1_000) => runBlockShadowCorpus(scenarios),
     };
     const measurePaint = () => {
       const started = performance.now();

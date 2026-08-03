@@ -545,7 +545,8 @@ describe("ClassicEditor lists", () => {
     expect(Array.from(editor.querySelectorAll("ol > li"), (item) => item.textContent)).toEqual([
       "one", "two", "three", "four",
     ]);
-    expect((editor.querySelector("ol > li:nth-child(2)") as HTMLElement).style.textAlign).toBe("center");
+    // Alignment belongs to the content block, not redundantly to list_item.
+    expect((editor.querySelector("ol > li:nth-child(2)") as HTMLElement).style.textAlign).toBe("");
     expect((editor.querySelector("ol > li:nth-child(2) > h2") as HTMLElement).style.textAlign).toBe("center");
   });
 

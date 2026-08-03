@@ -69,7 +69,7 @@ describe("ClassicEditor headings and font size", () => {
     expect(editor.querySelector("ol > li:nth-child(2) > h3")?.textContent).toBe("two");
   });
 
-  it("removes an explicit font size when text becomes a heading", () => {
+  it("preserves an explicit font size when text becomes a heading", () => {
     const editor = renderEditor('<p><span style="font-size:36px"><strong>Large text</strong></span></p>');
     const text = editor.querySelector("strong")!.firstChild!;
     setRange(text, 2);
@@ -80,7 +80,7 @@ describe("ClassicEditor headings and font size", () => {
     });
 
     expect(editor.querySelector("h3")?.textContent).toBe("Large text");
-    expect(editor.querySelector("h3 [style*='font-size']")).toBeNull();
+    expect((editor.querySelector("h3 [style*='font-size']") as HTMLElement).style.fontSize).toBe("36px");
     expect(editor.querySelector("h3 strong")?.textContent).toBe("Large text");
   });
 

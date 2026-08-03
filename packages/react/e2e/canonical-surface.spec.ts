@@ -240,6 +240,26 @@ test.describe("Phase 4 canonical inline formatting", () => {
   });
 });
 
+test.describe("Phase 5 retained legacy block comparison", () => {
+  test("replays 1,000 privacy-safe block scenarios in this browser", async ({ page }, testInfo) => {
+    await page.goto("/?canonical=1&blocks=8");
+    await expect(page.locator(surface)).toBeVisible();
+    const summary = await page.evaluate(() => window.__smartCanonical!.runBlockShadowCorpus(1_000));
+    testInfo.annotations.push({ type: "block-shadow-corpus", description: JSON.stringify({
+      browser: testInfo.project.name, scenarios: summary.scenarios, equivalent: summary.equivalent,
+      divergences: summary.divergences, byIntent: summary.divergencesByIntent,
+    }) });
+    console.log(`[phase5][${testInfo.project.name}] block-shadow=${JSON.stringify({
+      scenarios: summary.scenarios, equivalent: summary.equivalent,
+      divergences: summary.divergences, byIntent: summary.divergencesByIntent,
+    })}`);
+    expect(summary.divergences.semantic).toBeUndefined();
+    expect(summary.divergences["data-loss"]).toBeUndefined();
+    expect(JSON.stringify(summary.logs)).not.toContain("plain");
+    expect(JSON.stringify(summary.logs)).not.toContain("marked");
+  });
+});
+
 test("continuous typing at 10,000 blocks reports input-to-paint latency", async ({ page }, testInfo) => {
   await page.goto("/?canonical=1&blocks=10000");
   const editor = page.locator(surface);
