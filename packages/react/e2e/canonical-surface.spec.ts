@@ -96,6 +96,55 @@ test.describe("Phase 2.5 canonical editing surface", () => {
     expect(await page.evaluate(() => window.__smartCanonical!.editor.selection.head.offset)).toBe(2);
   });
 
+  test("uses node selection and the inline/block deletion asymmetry", async ({ page }) => {
+    await page.goto("/?canonical=1&atoms=1");
+    const result = await page.evaluate(() => {
+      const harness = window.__smartCanonical!;
+      const root = document.querySelector('[data-smart-canonical-surface="true"]')!;
+      const dispatch = (inputType: string, data: string | null = null) => root.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType, data }));
+      (harness.renderer.mapping.nodeToDom("inline-atom") as HTMLElement).click();
+      const clickedType = harness.editor.selection.type;
+      dispatch("insertText", "Z");
+      const inlineReplaced = harness.renderer.mapping.nodeToDom("atom-owner")?.textContent;
+      harness.editor.setSelection({ type: "text", anchor: { path: [2], offset: 0 }, head: { path: [2], offset: 0 } });
+      harness.renderer.render(harness.editor.document, harness.editor.selection);
+      dispatch("deleteContentBackward");
+      const firstBackspace = { type: harness.editor.selection.type, exists: harness.editor.positions.exists("block-atom") };
+      dispatch("deleteContentBackward");
+      return { clickedType, inlineReplaced, firstBackspace, afterSecond: harness.editor.positions.exists("block-atom") };
+    });
+    expect(result).toEqual({ clickedType: "node", inlineReplaced: "aZb", firstBackspace: { type: "node", exists: true }, afterSecond: false });
+  });
+
+  test("reconciles composition before, after, and between atoms with zero composing writes", async ({ page }) => {
+    await page.goto("/?canonical=1&atoms=1");
+    const result = await page.evaluate(() => {
+      const harness = window.__smartCanonical!;
+      const owner = harness.renderer.mapping.nodeToDom("atom-owner")!;
+      const compose = (offset: number, mutate: () => Text) => {
+        const selection = { type: "text" as const, anchor: { path: [0], offset }, head: { path: [0], offset } };
+        harness.editor.setSelection(selection); harness.renderer.render(harness.editor.document, selection);
+        harness.pipeline.handleCompositionStart(new CompositionEvent("compositionstart"));
+        const text = mutate(); getSelection()?.setBaseAndExtent(text, text.data.length, text, text.data.length);
+        harness.renderer.resetWriteCounters(); harness.pipeline.handleCompositionEnd(new CompositionEvent("compositionend"));
+        return harness.renderer.composingDomWriteCount;
+      };
+      const beforeWrites = compose(1, () => { const text = owner.firstChild as Text; text.data = "aन"; return text; });
+      const afterWrites = compose(3, () => { const text = owner.lastChild as Text; text.data = "मb"; return text; });
+      const current = harness.editor.document.children[0] as { id: string; type: string; children: unknown[] };
+      const second = { type: "formula", id: "inline-atom-2", attrs: { source: "y", notation: "latex" } };
+      const next = { ...current, children: [...current.children.slice(0, 2), second, ...current.children.slice(2)] };
+      harness.editor.transact((builder) => builder.operations.push({ type: "replaceNode", pos: { path: [], offset: 0 }, before: current as never, after: next as never }), { addToHistory: false });
+      harness.renderer.render(harness.editor.document, harness.editor.selection);
+      const betweenWrites = compose(3, () => {
+        const secondAtom = harness.renderer.mapping.nodeToDom("inline-atom-2")!;
+        const text = document.createTextNode("界"); secondAtom.parentNode!.insertBefore(text, secondAtom); return text;
+      });
+      return { text: harness.renderer.mapping.nodeToDom("atom-owner")?.textContent, beforeWrites, afterWrites, betweenWrites, atoms: ["inline-atom", "inline-atom-2"].map((id) => harness.editor.positions.exists(id)) };
+    });
+    expect(result).toEqual({ text: "aनx界yमb", beforeWrites: 0, afterWrites: 0, betweenWrites: 0, atoms: [true, true] });
+  });
+
   test("reconciles composition without renderer writes to the composing paragraph", async ({ page }) => {
     const result = await page.evaluate(() => {
       const harness = window.__smartCanonical!;
@@ -257,6 +306,30 @@ test.describe("Phase 5 retained legacy block comparison", () => {
     expect(summary.divergences["data-loss"]).toBeUndefined();
     expect(JSON.stringify(summary.logs)).not.toContain("plain");
     expect(JSON.stringify(summary.logs)).not.toContain("marked");
+  });
+});
+
+test.describe("Phase 7 atomic content engine", () => {
+  test("renders required image alternatives and accessible read-only formulas without axe violations", async ({ page }) => {
+    await page.goto("/?canonical=1&atoms=1");
+    await expect(page.locator('[data-smart-id="block-atom"]')).toHaveAttribute("alt", "Example image");
+    await expect(page.locator('[data-smart-id="inline-atom"]')).toHaveAttribute("role", "math");
+    await expect(page.locator('[data-smart-id="inline-atom"]')).toHaveAttribute("contenteditable", "false");
+    const result = await new AxeBuilder({ page }).include(surface).analyze();
+    expect(result.violations).toEqual([]);
+  });
+
+  test("replays 700 privacy-safe retained atom scenarios in this browser", async ({ page }, testInfo) => {
+    await page.goto("/?canonical=1&atoms=1");
+    await expect(page.locator(surface)).toBeVisible();
+    const summary = await page.evaluate(() => window.__smartCanonical!.runAtomShadowCorpus(700));
+    testInfo.annotations.push({ type: "atom-shadow-corpus", description: JSON.stringify({ browser: testInfo.project.name, scenarios: summary.scenarios, equivalent: summary.equivalent, divergences: summary.divergences, corrections: summary.corrections }) });
+    console.log(`[phase7][${testInfo.project.name}] atom-shadow=${JSON.stringify({ scenarios: summary.scenarios, equivalent: summary.equivalent, divergences: summary.divergences, corrections: summary.corrections })}`);
+    expect(summary.divergences.semantic).toBeUndefined();
+    expect(summary.divergences["data-loss"]).toBeUndefined();
+    expect(summary.divergences.unknown).toBeUndefined();
+    expect(JSON.stringify(summary.logs)).not.toContain("fixture");
+    expect(JSON.stringify(summary.logs)).not.toContain("alert");
   });
 });
 

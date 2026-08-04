@@ -117,7 +117,7 @@ export const builtInFormatFidelity: readonly FeatureFidelityContract[] = [
     formats: {
       html: capability("full", "Formula source is stored canonically."),
       markdown: capability("semantic", "Dollar-delimited formula source round-trips."),
-      docx: capability("semantic", "Formulas emit native OMML linear math and retain a hidden portable source marker for canonical round-trip."),
+      docx: capability("lossy", "Canonical formulas use a rendered-image fallback; the transitional legacy exporter may retain a portable source marker."),
       pdf: capability("lossy", "Rendered output is visual; source cannot be reconstructed reliably."),
     },
   },

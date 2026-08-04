@@ -255,7 +255,7 @@ export class DomEditorController {
 
   updateInlineImage(
     image: HTMLImageElement,
-    input: Omit<DomInlineImageInput, "src">,
+    input: Partial<DomInlineImageInput>,
   ): boolean {
     if (!this.root || this.readOnly || !this.root.contains(image)) return false;
     if (!executeDomInlineImageUpdate(this.root, image, input)) return false;

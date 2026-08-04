@@ -13,6 +13,7 @@ import {
 import { runDualEngineListShadowCorpus } from "../../src/adapters/legacyListShadowComparator.js";
 import { runInlineShadowCorpus } from "../../src/test-harness/inlineShadowComparator.js";
 import { runBlockShadowCorpus } from "../../src/test-harness/blockShadowComparator.js";
+import { runAtomShadowCorpus } from "../../src/test-harness/atomShadowComparator.js";
 
 declare global {
   interface Window {
@@ -25,6 +26,7 @@ declare global {
       runShadowCorpus: (scenarios?: number) => ReturnType<typeof runDualEngineListShadowCorpus>;
       runInlineShadowCorpus: (scenarios?: number) => ReturnType<typeof runInlineShadowCorpus>;
       runBlockShadowCorpus: (scenarios?: number) => ReturnType<typeof runBlockShadowCorpus>;
+      runAtomShadowCorpus: (scenarios?: number) => ReturnType<typeof runAtomShadowCorpus>;
     };
   }
 }
@@ -81,10 +83,10 @@ const isolationDocument = (): SmartDocument => ({ type: "doc", id: "canonical-do
 const atomDocument = (): SmartDocument => ({ type: "doc", id: "canonical-doc", children: [{
   type: "paragraph", id: "atom-owner", children: [
     { type: "text", text: "a" },
-    { type: "unknown", id: "inline-atom", attrs: { originalType: "formula", originalGroup: "inline", raw: { type: "formula" }, editable: false } },
+    { type: "formula", id: "inline-atom", attrs: { source: "x", notation: "latex" } },
     { type: "text", text: "b" },
   ],
-}] });
+}, { type: "block_image", id: "block-atom", attrs: { src: "https://example.test/image.png", alt: "Example image", status: "ready", width: 160, height: 90 } }, paragraphNode("after-atom", "after")] });
 
 const listDocument = (): SmartDocument => ({ type: "doc", id: "canonical-doc", children: [{
   type: "list", id: "canonical-list", attrs: { preset: "bullet-disc", style: "disc" }, children: [
@@ -172,6 +174,7 @@ export default function CanonicalSurface() {
       runShadowCorpus: (scenarios = 1_000) => runDualEngineListShadowCorpus(scenarios),
       runInlineShadowCorpus: (scenarios = 1_000) => runInlineShadowCorpus(scenarios),
       runBlockShadowCorpus: (scenarios = 1_000) => runBlockShadowCorpus(scenarios),
+      runAtomShadowCorpus: (scenarios = 700) => runAtomShadowCorpus(scenarios),
     };
     const measurePaint = () => {
       const started = performance.now();

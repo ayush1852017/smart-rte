@@ -37,5 +37,6 @@ describe("built-in format fidelity contract", () => {
     expect(getFormatFidelity("formulas", "html").level).toBe("full");
     expect(getFormatFidelity("tables", "pdf").level).toBe("lossy");
     expect(getFormatFidelity("formulas", "pdf").level).toBe("lossy");
+    expect(getFormatFidelity("formulas", "docx").level).toBe("lossy");
   });
 });

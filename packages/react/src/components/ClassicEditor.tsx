@@ -1766,11 +1766,14 @@ export function ClassicEditor({
   }, [table]);
 
 
-  const insertImageAtSelection = (srcOrItem: string | MediaItem) => {
+  const insertImageAtSelection = (srcOrItem: string | Pick<MediaItem, "url"> & Partial<MediaItem> & { status?: "pending" | "ready" | "error"; uploadId?: string; error?: string }) => {
     try {
       const host = editableRef.current;
       if (!host) return;
       const src = typeof srcOrItem === "string" ? srcOrItem : srcOrItem.url;
+      const suppliedAlt = typeof srcOrItem === "string" ? undefined : (srcOrItem.alt || srcOrItem.title);
+      const alt = suppliedAlt ?? window.prompt("Describe this image. Leave blank only when it is decorative.", "");
+      if (alt === null) return;
       host.focus();
       let sel = window.getSelection();
       let range = sel && sel.rangeCount > 0 ? sel.getRangeAt(0) : null;
@@ -1782,7 +1785,10 @@ export function ClassicEditor({
       }
       const coreImage = editorControllerRef.current!.bindRoot(host).insertInlineImage({
         src,
-        alt: typeof srcOrItem === "string" ? "image" : (srcOrItem.alt || srcOrItem.title || "image"),
+        alt,
+        ...("status" in Object(srcOrItem) && (srcOrItem as { status?: string }).status ? { status: (srcOrItem as { status: "pending" | "ready" | "error" }).status } : {}),
+        ...("uploadId" in Object(srcOrItem) && (srcOrItem as { uploadId?: string }).uploadId ? { uploadId: (srcOrItem as { uploadId: string }).uploadId } : {}),
+        ...("error" in Object(srcOrItem) && (srcOrItem as { error?: string }).error ? { error: (srcOrItem as { error: string }).error } : {}),
         ...(typeof srcOrItem !== "string" && srcOrItem.title ? { title: srcOrItem.title } : {}),
       });
       if (coreImage) {
@@ -1800,36 +1806,11 @@ export function ClassicEditor({
         setSelectedImage(coreImage);
         scheduleImageOverlay();
         handleInput();
-        return;
+        return coreImage;
       }
-      const img = document.createElement("img");
-      img.src = src;
-      img.draggable = true;
-      img.style.maxWidth = "100%";
-      img.style.height = "auto";
-      img.style.display = "inline-block";
-      img.alt = typeof srcOrItem === "string" ? "image" : (srcOrItem.alt || srcOrItem.title || "image");
-      if (typeof srcOrItem !== "string") {
-        if (srcOrItem.title) img.title = srcOrItem.title;
-        if (srcOrItem.license?.author) img.dataset.licenseAuthor = srcOrItem.license.author;
-        if (srcOrItem.license?.licenseType) img.dataset.licenseType = srcOrItem.license.licenseType;
-        if (srcOrItem.license?.licenseText) img.dataset.licenseText = srcOrItem.license.licenseText;
-        if (srcOrItem.license?.sourceUrl) img.dataset.licenseUrl = srcOrItem.license.sourceUrl;
-        if (srcOrItem.license?.workName) img.dataset.workName = srcOrItem.license.workName;
-      }
-      if (range) {
-        range.insertNode(img);
-      } else {
-        host.appendChild(img);
-      }
-      const r = document.createRange();
-      r.setStartAfter(img);
-      r.collapse(true);
-      safeSelectRange(r);
-      setSelectedImage(img);
-      scheduleImageOverlay();
-      handleInput();
+      console.warn("[Smart RTE atom] canonical image insertion rejected the input.");
     } catch {}
+    return null;
   };
 
   const safeSelectRange = (range: Range | null) => {
@@ -1867,7 +1848,7 @@ export function ClassicEditor({
         try {
           const katex = (window as any).katex;
           if (katex && typeof katex.render === "function") {
-            katex.render(tex, span, { throwOnError: false });
+            katex.render(tex, span, { throwOnError: false, trust: false, strict: "error" });
           }
         } catch {}
         const next = document.createRange();
@@ -1878,26 +1859,7 @@ export function ClassicEditor({
         handleInput();
         return;
       }
-      const fallbackSpan = document.createElement("span");
-      fallbackSpan.setAttribute("data-formula", tex);
-      try {
-        // @ts-ignore
-        const katex = (window as any).katex;
-        if (katex && typeof katex.render === "function") {
-          katex.render(tex, fallbackSpan, { throwOnError: false });
-        } else {
-          fallbackSpan.textContent = `$${tex}$`;
-        }
-      } catch {
-        fallbackSpan.textContent = `$${tex}$`;
-      }
-      if (range) range.insertNode(fallbackSpan);
-      else host.appendChild(fallbackSpan);
-      const r = document.createRange();
-      r.setStartAfter(fallbackSpan);
-      r.collapse(true);
-      safeSelectRange(r);
-      handleInput();
+      console.warn("[Smart RTE atom] canonical formula insertion rejected the input.");
     } catch {}
   };
 
@@ -1948,12 +1910,29 @@ export function ClassicEditor({
     if (!media) return;
     const list = Array.from(files).filter((f) => f.type.startsWith("image/"));
     if (mediaManager) {
+      const pending = list.map((file) => {
+        const uploadId = `upload-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        const preview = URL.createObjectURL(file);
+        return { file, uploadId, preview, image: insertImageAtSelection({ url: preview, alt: file.name, status: "pending", uploadId }) };
+      });
       try {
         const uploaded = await mediaManager.upload(list);
-        uploaded.forEach((item) => insertImageAtSelection(item));
+        uploaded.forEach((item, index) => {
+          const entry = pending[index];
+          if (!entry?.image || !editableRef.current?.contains(entry.image)) return;
+          editorControllerRef.current!.bindRoot(editableRef.current).updateInlineImage(entry.image, {
+            src: item.url, alt: item.alt || item.title || entry.file.name, status: "ready", uploadId: undefined, error: undefined,
+          });
+          URL.revokeObjectURL(entry.preview);
+        });
+        handleInput();
         return;
       } catch (error) {
-        console.error("Image upload failed, inserting local image data instead:", error);
+        pending.forEach((entry) => {
+          if (entry.image && editableRef.current?.contains(entry.image)) editorControllerRef.current!.bindRoot(editableRef.current).updateInlineImage(entry.image, { status: "error", uploadId: undefined, error: error instanceof Error ? error.message : "Upload failed" });
+        });
+        handleInput();
+        return;
       }
     }
     for (const f of list) {
@@ -3928,13 +3907,13 @@ export function ClassicEditor({
         {selectedImage && (
           <ToolbarMenu label="Image alignment" icon="image">
             <MenuItem icon="align-center" label="Center image" onClick={() => {
-              selectedImage.style.display = "block"; selectedImage.style.margin = "0 auto"; selectedImage.style.float = "none"; scheduleImageOverlay(); handleInput();
+              if (editableRef.current) editorControllerRef.current!.bindRoot(editableRef.current).updateInlineImage(selectedImage, { align: "center" }); scheduleImageOverlay(); handleInput();
             }} />
             <MenuItem icon="align-left" label="Float left" onClick={() => {
-              selectedImage.style.display = "inline"; selectedImage.style.float = "left"; selectedImage.style.margin = "0 8px 8px 0"; scheduleImageOverlay(); handleInput();
+              if (editableRef.current) editorControllerRef.current!.bindRoot(editableRef.current).updateInlineImage(selectedImage, { align: "left" }); scheduleImageOverlay(); handleInput();
             }} />
             <MenuItem icon="align-right" label="Float right" onClick={() => {
-              selectedImage.style.display = "inline"; selectedImage.style.float = "right"; selectedImage.style.margin = "0 0 8px 8px"; scheduleImageOverlay(); handleInput();
+              if (editableRef.current) editorControllerRef.current!.bindRoot(editableRef.current).updateInlineImage(selectedImage, { align: "right" }); scheduleImageOverlay(); handleInput();
             }} />
           </ToolbarMenu>
         )}
@@ -5208,6 +5187,17 @@ export function ClassicEditor({
             />
             <div
               title="Resize"
+              data-smart-ui="atom-resize-handle"
+              role="button"
+              tabIndex={0}
+              aria-label="Resize image narrower or wider"
+              onKeyDown={(event) => {
+                if (!selectedImage || !editableRef.current || !["ArrowLeft", "ArrowRight"].includes(event.key)) return;
+                event.preventDefault();
+                const width = Math.max(80, Math.round(selectedImage.getBoundingClientRect().width + (event.key === "ArrowRight" ? 10 : -10)));
+                editorControllerRef.current!.bindRoot(editableRef.current).updateInlineImage(selectedImage, { width });
+                scheduleImageOverlay(); handleInput();
+              }}
               onMouseDown={(e) => {
                 e.preventDefault();
                 if (!selectedImage) return;
@@ -5254,6 +5244,17 @@ export function ClassicEditor({
             />
             <div
               title="Resize"
+              data-smart-ui="atom-resize-handle"
+              role="button"
+              tabIndex={0}
+              aria-label="Resize image narrower or wider"
+              onKeyDown={(event) => {
+                if (!selectedImage || !editableRef.current || !["ArrowLeft", "ArrowRight"].includes(event.key)) return;
+                event.preventDefault();
+                const width = Math.max(80, Math.round(selectedImage.getBoundingClientRect().width + (event.key === "ArrowRight" ? 10 : -10)));
+                editorControllerRef.current!.bindRoot(editableRef.current).updateInlineImage(selectedImage, { width });
+                scheduleImageOverlay(); handleInput();
+              }}
               onMouseDown={(e) => {
                 e.preventDefault();
                 if (!selectedImage) return;
