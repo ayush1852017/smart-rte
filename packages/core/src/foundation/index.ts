@@ -27,3 +27,4 @@ export * from "./structural/index.js";
 export * from "./block/index.js";
 export * from "./table/index.js";
 export * from "./atom/index.js";
+export * from "./clipboard/index.js";
