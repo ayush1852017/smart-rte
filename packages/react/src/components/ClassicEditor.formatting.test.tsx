@@ -157,7 +157,9 @@ describe("ClassicEditor headings and font size", () => {
     const items = editor.querySelectorAll("li");
     setRange(items[1].firstChild!, 1);
     act(() => (host!.querySelector('button[aria-label="Align right"]') as HTMLButtonElement).click());
-    expect(Array.from(items, (item) => item.style.textAlign)).toEqual(["", "right", ""]);
+    const currentItems = editor.querySelectorAll("li");
+    expect(Array.from(currentItems, (item) => item.style.textAlign)).toEqual(["", "", ""]);
+    expect(Array.from(currentItems, (item) => (item.firstElementChild as HTMLElement).style.textAlign)).toEqual(["", "right", ""]);
   });
 
   it("reports mixed alignment and preserves alignment through heading conversion", () => {

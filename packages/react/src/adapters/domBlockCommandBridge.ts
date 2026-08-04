@@ -4,9 +4,12 @@ import {
   createScopeIndex,
   foundationSchema,
   indentBlockCommand,
+  indentInsideCodeBlock,
+  insertCodeBlockNewline,
   isTextNode,
   moveBlockCommand,
   outdentBlockCommand,
+  exitCodeBlock,
   parseCanonicalBlockHtml,
   serializeCanonicalBlockHtml,
   setBlockAttributes,
@@ -26,7 +29,7 @@ export type DomBlockCommand =
   | { id: "block-type.set"; input: Pick<SetBlockTypeInput, "type" | "level"> }
   | { id: "alignment.set"; input: { alignment: TextAlignment | null } }
   | { id: "blockquote.toggle" }
-  | { id: "code-block.toggle" }
+  | { id: "code-block.toggle"; input?: { active: boolean } }
   | { id: "block.indent" }
   | { id: "block.outdent" }
   | { id: "block.move"; input: { direction: "up" | "down" } };
@@ -156,8 +159,15 @@ export const executeDomBlockCommand = (
   const document = parseCanonicalBlockHtml(parent.innerHTML);
   const index = createScopeIndex();
   const ctx = { schema: foundationSchema, positions: index.positions(document, foundationSchema) };
-  const scope = blockScope(document, selectedIds);
-  const selectedNodes = selectedIds.map((id) => {
+  const targetIds = selectedIds.map((id) => {
+    const resolved = ctx.positions.positionOf(id);
+    const node = resolved?.parent.children?.[resolved.pos.offset];
+    if (!node || isTextNode(node) || node.type !== "list_item") return id;
+    const content = node.children?.find((child) => !isTextNode(child) && child.type !== "list");
+    return content && !isTextNode(content) ? content.id : id;
+  });
+  const scope = blockScope(document, targetIds);
+  const selectedNodes = targetIds.map((id) => {
     const resolved = ctx.positions.positionOf(id);
     return resolved?.parent.children?.[resolved.pos.offset];
   });
@@ -171,13 +181,14 @@ export const executeDomBlockCommand = (
           ? unwrapBlocks(document, scope, { type: "blockquote" }, ctx)
           : wrapBlocks(document, scope, { type: "blockquote", wrapperIds: [createNodeId()] }, ctx)
         : command.id === "code-block.toggle"
-          ? setBlockTypeCommand(document, scope, { type: selectedNodes.every((node) => node?.type === "code_block") ? "paragraph" : "code_block" }, ctx)
+          ? setBlockTypeCommand(document, scope, { type: (command.input?.active ?? !selectedNodes.every((node) => node?.type === "code_block")) ? "code_block" : "paragraph" }, ctx)
           : command.id === "block.indent" ? indentBlockCommand(document, scope, {}, ctx)
             : command.id === "block.outdent" ? outdentBlockCommand(document, scope, {}, ctx)
               : moveBlockCommand(document, scope, command.input, ctx);
   if (!operations.length) return null;
   const output = applyOperations(document, operations);
-  if (["alignment.set", "block.indent", "block.outdent"].includes(command.id)) {
+  if (["alignment.set", "block.indent", "block.outdent"].includes(command.id)
+    && targetIds.every((id, offset) => id === selectedIds[offset])) {
     const outputPositions = createScopeIndex().positions(output, foundationSchema);
     blocks.forEach((block, offset) => {
       const id = selectedIds[offset];
@@ -211,4 +222,41 @@ export const executeDomBlockCommand = (
     return element ? [element] : [];
   });
   return selectedAfter.length ? selectedAfter : Array.from(parent.children).filter((node): node is HTMLElement => node instanceof HTMLElement);
+};
+
+export type DomCodeInputIntent = "newline" | "tab" | "exit";
+
+/** Product adapter for the Phase 5 code-block input semantics. Browser input
+ * is converted to a foundation operation before the DOM is updated. */
+export const executeDomCodeInput = (root: HTMLElement, intent: DomCodeInputIntent): boolean => {
+  const native = root.ownerDocument.defaultView?.getSelection();
+  if (!native?.anchorNode || !native.focusNode || native.anchorNode !== native.focusNode || native.anchorOffset !== native.focusOffset) return false;
+  const element = native.anchorNode instanceof HTMLElement ? native.anchorNode : native.anchorNode.parentElement;
+  const code = element?.closest<HTMLElement>("pre");
+  if (!code || !root.contains(code) || !code.parentElement) return false;
+  const parent = code.parentElement;
+  ensureIds(parent);
+  const snapshot = captureSelection(parent);
+  if (!snapshot || snapshot.anchor.ownerId !== snapshot.head.ownerId || snapshot.anchor.offset !== snapshot.head.offset) return false;
+  const document = parseCanonicalBlockHtml(parent.innerHTML);
+  const positions = createScopeIndex().positions(document, foundationSchema);
+  const content = positions.contentRangeOf(snapshot.head.ownerId);
+  if (!content) return false;
+  const pos = { path: [...content.from.path], offset: snapshot.head.offset };
+  const result = intent === "newline" ? insertCodeBlockNewline(document, pos)
+    : intent === "tab" ? indentInsideCodeBlock(document, pos)
+      : exitCodeBlock(document, pos, createNodeId());
+  if (!result?.operations.length) return false;
+  const output = applyOperations(document, result.operations);
+  const previous = new Map(Array.from(parent.querySelectorAll<HTMLElement>("[data-smart-id]"))
+    .map((node) => [node.dataset.smartId || "", node.cloneNode(true) as HTMLElement]));
+  const template = parent.ownerDocument.createElement("template");
+  template.innerHTML = serializeCanonicalBlockHtml(output, { fragment: true });
+  parent.replaceChildren(template.content);
+  preservePresentationalAttributes(previous, parent);
+  restoreSelection(parent, {
+    anchor: { ownerId: result.selectionTarget.ownerId, offset: result.selectionTarget.offset },
+    head: { ownerId: result.selectionTarget.ownerId, offset: result.selectionTarget.offset },
+  });
+  return true;
 };

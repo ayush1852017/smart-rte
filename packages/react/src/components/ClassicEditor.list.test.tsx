@@ -1038,7 +1038,7 @@ describe("ClassicEditor lists", () => {
     ]);
   });
 
-  it("wraps only the selected run of list items in a blockquote", () => {
+  it("wraps the complete list shell when a selection touches an item run", () => {
     host = document.createElement("div");
     document.body.appendChild(host);
     act(() => {
@@ -1057,8 +1057,8 @@ describe("ClassicEditor lists", () => {
 
     act(() => (host!.querySelector('button[title="Blockquote"]') as HTMLButtonElement).click());
 
-    expect(Array.from(editor.children, (node) => node.tagName)).toEqual(["UL", "BLOCKQUOTE", "UL"]);
-    expect(Array.from(editor.querySelectorAll("blockquote li"), (item) => item.textContent)).toEqual(["two", "three"]);
+    expect(Array.from(editor.children, (node) => node.tagName)).toEqual(["P", "BLOCKQUOTE", "P"]);
+    expect(Array.from(editor.querySelectorAll("blockquote li"), (item) => item.textContent)).toEqual(["one", "two", "three", "four"]);
   });
 
   it("wraps the whole list when the caret is inside one list item", () => {

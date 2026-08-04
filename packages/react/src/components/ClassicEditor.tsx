@@ -3,6 +3,7 @@ import { MediaManager, MediaManagerAdapter, MediaItem } from "./MediaManager.js"
 import { LinkEditorPopover, type LinkEditorApplyValue } from "./LinkEditorPopover.js";
 import { getSmartListPreset, isSmartListPreset, listStyleForPresetDepth, sanitizeLinkHref, SMART_LIST_PRESETS, type CoreFeatureConfig, type SmartListPreset } from 'smartrte-core/legacy';
 import { executeDomMoveCommand } from '../adapters/domMoveCommandBridge.js';
+import { executeDomCodeInput } from '../adapters/domBlockCommandBridge.js';
 import { adjacentInlineAtom } from '../adapters/domInlineAtomCommandBridge.js';
 import { serializeSmartDocument } from '../adapters/domSmartDocument.js';
 import { closestFromTarget, isNode } from '../adapters/domTargets.js';
@@ -394,15 +395,11 @@ export function ClassicEditor({
     if (typeof value === "string" && value !== el.innerHTML) {
       el.innerHTML = value || "";
       fixNegativeMargins(el);
-      normalizeInvalidQuoteNesting(el);
-      normalizeInvalidCodeBlockNesting(el);
       normalizeInvalidTableNesting(el);
       ensureTableWrappers(el);
       ensureCaretBoundaryParagraphs(el);
       addTableResizeHandles();
     }
-    normalizeInvalidQuoteNesting(el);
-    normalizeInvalidCodeBlockNesting(el);
     normalizeInvalidTableNesting(el);
     ensureCaretBoundaryParagraphs(el);
     // Suppress native context menu inside table cells at capture phase
@@ -597,16 +594,7 @@ export function ClassicEditor({
         requestAnimationFrame(updateActiveState);
         return;
       }
-      const beforeHtml = editableRef.current?.innerHTML || "";
-      const ok = document.execCommand(command, false, valueArg);
-      const afterHtml = editableRef.current?.innerHTML || "";
-      const needsFallback =
-        !ok ||
-        (command === "formatBlock" && beforeHtml === afterHtml);
-      if (needsFallback) {
-        if (command === "formatBlock" && valueArg) applyFormatBlockFallback(valueArg);
-      }
-      handleInput();
+      editorControllerRef.current?.discardLastHistorySnapshot();
     } catch {}
   };
 
@@ -637,35 +625,31 @@ export function ClassicEditor({
           ? [getCurrentBlock()].filter((block): block is HTMLElement => Boolean(block))
           : getSelectedBlocks(range))
         : [];
-      const coreBlocks = blocks.filter((block) =>
-        block.matches("p,h1,h2,h3,h4,h5,h6") && !block.closest("li,td,th"));
-      if (
-        coreBlocks.length === blocks.length &&
-        coreBlocks.length > 0 &&
-        (tag === "p" || /^h[1-6]$/.test(tag || ""))
-      ) {
-        const replacements = editorControllerRef.current!.bindRoot(editableRef.current).executeBlockCommand(coreBlocks, {
+      if (!tag || !(tag === "p" || /^h[1-6]$/.test(tag)) || blocks.length === 0) {
+        editorControllerRef.current!.discardLastHistorySnapshot();
+        return;
+      }
+      const targets = blocks.map((block) => block.closest("li") as HTMLElement | null || block);
+      const groups = new Map<HTMLElement, HTMLElement[]>();
+      targets.forEach((target) => {
+        const parent = target.parentElement;
+        if (parent) groups.set(parent, [...(groups.get(parent) || []), target]);
+      });
+      const replacements = Array.from(groups.values()).flatMap((group) =>
+        editorControllerRef.current!.bindRoot(editableRef.current).executeBlockCommand(group, {
           id: "block-type.set",
           input: tag === "p"
             ? { type: "paragraph" }
             : { type: "heading", level: Number(tag.slice(1)) as 1 | 2 | 3 | 4 | 5 | 6 },
-        });
-        if (replacements) {
-          focusElementEnd(replacements[replacements.length - 1]);
-          setCurrentBlockType(tag as "p" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6");
-          handleInput();
-          requestAnimationFrame(updateActiveState);
-          return;
-        }
-      }
-      if (applyFormatBlockFallback(blockName)) {
-        if (tag === "p" || /^h[1-6]$/.test(tag || "")) {
-          setCurrentBlockType(tag as "p" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6");
-        }
-        handleInput();
-        requestAnimationFrame(updateActiveState);
+        }) || []);
+      if (!replacements.length) {
+        editorControllerRef.current!.discardLastHistorySnapshot();
         return;
       }
+      focusElementEnd(replacements[replacements.length - 1]);
+      setCurrentBlockType(tag as "p" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6");
+      handleInput();
+      requestAnimationFrame(updateActiveState);
     } catch {}
   };
 
@@ -720,7 +704,6 @@ export function ClassicEditor({
     if (!restored) return false;
     const html = restored.html;
     fixNegativeMargins(editor);
-    normalizeInvalidCodeBlockNesting(editor);
     ensureTableWrappers(editor);
     ensureCaretBoundaryParagraphs(editor);
     addTableResizeHandles();
@@ -1040,31 +1023,28 @@ export function ClassicEditor({
       const targets = getAlignmentTargets(range);
       if (targets.length === 0) return;
       pushEditorHistory();
-      const coreTargets = targets.filter((target) =>
-        target.matches("p,h1,h2,h3,h4,h5,h6,blockquote,pre") &&
-        !target.closest("li"));
-      if (coreTargets.length === targets.length) {
-        const groups = new Map<HTMLElement, HTMLElement[]>();
-        coreTargets.forEach((target) => {
-          const parent = target.parentElement;
-          if (parent) groups.set(parent, [...(groups.get(parent) || []), target]);
-        });
-        const replacements = Array.from(groups.values()).flatMap((group) =>
-          editorControllerRef.current!.bindRoot(editableRef.current).executeBlockCommand(group, {
-            id: "alignment.set",
-            input: { alignment },
-          }) || []);
-        if (replacements.length === coreTargets.length) {
-          focusElementEnd(replacements[replacements.length - 1]);
-          handleInput();
-          requestAnimationFrame(updateActiveState);
-          return;
-        }
-      }
-      targets.forEach((target) => {
+      const tableCells = targets.filter((target) => target.matches("td,th"));
+      const blockTargets = targets.filter((target) => !target.matches("td,th"));
+      const groups = new Map<HTMLElement, HTMLElement[]>();
+      blockTargets.forEach((target) => {
+        const parent = target.parentElement;
+        if (parent) groups.set(parent, [...(groups.get(parent) || []), target]);
+      });
+      const replacements = Array.from(groups.values()).flatMap((group) =>
+        editorControllerRef.current!.bindRoot(editableRef.current).executeBlockCommand(group, {
+          id: "alignment.set",
+          input: { alignment },
+        }) || []);
+      // LEGACY_TABLE_TOUCHPOINT: direct-cell-alignment owner=Phase6. A bare
+      // table cell is not a Phase 5 block; the Phase 6 grid command will own it.
+      tableCells.forEach((target) => {
         target.style.textAlign = alignment === "left" ? "" : alignment;
         if (!target.getAttribute("style")) target.removeAttribute("style");
       });
+      if (!replacements.length && !tableCells.length) {
+        editorControllerRef.current!.discardLastHistorySnapshot();
+        return;
+      }
       safeSelectRange(range);
       savedRangeRef.current = range.cloneRange();
       handleInput();
@@ -1129,103 +1109,6 @@ export function ClassicEditor({
       const position = a.compareDocumentPosition(b);
       return position & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1;
     });
-  };
-
-  const replaceBlockTag = (block: HTMLElement, tag: string) => {
-    if (block.tagName.toLowerCase() === tag) return block;
-    const replacement = document.createElement(tag);
-    copyCellOrBlockStyles(block, replacement);
-    block.parentElement?.replaceChild(replacement, block);
-    return replacement;
-  };
-
-  const clearExplicitFontSizes = (block: HTMLElement) => {
-    Array.from(block.querySelectorAll<HTMLElement>('[style*="font-size"]')).forEach((element) => {
-      element.style.fontSize = "";
-      if (!element.style.cssText) element.removeAttribute("style");
-      if (element.tagName === "SPAN" && !element.getAttribute("style") && element.attributes.length === 0) {
-        const parent = element.parentNode;
-        if (!parent) return;
-        while (element.firstChild) parent.insertBefore(element.firstChild, element);
-        element.remove();
-      }
-    });
-  };
-
-  const replaceListItemContentTag = (item: HTMLElement, tag: string) => {
-    const directBlock = Array.from(item.children).find((child) =>
-      child.matches("p,h1,h2,h3,h4,h5,h6")
-    ) as HTMLElement | undefined;
-    if (directBlock) return replaceBlockTag(directBlock, tag);
-
-    const block = document.createElement(tag);
-    const boundary = Array.from(item.children).find((child) =>
-      child.matches("ul,ol,blockquote,pre")
-    ) || null;
-    Array.from(item.childNodes).forEach((node) => {
-      if (node === boundary) return;
-      if (node instanceof HTMLElement && node.dataset.srteCheck === "true") return;
-      block.appendChild(node);
-    });
-    if (!block.childNodes.length) block.innerHTML = "<br>";
-    item.insertBefore(block, boundary);
-    return block;
-  };
-
-  const applyFormatBlockFallback = (blockName: string) => {
-    const editor = editableRef.current;
-    const range = getSelectionRangeInEditor();
-    const tag = normalizeBlockTag(blockName);
-    if (!editor || !range || !tag) return false;
-
-    if (!editor.innerHTML.trim()) {
-      const block = document.createElement(tag);
-      block.innerHTML = "<br>";
-      editor.appendChild(block);
-      focusElementEnd(block);
-      return true;
-    }
-
-    if (range.collapsed) {
-      const block = getCurrentBlock();
-      if (!block || block === editor || !block.parentElement) return false;
-      const item = block.closest("li") as HTMLElement | null;
-      const replacement = item ? replaceListItemContentTag(item, tag) : replaceBlockTag(block, tag);
-      if (/^h[1-6]$/.test(tag)) clearExplicitFontSizes(replacement);
-      focusElementEnd(replacement);
-      return true;
-    }
-
-    const selectedBlocks = sortInDocumentOrder(getSelectedBlocks(range)).filter((block) => {
-      if (!editor.contains(block) || block === editor) return false;
-      return Boolean(block.parentElement);
-    });
-
-    if (selectedBlocks.length > 0) {
-      let lastReplacement: HTMLElement | null = null;
-      const handledItems = new Set<HTMLElement>();
-      selectedBlocks.forEach((block) => {
-        const item = block.closest("li") as HTMLElement | null;
-        if (item) {
-          if (handledItems.has(item)) return;
-          handledItems.add(item);
-          lastReplacement = replaceListItemContentTag(item, tag);
-        } else {
-          lastReplacement = replaceBlockTag(block, tag);
-        }
-        if (lastReplacement && /^h[1-6]$/.test(tag)) clearExplicitFontSizes(lastReplacement);
-      });
-      if (lastReplacement) focusElementEnd(lastReplacement);
-      return true;
-    }
-
-    const block = document.createElement(tag);
-    const contents = range.extractContents();
-    block.appendChild(contents);
-    if (!block.innerHTML.trim()) block.innerHTML = "<br>";
-    range.insertNode(block);
-    focusElementEnd(block);
-    return true;
   };
 
   const cloneListShell = (list: HTMLElement, tagName?: "ul" | "ol") => {
@@ -1503,7 +1386,6 @@ export function ClassicEditor({
     } catch {}
   };
 
-  // LEGACY_LIST_TOUCHPOINT: blockquote-list-shell-split owner=Phase5
   const toggleBlockquote = () => {
     if (!blockquoteFeature) return;
     try {
@@ -1515,170 +1397,39 @@ export function ClassicEditor({
         ? range.commonAncestorContainer
         : range.commonAncestorContainer.parentElement;
       const activeQuote = rangeNode?.closest("blockquote") as HTMLElement | null;
-      if (activeQuote && editor.contains(activeQuote)) {
-        const beforeCoreHtml = editor.innerHTML;
-        pushEditorHistory();
-        const replacements = editorControllerRef.current!.bindRoot(editor).executeBlockCommand([activeQuote], { id: "blockquote.toggle" });
-        if (replacements) {
-          focusElementEnd(replacements[replacements.length - 1]);
-          handleInput();
-          requestAnimationFrame(updateActiveState);
-          return;
+      const outerList = (block: HTMLElement) => {
+        let list = block.closest<HTMLElement>("ul,ol");
+        while (list?.parentElement?.closest("li")?.parentElement?.matches("ul,ol")) {
+          list = list.parentElement.closest("li")!.parentElement as HTMLElement;
         }
-        editorControllerRef.current!.discardLastHistorySnapshot(beforeCoreHtml);
-      } else {
-        const candidates = (range.collapsed
+        return list;
+      };
+      const raw = activeQuote && editor.contains(activeQuote)
+        ? [activeQuote]
+        : (range.collapsed
           ? [getCurrentBlock()].filter((block): block is HTMLElement => Boolean(block))
-          : getSelectedBlocks(range)
-        ).filter((block) => editor.contains(block));
-        const coreCandidates = candidates.filter((block) =>
-          block.matches("p,h1,h2,h3,h4,h5,h6,pre") && !block.closest("li,td,th"));
-        if (coreCandidates.length === candidates.length && coreCandidates.length > 0) {
-          const beforeCoreHtml = editor.innerHTML;
-          pushEditorHistory();
-          const replacements = editorControllerRef.current!.bindRoot(editor).executeBlockCommand(coreCandidates, { id: "blockquote.toggle" });
-          if (replacements) {
-            focusElementEnd(replacements[replacements.length - 1]);
-            handleInput();
-            requestAnimationFrame(updateActiveState);
-            return;
-          }
-          editorControllerRef.current!.discardLastHistorySnapshot(beforeCoreHtml);
-        }
-      }
-
-      const unwrapQuote = (quote: HTMLElement) => {
-        const parent = quote.parentElement;
-        if (!parent) return false;
-        const moved: HTMLElement[] = [];
-        while (quote.firstChild) {
-          const child = quote.firstChild;
-          parent.insertBefore(child, quote);
-          if (child instanceof HTMLElement) moved.push(child);
-        }
-        quote.remove();
-        focusElementEnd(moved[moved.length - 1] || parent);
-        return true;
-      };
-
-      const wrapBlocks = (blocks: HTMLElement[]) => {
-        const selected = sortInDocumentOrder(blocks).filter((block) => {
-          if (!editor.contains(block) || block === editor) return false;
-          if (block.tagName.toLowerCase() === "blockquote") return false;
-          return Boolean(block.parentElement);
-        });
-        if (selected.length === 0) return false;
-
-        const mergeQuote = (quote: HTMLElement) => {
-          let merged = quote;
-          const previous = merged.previousElementSibling;
-          if (previous?.tagName === "BLOCKQUOTE") {
-            while (merged.firstChild) previous.appendChild(merged.firstChild);
-            merged.remove();
-            merged = previous as HTMLElement;
-          }
-          const next = merged.nextElementSibling;
-          if (next?.tagName === "BLOCKQUOTE") {
-            while (next.firstChild) merged.appendChild(next.firstChild);
-            next.remove();
-          }
-          return merged;
-        };
-
-        const selectedItems = new Set(resolveSelectedListItems(range));
-        const sourceLists = Array.from(new Set(Array.from(selectedItems, (item) => item.parentElement as HTMLElement)));
-        let lastWrapped: HTMLElement | null = null;
-        sourceLists.forEach((source) => {
-          const parent = source.parentElement;
-          if (!parent) return;
-          let pending: HTMLElement | null = null;
-          let pendingSelected: boolean | null = null;
-          const outputs: Array<{ list: HTMLElement; selected: boolean }> = [];
-          Array.from(source.children).forEach((child) => {
-            if (!(child instanceof HTMLElement) || child.tagName !== "LI") return;
-            const isSelected = selectedItems.has(child);
-            if (!pending || pendingSelected !== isSelected) {
-              pending = cloneListShell(source);
-              pendingSelected = isSelected;
-              outputs.push({ list: pending, selected: isSelected });
-            }
-            pending.appendChild(child);
-          });
-          outputs.forEach((output) => {
-            if (output.selected) {
-              const quote = document.createElement("blockquote");
-              quote.appendChild(output.list);
-              parent.insertBefore(quote, source);
-              mergeQuote(quote);
-              lastWrapped = output.list.lastElementChild as HTMLElement | null;
-            } else {
-              parent.insertBefore(output.list, source);
-            }
-          });
-          source.remove();
-        });
-
-        selected.filter((block) => !block.closest("ul,ol")).forEach((block) => {
-          const quote = document.createElement("blockquote");
-          block.parentElement?.insertBefore(quote, block);
-          quote.appendChild(block);
-          mergeQuote(quote);
-          lastWrapped = block;
-        });
-        if (lastWrapped) focusElementEnd(lastWrapped);
-        return true;
-      };
-
-      if (!range) return;
-      let node: Node | null = range.commonAncestorContainer;
-      if (node.nodeType === Node.TEXT_NODE) node = node.parentElement;
-      const element = node as HTMLElement | null;
-      const quote = element?.closest?.('blockquote');
-      if (quote && editableRef.current?.contains(quote)) {
-        pushEditorHistory();
-        if (unwrapQuote(quote as HTMLElement)) {
-          handleInput();
-          requestAnimationFrame(updateActiveState);
-          return;
-        }
-      }
-
-      if (range.collapsed) {
-        const block = getCurrentBlock();
-        if (block) {
-          pushEditorHistory();
-          const currentList = block.closest("ul,ol") as HTMLElement | null;
-          if (currentList && editor.contains(currentList)) {
-            const quote = document.createElement("blockquote");
-            currentList.parentElement?.insertBefore(quote, currentList);
-            quote.appendChild(currentList);
-            focusElementEnd(block);
-            handleInput();
-            requestAnimationFrame(updateActiveState);
-            return;
-          }
-          if (!wrapBlocks([block])) return;
-          handleInput();
-          requestAnimationFrame(updateActiveState);
-          return;
-        }
-      } else {
-        const blocks = getSelectedBlocks(range);
-        if (blocks.length > 0) {
-          pushEditorHistory();
-          if (!wrapBlocks(blocks)) return;
-          handleInput();
-          requestAnimationFrame(updateActiveState);
-          return;
-        }
-      }
-
+          : getSelectedBlocks(range));
+      const targets = sortInDocumentOrder([...new Set(raw.map((block) => outerList(block) || block))])
+        .filter((block) => block !== editor && editor.contains(block));
+      if (!targets.length) return;
+      const groups = new Map<HTMLElement, HTMLElement[]>();
+      targets.forEach((target) => {
+        const parent = target.parentElement;
+        if (parent) groups.set(parent, [...(groups.get(parent) || []), target]);
+      });
       pushEditorHistory();
-      exec("formatBlock", "<blockquote>");
+      const replacements = Array.from(groups.values()).flatMap((group) =>
+        editorControllerRef.current!.bindRoot(editor).executeBlockCommand(group, { id: "blockquote.toggle" }) || []);
+      if (!replacements.length) {
+        editorControllerRef.current!.discardLastHistorySnapshot();
+        return;
+      }
+      focusElementEnd(replacements[replacements.length - 1]);
+      handleInput();
+      requestAnimationFrame(updateActiveState);
     } catch {}
   };
 
-  // LEGACY_LIST_TOUCHPOINT: code-block-list-item-restructure owner=Phase5
   const toggleCodeBlock = () => {
     if (!codeBlockFeature) return;
     try {
@@ -1692,80 +1443,26 @@ export function ClassicEditor({
         : getSelectedBlocks(range)
       ).filter((block) => editor.contains(block));
       if (blocks.length === 0) return;
-
-      const listItems = resolveSelectedListItems(range);
-      const plainBlocks = blocks.filter((block) => !block.closest("ul,ol") && !block.closest("table"));
-      const getItemCode = (item: HTMLElement) =>
-        item.querySelector(":scope > pre[data-srte-list-code]") as HTMLElement | null;
-      const allTargetsActive =
-        listItems.every((item) => Boolean(getItemCode(item))) &&
-        plainBlocks.every((block) => block.tagName === "PRE") &&
-        listItems.length + plainBlocks.length > 0;
-
-      if (listItems.length === 0 && plainBlocks.length === blocks.length && plainBlocks.length > 0) {
-        const beforeCoreHtml = editor.innerHTML;
-        pushEditorHistory();
-        const replacements = editorControllerRef.current!.bindRoot(editor).executeBlockCommand(plainBlocks, { id: "code-block.toggle" });
-        if (replacements) {
-          focusElementEnd(replacements[replacements.length - 1]);
-          handleInput();
-          requestAnimationFrame(updateActiveState);
-          return;
-        }
-        editorControllerRef.current!.discardLastHistorySnapshot(beforeCoreHtml);
-      }
-
+      const selectedItems = resolveSelectedListItems(range);
+      const plainBlocks = blocks.filter((block) => !block.closest("li"));
+      const targets = sortInDocumentOrder([...new Set([...selectedItems, ...plainBlocks])]);
+      const allTargetsActive = targets.every((target) => target.tagName === "PRE"
+        || Boolean(target.querySelector(":scope > pre")));
+      const groups = new Map<HTMLElement, HTMLElement[]>();
+      targets.forEach((target) => {
+        const parent = target.parentElement;
+        if (parent) groups.set(parent, [...(groups.get(parent) || []), target]);
+      });
       pushEditorHistory();
-      let lastTarget: HTMLElement | null = null;
-      listItems.forEach((item) => {
-        const existing = getItemCode(item);
-        if (allTargetsActive && existing) {
-          const code = existing.querySelector(":scope > code") as HTMLElement | null;
-          const source = code || existing;
-          while (source.firstChild) item.insertBefore(source.firstChild, existing);
-          existing.remove();
-          lastTarget = item;
-          return;
-        }
-        if (existing) {
-          lastTarget = existing;
-          return;
-        }
-        const pre = document.createElement("pre");
-        pre.dataset.srteListCode = "true";
-        pre.style.textAlign = "left";
-        const code = document.createElement("code");
-        const nestedList = Array.from(item.children).find((child) => child.matches("ul,ol")) || null;
-        Array.from(item.childNodes).forEach((node) => {
-          if (node === nestedList) return;
-          if (node instanceof HTMLElement && node.dataset.srteCheck === "true") return;
-          code.appendChild(node);
-        });
-        if (!code.childNodes.length) code.innerHTML = "<br>";
-        pre.appendChild(code);
-        item.insertBefore(pre, nestedList);
-        lastTarget = pre;
-      });
-
-      sortInDocumentOrder(plainBlocks).forEach((block) => {
-        if (allTargetsActive && block.tagName === "PRE") {
-          const paragraph = document.createElement("p");
-          const code = block.querySelector(":scope > code") as HTMLElement | null;
-          paragraph.innerHTML = code?.innerHTML || block.innerHTML || "<br>";
-          block.parentElement?.replaceChild(paragraph, block);
-          lastTarget = paragraph;
-        } else if (block.tagName !== "PRE") {
-          const pre = replaceBlockTag(block, "pre");
-          pre.style.textAlign = "left";
-          if (!pre.querySelector(":scope > code")) {
-            const code = document.createElement("code");
-            while (pre.firstChild) code.appendChild(pre.firstChild);
-            pre.appendChild(code);
-          }
-          lastTarget = pre;
-        }
-      });
-      if (lastTarget) focusElementEnd(lastTarget);
+      const replacements = Array.from(groups.values()).flatMap((group) =>
+        editorControllerRef.current!.bindRoot(editor).executeBlockCommand(group, {
+          id: "code-block.toggle", input: { active: !allTargetsActive },
+        }) || []);
+      if (!replacements.length) {
+        editorControllerRef.current!.discardLastHistorySnapshot();
+        return;
+      }
+      focusElementEnd(replacements[replacements.length - 1]);
       handleInput();
       requestAnimationFrame(updateActiveState);
     } catch {}
@@ -2507,54 +2204,8 @@ export function ClassicEditor({
     const el = editableRef.current;
     if (!el) return;
     fixNegativeMargins(el);
-    normalizeListNesting(el);
     ensureTableWrappers(el);
     addTableResizeHandles();
-  };
-
-  // LEGACY_LIST_TOUCHPOINT: imported-list-normalization owner=Phase8
-  /** Repairs list markup emitted by Google Docs and browsers where a nested
-   * list is serialized as a sibling of its parent LI instead of a child. */
-  const normalizeListNesting = (root: HTMLElement) => {
-    root.querySelectorAll<HTMLElement>("ul,ol").forEach((list) => {
-      let currentItem: HTMLElement | null = null;
-      Array.from(list.children).forEach((child) => {
-        if (!(child instanceof HTMLElement)) return;
-        if (child.tagName === "LI") {
-          currentItem = child;
-          return;
-        }
-        if (currentItem && child.parentElement === list && (child.tagName === "UL" || child.tagName === "OL")) {
-          currentItem.appendChild(child);
-        }
-      });
-      const firstItem = list.querySelector(":scope > li") as HTMLElement | null;
-      if (!list.style.listStyleType && firstItem?.style.listStyleType) {
-        list.style.listStyleType = firstItem.style.listStyleType;
-      }
-      // Imported document HTML often places list-style-type on every LI.
-      // That overrides later changes made on the UL/OL and makes the toolbar
-      // appear inert. The canonical DOM stores marker style on the list only.
-      list.querySelectorAll<HTMLElement>(":scope > li").forEach((item) => {
-        item.style.removeProperty("list-style-type");
-      });
-      list.querySelectorAll<HTMLElement>(":scope > li > ul, :scope > li > ol").forEach((nested) => {
-        const nestedItem = nested.querySelector(":scope > li") as HTMLElement | null;
-        if (!nested.style.listStyleType && nestedItem?.style.listStyleType) {
-          nested.style.listStyleType = nestedItem.style.listStyleType;
-        }
-      });
-    });
-    root.querySelectorAll<HTMLElement>("ul[data-srte-list-preset],ol[data-srte-list-preset]").forEach((list) => {
-      const preset = list.dataset.srteListPreset;
-      if (!isSmartListPreset(preset)) {
-        clearListPreset(list);
-        return;
-      }
-      const ancestorWithPreset = list.parentElement?.closest("ul[data-srte-list-preset],ol[data-srte-list-preset]") as HTMLElement | null;
-      if (ancestorWithPreset?.dataset.srteListPreset === preset) return;
-      applyListPresetHierarchy(list, preset);
-    });
   };
 
   const insertHtmlAtEnd = (html: string) => {
@@ -2642,7 +2293,7 @@ export function ClassicEditor({
     }
   };
 
-  // LEGACY_LIST_TOUCHPOINT: table-extraction-from-list owner=Phase6
+  // LEGACY_TABLE_TOUCHPOINT: table-extraction-from-list owner=Phase6
   const normalizeInvalidTableNesting = (root: HTMLElement) => {
     const getOuterList = (item: HTMLElement) => {
       let list = item.parentElement as HTMLElement | null;
@@ -2668,50 +2319,6 @@ export function ClassicEditor({
       if (outerList?.parentElement) {
         outerList.parentElement.insertBefore(tableBlock, outerList.nextSibling);
       }
-    });
-  };
-
-  const normalizeInvalidQuoteNesting = (root: HTMLElement) => {
-    root.querySelectorAll("blockquote blockquote").forEach((quote) => {
-      const outerQuote = quote.parentElement?.closest("blockquote") as HTMLElement | null;
-      if (outerQuote?.parentElement) {
-        outerQuote.parentElement.insertBefore(quote, outerQuote.nextSibling);
-      }
-    });
-
-    root.querySelectorAll("p,h1,h2,h3,h4,h5,h6,pre").forEach((container) => {
-      const nestedQuotes = Array.from(container.children).filter(
-        (child) => child.tagName === "BLOCKQUOTE"
-      ) as HTMLElement[];
-      nestedQuotes.forEach((quote) => {
-        container.parentElement?.insertBefore(quote, container.nextSibling);
-      });
-      if (
-        nestedQuotes.length > 0 &&
-        container.tagName === "P" &&
-        !container.textContent?.trim() &&
-        Array.from(container.children).every((child) => child.tagName === "BR")
-      ) {
-        container.remove();
-      }
-    });
-  };
-
-  const normalizeInvalidCodeBlockNesting = (root: HTMLElement) => {
-    root.querySelectorAll("pre pre").forEach((codeBlock) => {
-      const outerCodeBlock = codeBlock.parentElement?.closest("pre") as HTMLElement | null;
-      if (outerCodeBlock?.parentElement) {
-        outerCodeBlock.parentElement.insertBefore(codeBlock, outerCodeBlock.nextSibling);
-      }
-    });
-
-    root.querySelectorAll("p,h1,h2,h3,h4,h5,h6,blockquote").forEach((container) => {
-      const nestedCodeBlocks = Array.from(container.children).filter(
-        (child) => child.tagName === "PRE"
-      ) as HTMLElement[];
-      nestedCodeBlocks.forEach((codeBlock) => {
-        container.parentElement?.insertBefore(codeBlock, container.nextSibling);
-      });
     });
   };
 
@@ -2757,11 +2364,6 @@ export function ClassicEditor({
     
     // Auto-fix negative margins that might cause visibility issues
     fixNegativeMargins(el);
-    normalizeListNesting(el);
-    // Quotes are document blocks and cannot be nested by drag and drop.
-    normalizeInvalidQuoteNesting(el);
-    // Code blocks are document blocks and cannot be nested by drag and drop.
-    normalizeInvalidCodeBlockNesting(el);
     // Tables are document-level blocks and must not remain inside code or list items.
     normalizeInvalidTableNesting(el);
     // Ensure tables are wrapped for horizontal scrolling
@@ -3906,44 +3508,18 @@ export function ClassicEditor({
     const parent = blocks[0].parentElement;
     if (!parent || blocks.some((block) => block.parentElement !== parent)) return false;
 
-    const coreResult = executeDomMoveCommand(blocks, direction, pushEditorHistory);
-    if (coreResult === false) return true;
-    if (coreResult) {
-      const movedRange = document.createRange();
-      movedRange.setStartBefore(coreResult[0]);
-      movedRange.setEndAfter(coreResult[coreResult.length - 1]);
-      safeSelectRange(movedRange);
-      savedRangeRef.current = movedRange.cloneRange();
-      handleInput();
-      requestAnimationFrame(updateActiveState);
+    pushEditorHistory();
+    const result = editorControllerRef.current!.bindRoot(editor).executeBlockCommand(blocks,
+      direction === "left" ? { id: "block.outdent" }
+        : direction === "right" ? { id: "block.indent" }
+          : { id: "block.move", input: { direction } });
+    if (!result) {
+      editorControllerRef.current!.discardLastHistorySnapshot();
       return true;
     }
-
-    pushEditorHistory();
-    if (direction === "up") {
-      const previous = elementSibling(blocks[0], "previous");
-      if (previous && !blocks.includes(previous as HTMLElement)) {
-        blocks.forEach((block) => parent.insertBefore(block, previous));
-      }
-    } else if (direction === "down") {
-      const next = elementSibling(blocks[blocks.length - 1], "next");
-      if (next && !blocks.includes(next as HTMLElement)) {
-        const afterNext = next.nextSibling;
-        blocks.forEach((block) => parent.insertBefore(block, afterNext));
-      }
-    } else {
-      blocks.forEach((block) => {
-        const current = parseInt(block.style.marginLeft || "0", 10) || 0;
-        const nextMargin = direction === "right"
-          ? Math.min(current + 24, 240)
-          : Math.max(current - 24, 0);
-        block.style.marginLeft = nextMargin ? `${nextMargin}px` : "";
-      });
-    }
-
     const movedRange = document.createRange();
-    movedRange.setStartBefore(blocks[0]);
-    movedRange.setEndAfter(blocks[blocks.length - 1]);
+    movedRange.setStartBefore(result[0]);
+    movedRange.setEndAfter(result[result.length - 1]);
     safeSelectRange(movedRange);
     savedRangeRef.current = movedRange.cloneRange();
     handleInput();
@@ -3971,6 +3547,7 @@ export function ClassicEditor({
     let historyPushed = false;
 
     if (target.tagName === "TD" || target.tagName === "TH") {
+      // LEGACY_TABLE_TOUCHPOINT: bare-cell-block-materialization owner=Phase6.
       pushEditorHistory();
       historyPushed = true;
       const cell = target;
@@ -3978,6 +3555,21 @@ export function ClassicEditor({
       while (cell.firstChild) paragraph.appendChild(cell.firstChild);
       cell.appendChild(paragraph);
       target = paragraph;
+    }
+    if (target.matches("p,h1,h2,h3,h4,h5,h6,blockquote,pre")) {
+      if (!historyPushed) pushEditorHistory();
+      const result = editorControllerRef.current!.bindRoot(editor).executeBlockCommand([target],
+        direction === "left" ? { id: "block.outdent" }
+          : direction === "right" ? { id: "block.indent" }
+            : { id: "block.move", input: { direction } });
+      if (!result) {
+        editorControllerRef.current!.discardLastHistorySnapshot();
+        return;
+      }
+      focusElementEnd(result[result.length - 1]);
+      handleInput();
+      requestAnimationFrame(updateActiveState);
+      return;
     }
     if (target.tagName.toLowerCase() !== "li") {
       const coreResult = executeDomMoveCommand([target], direction, () => {
@@ -3995,30 +3587,6 @@ export function ClassicEditor({
       }
     }
     if (target.tagName.toLowerCase() === "li") return;
-    if (direction === "up") {
-      const previous = elementSibling(target, "previous");
-      if (!previous) return;
-      if (!historyPushed) pushEditorHistory();
-      if (previous) target.parentElement?.insertBefore(target, previous);
-    } else if (direction === "down") {
-      const next = elementSibling(target, "next");
-      if (!next) return;
-      if (!historyPushed) pushEditorHistory();
-      if (next) target.parentElement?.insertBefore(next, target);
-    } else {
-      const current = parseInt(target.style.marginLeft || "0", 10) || 0;
-      const nextMargin = direction === "right"
-        ? Math.min(current + 24, 240)
-        : Math.max(current - 24, 0);
-      if (nextMargin === current) return;
-      if (!historyPushed) pushEditorHistory();
-      target.style.marginLeft = nextMargin ? `${nextMargin}px` : "";
-    }
-
-    focusElementEnd(target);
-    setSelectedImage(target.tagName === "IMG" ? target as HTMLImageElement : target.querySelector("img"));
-    scheduleImageOverlay();
-    handleInput();
   };
 
   const addTableResizeHandles = () => {
@@ -5558,7 +5126,22 @@ export function ClassicEditor({
               setShowFormulaDialog(true);
               return;
             }
-            // Keep Tab for indentation in lists; otherwise insert 2 spaces
+            const nativeAnchor = window.getSelection()?.anchorNode;
+            const nativeElement = nativeAnchor instanceof HTMLElement ? nativeAnchor : nativeAnchor?.parentElement;
+            const activeCodeBlock = nativeElement?.closest("pre");
+            if (activeCodeBlock && editableRef.current?.contains(activeCodeBlock)
+              && (e.key === "Enter" || e.key === "Tab")) {
+              e.preventDefault();
+              pushEditorHistory();
+              const changed = executeDomCodeInput(editableRef.current,
+                e.key === "Tab" ? "tab" : (e.metaKey || e.ctrlKey) ? "exit" : "newline");
+              if (changed) {
+                handleInput();
+                requestAnimationFrame(updateActiveState);
+              } else editorControllerRef.current!.discardLastHistorySnapshot();
+              return;
+            }
+            // Lists own structural keys; tables own Tab at their isolating edge.
             if ((e.key === "Enter" && !e.shiftKey) || e.key === "Backspace" || e.key === "Delete") {
               const editor = editableRef.current;
               const selection = window.getSelection();

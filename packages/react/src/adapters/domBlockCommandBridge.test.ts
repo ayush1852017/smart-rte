@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import { executeDomBlockCommand } from "./domBlockCommandBridge.js";
+import { executeDomBlockCommand, executeDomCodeInput } from "./domBlockCommandBridge.js";
 
 describe("DOM block command bridge", () => {
   it("changes only the selected sibling headings and preserves inline marks", () => {
@@ -102,5 +102,19 @@ describe("DOM block command bridge", () => {
     expect(selection.anchorOffset).toBe(4);
     expect(selection.focusNode?.textContent).toBe("First text");
     expect(selection.focusOffset).toBe(2);
+  });
+
+  it("routes code newline, Tab, and Ctrl/Cmd+Enter escape through foundation operations", () => {
+    document.body.innerHTML = '<div><pre data-smart-id="code"><code>ab</code></pre></div>';
+    const root = document.querySelector("div")!;
+    let text = root.querySelector("code")!.firstChild!;
+    document.getSelection()?.setBaseAndExtent(text, 1, text, 1);
+    expect(executeDomCodeInput(root, "newline")).toBe(true);
+    expect(root.querySelector("code")?.textContent).toBe("a\nb");
+    expect(executeDomCodeInput(root, "tab")).toBe(true);
+    expect(root.querySelector("code")?.textContent).toBe("a\n\tb");
+    expect(executeDomCodeInput(root, "exit")).toBe(true);
+    expect(root.querySelectorAll(":scope > pre, :scope > p")).toHaveLength(2);
+    expect(root.lastElementChild?.tagName).toBe("P");
   });
 });
