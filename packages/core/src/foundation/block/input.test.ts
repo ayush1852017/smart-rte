@@ -49,6 +49,16 @@ describe("Phase 5 code block semantics", () => {
     expect(applyOperations(before, afterExit.operations).children.map((node) => "id" in node && node.id)).toEqual(["code", "after-p"]);
   });
 
+  it("exits on Enter at a trailing empty line while Shift+Enter can still insert a newline", () => {
+    const before = doc(code("code", "line\n"));
+    const entered = insertCodeBlockNewline(before, { path: [0], offset: 5 }, {
+      exitOnTrailingEmptyLine: true, paragraphId: "exit-p",
+    })!;
+    expect(entered.intent).toBe("exit-after");
+    expect(entered.operations[0]).toMatchObject({ type: "insertNode", node: { id: "exit-p" } });
+    expect(insertCodeBlockNewline(before, { path: [0], offset: 5 })?.intent).toBe("newline");
+  });
+
   it("inserts canonical fragments as plain text with marks stripped", () => {
     const before = doc(code("code", "a"));
     const fragment = doc(

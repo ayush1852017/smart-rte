@@ -20,9 +20,17 @@ const textOf = (node: SmartNode): string => {
   return (node.children || []).map(textOf).join(node.type === "doc" || node.type === "blockquote" ? "\n" : "");
 };
 
-export const insertCodeBlockNewline = (document: SmartDocument, pos: SmartPos): CodeBlockInputResult | null => {
+export const insertCodeBlockNewline = (
+  document: SmartDocument,
+  pos: SmartPos,
+  options: { readonly exitOnTrailingEmptyLine?: boolean; readonly paragraphId?: string } = {},
+): CodeBlockInputResult | null => {
   const code = codeAt(document, pos);
   if (!code) return null;
+  const text = textOf(code);
+  if (options.exitOnTrailingEmptyLine && pos.offset === text.length && text.endsWith("\n")) {
+    return exitCodeBlock(document, pos, options.paragraphId || createNodeId());
+  }
   return {
     operations: [{ type: "insertText", pos, text: "\n" }],
     selectionTarget: { ownerId: code.id, offset: pos.offset + 1 },

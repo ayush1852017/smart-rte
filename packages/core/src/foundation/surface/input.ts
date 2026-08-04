@@ -225,7 +225,10 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
         itemId: createNodeId(), blockId: createNodeId(), emptyBlockId: createNodeId(),
       }, this.commandContext());
       if (listResult) return this.commitStructuralResult(listResult);
-      const codeResult = insertCodeBlockNewline(this.editor.document, selection.head);
+      const codeResult = insertCodeBlockNewline(this.editor.document, selection.head, {
+        exitOnTrailingEmptyLine: true,
+        paragraphId: createNodeId(),
+      });
       if (codeResult) return this.commitStructuralResult(codeResult);
     }
     this.commit((builder) => {

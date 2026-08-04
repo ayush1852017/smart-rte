@@ -243,7 +243,7 @@ export const executeDomCodeInput = (root: HTMLElement, intent: DomCodeInputInten
   const content = positions.contentRangeOf(snapshot.head.ownerId);
   if (!content) return false;
   const pos = { path: [...content.from.path], offset: snapshot.head.offset };
-  const result = intent === "newline" ? insertCodeBlockNewline(document, pos)
+  const result = intent === "newline" ? insertCodeBlockNewline(document, pos, { exitOnTrailingEmptyLine: true, paragraphId: createNodeId() })
     : intent === "tab" ? indentInsideCodeBlock(document, pos)
       : exitCodeBlock(document, pos, createNodeId());
   if (!result?.operations.length) return false;
