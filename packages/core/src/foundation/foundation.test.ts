@@ -9,6 +9,7 @@ import {
   assertTransactionSerializable,
   collectNodeIds,
   contentMatches,
+  createHistory,
   createNodeId,
   createSchema,
   foundationSchema,
@@ -21,6 +22,7 @@ import {
   moveGrapheme,
   parseContentExpression,
   parsePersistedDocument,
+  recordHistory,
   repair,
   resolvePos,
   runNormalization,
@@ -382,6 +384,25 @@ describe("Phase 1 operation algebra", () => {
 });
 
 describe("Phase 1 transactions, maps, normalization, and history", () => {
+  it("evicts oldest history by byte budget as well as count", () => {
+    let history = createHistory({ limit: 200, byteLimit: 1_500 });
+    for (let index = 0; index < 6; index += 1) {
+      history = recordHistory(history, {
+        ...tx([{ type: "insertText", pos: { path: [0], offset: index }, text: "x".repeat(100) }]),
+        id: `tx-${index}`,
+        metadata: { source: "api", timestamp: index, addToHistory: true },
+      });
+    }
+    expect(history.undo.length).toBeLessThan(6);
+    expect(history.undo.at(-1)?.forward.id).toBe("tx-5");
+    expect(history.undo.reduce((total, entry) => total + entry.estimatedBytes, 0)).toBeLessThanOrEqual(history.byteLimit);
+
+    const oversized = recordHistory(createHistory({ byteLimit: 1 }), tx([
+      { type: "insertText", pos: { path: [0], offset: 0 }, text: "large" },
+    ]));
+    expect(oversized.undo).toHaveLength(1);
+  });
+
   it("fails stale transactions loudly, applies atomically, and serializes", () => {
     const state: PersistedEditorDocument = { schemaVersion: 1, revision: 1, document: doc() };
     expect(() => applyTransactionAtomic(state, tx([], 0), foundationSchema)).toThrow("Stale transaction");

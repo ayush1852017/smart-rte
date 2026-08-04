@@ -175,6 +175,8 @@ export interface SmartHistory {
   readonly undo: readonly HistoryEntry[];
   readonly redo: readonly HistoryEntry[];
   readonly limit: number;
+  /** Maximum estimated serialized bytes retained in either history stack. */
+  readonly byteLimit: number;
   readonly coalescenceWindowMs: number;
 }
 

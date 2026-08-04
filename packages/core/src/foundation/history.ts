@@ -3,12 +3,14 @@ import { isTextNode } from "./identity.js";
 import type { Attrs, HistoryEntry, SmartHistory, SmartNode, SmartOperation, SmartTransaction } from "./types.js";
 
 export const DEFAULT_HISTORY_LIMIT = 200;
+export const DEFAULT_HISTORY_BYTE_LIMIT = 32 * 1024 * 1024;
 export const DEFAULT_COALESCENCE_WINDOW_MS = 400;
 
-export const createHistory = (options: { limit?: number; coalescenceWindowMs?: number } = {}): SmartHistory => ({
+export const createHistory = (options: { limit?: number; byteLimit?: number; coalescenceWindowMs?: number } = {}): SmartHistory => ({
   undo: [],
   redo: [],
   limit: Math.max(1, Math.floor(options.limit ?? DEFAULT_HISTORY_LIMIT)),
+  byteLimit: Math.max(1, Math.floor(options.byteLimit ?? DEFAULT_HISTORY_BYTE_LIMIT)),
   coalescenceWindowMs: Math.max(0, options.coalescenceWindowMs ?? DEFAULT_COALESCENCE_WINDOW_MS),
 });
 
@@ -41,11 +43,20 @@ const canCoalesce = (previous: SmartTransaction, next: SmartTransaction, windowM
   );
 };
 
-const entryFor = (transaction: SmartTransaction): HistoryEntry => ({
-  forward: structuredClone(transaction),
-  inverse: invertTransaction(transaction),
-  estimatedBytes: JSON.stringify(transaction).length,
-});
+const entryFor = (transaction: SmartTransaction): HistoryEntry => {
+  const forward = structuredClone(transaction);
+  const inverse = invertTransaction(transaction);
+  return { forward, inverse, estimatedBytes: JSON.stringify(forward).length + JSON.stringify(inverse).length };
+};
+
+const evictToBudget = (entries: HistoryEntry[], limit: number, byteLimit: number): HistoryEntry[] => {
+  if (entries.length > limit) entries.splice(0, entries.length - limit);
+  let bytes = entries.reduce((total, entry) => total + entry.estimatedBytes, 0);
+  // Keep the newest intent even when it alone exceeds the budget so undo never
+  // becomes unavailable immediately after a large paste or table operation.
+  while (entries.length > 1 && bytes > byteLimit) bytes -= entries.shift()!.estimatedBytes;
+  return entries;
+};
 
 export const recordHistory = (history: SmartHistory, transaction: SmartTransaction): SmartHistory => {
   if (!transaction.metadata.addToHistory) return history;
@@ -61,7 +72,7 @@ export const recordHistory = (history: SmartHistory, transaction: SmartTransacti
     };
     undo[undo.length - 1] = entryFor(combined);
   } else undo.push(entryFor(transaction));
-  if (undo.length > history.limit) undo.splice(0, undo.length - history.limit);
+  evictToBudget(undo, history.limit, history.byteLimit);
   return { ...history, undo, redo: [] };
 };
 
@@ -103,7 +114,11 @@ export const rebaseHistoryNodeAttributes = (history: SmartHistory, nodeId: strin
   const entry = (value: HistoryEntry): HistoryEntry => {
     const forward = transaction(value.forward);
     const inverse = transaction(value.inverse);
-    return { forward, inverse, estimatedBytes: JSON.stringify(forward).length };
+    return { forward, inverse, estimatedBytes: JSON.stringify(forward).length + JSON.stringify(inverse).length };
   };
-  return { ...history, undo: history.undo.map(entry), redo: history.redo.map(entry) };
+  return {
+    ...history,
+    undo: evictToBudget(history.undo.map(entry), history.limit, history.byteLimit),
+    redo: evictToBudget(history.redo.map(entry), history.limit, history.byteLimit),
+  };
 };

@@ -119,6 +119,7 @@ export interface FoundationEditorOptions {
   schema?: SmartSchema;
   normalizers?: readonly NormalizerRegistration[];
   historyLimit?: number;
+  historyByteLimit?: number;
   coalescenceWindowMs?: number;
   storedMarks?: readonly SmartMark[];
 }
@@ -152,7 +153,11 @@ export class FoundationEditor {
       ...(options.storedMarks?.length ? { storedMarks: canonicalMarkOrder(options.storedMarks) } : {}),
     };
     this.normalizers = [createMarkNormalizer(), ...(options.normalizers || [])];
-    this.currentHistory = createHistory({ limit: options.historyLimit, coalescenceWindowMs: options.coalescenceWindowMs });
+    this.currentHistory = createHistory({
+      limit: options.historyLimit,
+      byteLimit: options.historyByteLimit,
+      coalescenceWindowMs: options.coalescenceWindowMs,
+    });
   }
 
   get state(): FoundationEditorState { return structuredClone(this.current); }
