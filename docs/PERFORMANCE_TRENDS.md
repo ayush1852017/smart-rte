@@ -10,6 +10,20 @@ phases rather than reporting one favorable run.
 | 2.5 | 18.1 ms | within frame in the recorded run | within frame in the recorded run | First end-to-end measurement. |
 | 4 | 19.7 ms passing rerun; 20.5 ms observed first run | 10.0 ms | 17.0 ms | Chromium is at the assertion boundary; the single samples are too noisy for a regression estimate. |
 | 5 | median 24.0 ms; p95/worst 41.9 ms | median 11.0 ms; p95/worst 14.0 ms | median 19.0 ms; p95/worst 25.0 ms | Five samples per browser. Chromium crossed both investigation thresholds for the first phase; Phase 6 must repeat the measurement before the two-successive-phase trigger fires. |
+| 6 pre-work (10k) | median 21.7 ms; p95/worst 36.5 ms | median 11.0 ms; p95/worst 13.0 ms | median 17.0 ms; p95/worst 23.0 ms | Standalone five-sample baseline before table work. Chromium crosses the median threshold for the second phase, so the Phase 11 `content-visibility` investigation is now pulled forward for scheduling; the model/table work must not be blamed without a headed trace. |
+
+## Phase 6 pre-work: 2,000 blocks
+
+| Browser | Raw samples (ms) | Median | p95 | Worst |
+|---|---|---:|---:|---:|
+| Chromium | 24.8, 5.0, 6.2, 4.3, 13.9 | 6.2 | 24.8 | 24.8 |
+| Firefox | 6, 3, 3, 3, 4 | 3.0 | 6.0 | 6.0 |
+| WebKit | 12, 5, 5, 6, 5 | 5.0 | 12.0 | 12.0 |
+
+The representative 2,000-block median is comfortably below the 18 ms concern
+line. The Chromium issue remains concentrated in the extreme 10,000-mounted-
+block case. Schedule the now-triggered headed `content-visibility` trace, but
+do not block table model work on it.
 
 Product-owner manual smoke on 2026-08-03 confirmed that selection, insertion,
 deletion, undo, and redo remained responsive at `?canonical=1&blocks=10000` on

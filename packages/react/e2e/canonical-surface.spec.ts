@@ -260,8 +260,8 @@ test.describe("Phase 5 retained legacy block comparison", () => {
   });
 });
 
-test("continuous typing at 10,000 blocks reports five input-to-paint samples", async ({ page }, testInfo) => {
-  await page.goto("/?canonical=1&blocks=10000");
+for (const blocks of [2_000, 10_000] as const) test(`continuous typing at ${blocks.toLocaleString("en-US")} blocks reports five input-to-paint samples`, async ({ page }, testInfo) => {
+  await page.goto(`/?canonical=1&blocks=${blocks}`);
   const editor = page.locator(surface);
   await expect(editor).toBeVisible();
   await page.locator('[data-smart-id="canonical-p-0"]').click();
@@ -278,7 +278,7 @@ test("continuous typing at 10,000 blocks reports five input-to-paint samples", a
   const sorted = [...samples].sort((a, b) => a - b);
   const summary = { samples, median: sorted[2]!, p95: sorted[4]!, worst: sorted[4]! };
   testInfo.annotations.push({ type: "input-to-paint-ms", description: JSON.stringify(summary) });
-  console.log(`[phase5][${testInfo.project.name}] input-to-paint=${JSON.stringify(summary)}`);
+  console.log(`[phase6-baseline][${testInfo.project.name}][blocks=${blocks}] input-to-paint=${JSON.stringify(summary)}`);
   expect(result.text).toBe("startabcde");
   expect(samples).toHaveLength(5);
 });
