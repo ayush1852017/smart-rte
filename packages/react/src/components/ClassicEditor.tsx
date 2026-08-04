@@ -12,7 +12,7 @@ import { createReactEditorPluginRuntime, matchesPluginShortcut, type ReactContex
 import { createEditorFormatRuntime, type EditorFormatConfig, type EditorFormatDefinition, type EditorFormatExportResult } from '../formatRuntime.js';
 import { createBuiltInFormatDefinitions } from '../builtInFormatDefinitions.js';
 import { createDomEditorController, type DomEditorController } from '../editorController.js';
-import { insertCanonicalClipboardData } from '../canonicalClipboardRuntime.js';
+import { installCanonicalClipboardRuntime } from '../canonicalClipboardRuntime.js';
 import {
   executeCanonicalListCheck,
   executeCanonicalListDepth,
@@ -2141,6 +2141,24 @@ export function ClassicEditor({
     ensureTableWrappers(el);
     addTableResizeHandles();
   };
+
+  useEffect(() => {
+    const root = editableRef.current;
+    if (!root) return;
+    return installCanonicalClipboardRuntime(root, {
+      ownerDocument: document,
+      onFiles: (files) => {
+        if (!media || !files.some((file) => file.type.startsWith("image/"))) return false;
+        void handleLocalImageFiles([...files]);
+        return true;
+      },
+      beforeInsert: () => pushEditorHistory(),
+      afterInsert: () => {
+        normalizeEditorContent();
+        emitChange();
+      },
+    });
+  }, [media]);
 
   const insertHtmlAtEnd = (html: string) => {
     const el = editableRef.current;
@@ -4621,28 +4639,6 @@ export function ClassicEditor({
           onMouseLeave={(e) => {
             if (closestFromTarget(e.relatedTarget, "[data-srte-drag-handle]")) return;
             if (!draggedBlockRef.current) scheduleDragHandleHide();
-          }}
-          onPaste={(e) => {
-            const items = e.clipboardData?.files;
-            if (media && items && items.length) {
-              const hasImage = Array.from(items).some((f) =>
-                f.type.startsWith("image/")
-              );
-              if (hasImage) {
-                e.preventDefault();
-                handleLocalImageFiles(items);
-                return;
-              }
-            }
-
-            pushEditorHistory();
-            if (e.clipboardData?.types.length) {
-              e.preventDefault();
-              if (insertCanonicalClipboardData(e.clipboardData, document)) {
-                normalizeEditorContent();
-                emitChange();
-              }
-            }
           }}
           onDragOver={(e) => {
             // Allow dragging images within editor and file drops

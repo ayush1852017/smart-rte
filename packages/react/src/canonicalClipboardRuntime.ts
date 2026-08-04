@@ -22,3 +22,32 @@ export const insertCanonicalClipboardData = (transfer: DataTransfer, ownerDocume
   if (!cleanHtml) return false;
   return ownerDocument.execCommand("insertHTML", false, cleanHtml);
 };
+
+export interface CanonicalClipboardRuntimeOptions {
+  ownerDocument: Document;
+  onFiles?: (files: readonly File[]) => boolean;
+  beforeInsert?: () => void;
+  afterInsert?: () => void;
+}
+
+/** Owns the product paste listener outside ClassicEditor. */
+export const installCanonicalClipboardRuntime = (
+  root: HTMLElement,
+  options: CanonicalClipboardRuntimeOptions,
+): (() => void) => {
+  const onPaste = (event: ClipboardEvent) => {
+    const transfer = event.clipboardData;
+    if (!transfer) return;
+    const files = Array.from(transfer.files || []);
+    if (files.length && options.onFiles?.(files)) {
+      event.preventDefault();
+      return;
+    }
+    if (!transfer.types.length) return;
+    event.preventDefault();
+    options.beforeInsert?.();
+    if (insertCanonicalClipboardData(transfer, options.ownerDocument)) options.afterInsert?.();
+  };
+  root.addEventListener("paste", onPaste);
+  return () => root.removeEventListener("paste", onPaste);
+};
