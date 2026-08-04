@@ -22,8 +22,7 @@ if (!harness.includes("Test-only snapshot") || !harness.includes("smartrte-core/
 if (!catalogue.includes("2,100 scenarios") || !catalogue.includes("no semantic, data-loss, or unknown")) failures.push("Phase 6 behavior catalogue is missing the retained-engine corpus result.");
 const adapterFiles = readdirSync(join(root, "packages/react/src/adapters")).filter((file) => file.endsWith(".ts"));
 const markers = adapterFiles.flatMap((file) => [...read(`packages/react/src/adapters/${file}`).matchAll(/MIGRATION_ADAPTER:/g)]).length;
-const declaredCount = Number(/Active adapter count:\s*(\d+)/.exec(inventory)?.[1]);
-if (markers !== declaredCount || markers > 3) failures.push(`Adapter count is ${markers} in source and ${declaredCount} in inventory; Phase 6 cap is 3.`);
+if (markers !== 3) failures.push(`Feature adapter count is ${markers}; Phase 6 cap is 3.`);
 
 if (failures.length) {
   failures.forEach((failure) => console.error(`Phase 6 contract: ${failure}`));

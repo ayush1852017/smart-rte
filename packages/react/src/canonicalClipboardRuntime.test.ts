@@ -23,14 +23,26 @@ describe("Phase 8a ClassicEditor clipboard runtime", () => {
     const values = new Map([["text/plain", "safe"]]);
     const transfer = { types: [...values.keys()], files: [], getData: (type: string) => values.get(type) || "" } as unknown as DataTransfer;
     Object.defineProperty(document, "execCommand", { configurable: true, value: vi.fn(() => true) });
-    const beforeInsert = vi.fn(); const afterInsert = vi.fn();
-    const remove = installCanonicalClipboardRuntime(root, { ownerDocument: document, beforeInsert, afterInsert });
+    const beforeInsert = vi.fn(); const afterInsert = vi.fn(); const onDiagnostic = vi.fn();
+    const remove = installCanonicalClipboardRuntime(root, { ownerDocument: document, beforeInsert, afterInsert, onDiagnostic });
     const event = new Event("paste", { bubbles: true, cancelable: true });
     Object.defineProperty(event, "clipboardData", { value: transfer });
     root.dispatchEvent(event);
     expect(event.defaultPrevented).toBe(true);
     expect(beforeInsert).toHaveBeenCalledOnce();
     expect(afterInsert).toHaveBeenCalledOnce();
+    expect(onDiagnostic).toHaveBeenCalledWith(expect.objectContaining({ status: "parsed", detectedSource: "plain-text" }));
+    expect(JSON.stringify(onDiagnostic.mock.calls)).not.toContain("safe");
     remove();
+  });
+
+  it("reports rejected paste without allowing raw content into diagnostics", () => {
+    const secret = "CLIENT-SECRET-malformed-native";
+    const values = new Map([["application/x-smart-rte+json", `{${secret}`]]);
+    const transfer = { types: [...values.keys()], getData: (type: string) => values.get(type) || "" } as unknown as DataTransfer;
+    const onDiagnostic = vi.fn();
+    expect(insertCanonicalClipboardData(transfer, document, onDiagnostic)).toBe(false);
+    expect(onDiagnostic).toHaveBeenCalledWith(expect.objectContaining({ status: "rejected", failureCode: "parse-failed" }));
+    expect(JSON.stringify(onDiagnostic.mock.calls)).not.toContain(secret);
   });
 });

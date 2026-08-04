@@ -34,8 +34,7 @@ if (!harness.includes("Test-only snapshot") || !harness.includes("smartrte-core/
 if (!read("docs/PHASE8_CANONICAL_AUTHORITY_PLAN.md").includes("3 -> 2 -> 1 -> 0")) failures.push("Phase 8 adapter-removal sequence is not documented.");
 const adapterFiles = readdirSync(join(root, "packages/react/src/adapters")).filter((file) => file.endsWith(".ts"));
 const markers = adapterFiles.flatMap((file) => [...read(`packages/react/src/adapters/${file}`).matchAll(/MIGRATION_ADAPTER:/g)]).length;
-const declaredCount = Number(/Active adapter count:\s*(\d+)/.exec(inventory)?.[1]);
-if (markers !== declaredCount || markers > 3) failures.push(`Adapter count is ${markers} in source and ${declaredCount} in inventory; Phase 7 cap is 3.`);
+if (markers !== 3) failures.push(`Feature adapter count is ${markers}; Phase 7 cap is 3.`);
 
 if (failures.length) { failures.forEach((failure) => console.error(`Phase 7 contract: ${failure}`)); process.exit(1); }
 console.log(`Phase 7 contract: generic atoms, async/persistence/security guards, canonical product routing, retained harness, and ${markers} tracked adapters.`);

@@ -32,12 +32,19 @@ if (!harness.includes("Test-only snapshot") || !harness.includes("legacyCleanPas
   failures.push("The legacy clipboard engine was not retained in the test-only harness.");
 }
 const adapterFiles = readdirSync(join(root, "packages/react/src/adapters")).filter((file) => file.endsWith(".ts"));
-const markers = adapterFiles.flatMap((file) => [...read(`packages/react/src/adapters/${file}`).matchAll(/MIGRATION_ADAPTER:/g)]).length;
+const featureMarkers = adapterFiles.flatMap((file) => [...read(`packages/react/src/adapters/${file}`).matchAll(/MIGRATION_ADAPTER:/g)]).length;
+const runtimeMarkers = [...runtime.matchAll(/MIGRATION_ADAPTER:/g)].length;
+const markers = featureMarkers + runtimeMarkers;
 const declaredCount = Number(/Active adapter count:\s*(\d+)/.exec(inventory)?.[1]);
-if (markers !== 3 || declaredCount !== 3) failures.push(`Phase 8a adapter count must remain 3; source=${markers}, inventory=${declaredCount}.`);
+if (featureMarkers !== 3 || runtimeMarkers !== 1 || markers !== 4 || declaredCount !== 4) {
+  failures.push(`Phase 8a adapter count must disclose 3 feature + 1 clipboard bridge; source=${markers}, inventory=${declaredCount}.`);
+}
+if (!runtime.includes("reportParsedClipboard") || !runtime.includes("reportRejectedClipboard")) {
+  failures.push("Product clipboard runtime does not emit privacy-safe parsed/rejected diagnostics.");
+}
 
 if (failures.length) {
   failures.forEach((failure) => console.error(`Phase 8a contract: ${failure}`));
   process.exit(1);
 }
-console.log("Phase 8a contract: sanitize-first DOMPurify pipeline, shared URL policy, retained legacy harness, external canonical product routing, and 3 tracked adapters.");
+console.log("Phase 8a contract: sanitize-first DOMPurify pipeline, shared URL policy, privacy-safe diagnostics, retained legacy harness, external canonical product routing, and 4 tracked adapters.");

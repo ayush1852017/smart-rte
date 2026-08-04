@@ -234,7 +234,7 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
     return { type: "text", anchor: target, head: target };
   }
 
-  private commitClipboard(result: ClipboardInsertionResult, source: "paste" | "drop"): void {
+  private commitClipboard(result: ClipboardInsertionResult, source: "paste" | "cut" | "drop"): void {
     if (!result.operations.length) return;
     const preview = applyOperations(this.editor.document, result.operations);
     const lookup = createScopeIndex().positions(preview, this.editor.schema);
@@ -263,7 +263,7 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
     event.preventDefault();
     this.writeTransfer(event.clipboardData, sliceClipboardSelection(this.editor.document, this.editor.selection));
     const deletion = deleteClipboardSelection(this.editor.document, this.editor.selection, this.editor.positions);
-    this.commitClipboard({ ...deletion, definingAncestorId: null }, "paste");
+    this.commitClipboard({ ...deletion, definingAncestorId: null }, "cut");
   }
 
   handlePaste(event: ClipboardEvent): void {

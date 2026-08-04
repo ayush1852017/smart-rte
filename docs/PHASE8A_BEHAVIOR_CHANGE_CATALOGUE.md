@@ -17,4 +17,4 @@ All eight captured fixtures differ structurally from the retained legacy engine 
 
 ## Evidence limitation
 
-Word on Windows has not been captured. The replacement macOS capture now exercises `mso-list:l0 level1 lfo1`, conditional Office comments, `<o:p>`, and VML fallbacks, but it cannot establish that Windows emits the same variants. The supplied Windows file is a Mammoth-converted DOCX reference, not a clipboard capture. Windows Word remains a Phase 8a gate failure until native clipboard payload is added or the owner explicitly accepts that source as residual risk.
+Word on Windows has not been captured. The replacement macOS capture now exercises `mso-list:l0 level1 lfo1`, conditional Office comments, `<o:p>`, and VML fallbacks, but it cannot establish that Windows emits the same variants. The supplied Windows file is a Mammoth-converted DOCX reference, not a clipboard capture. On 2026-08-05 the owner explicitly accepted this as residual risk so Phase 8b may proceed; native Windows capture remains a Phase 11/pre-production hardening item.

@@ -131,7 +131,7 @@ export interface SmartTransaction {
   storedMarksBefore?: SmartMark[];
   storedMarksAfter?: SmartMark[];
   metadata: {
-    source: "input" | "keyboard" | "toolbar" | "paste" | "drop" | "api";
+    source: "input" | "keyboard" | "toolbar" | "paste" | "cut" | "drop" | "api";
     timestamp: number;
     historyGroup?: string;
     addToHistory: boolean;

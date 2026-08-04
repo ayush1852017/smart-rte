@@ -24,8 +24,7 @@ if (/execCommand\(\s*["'](?:bold|italic|underline|strikeThrough|subscript|supers
 }
 const adapterFiles = readdirSync(join(root, "packages/react/src/adapters")).filter((file) => file.endsWith(".ts"));
 const markers = adapterFiles.flatMap((file) => [...read(`packages/react/src/adapters/${file}`).matchAll(/MIGRATION_ADAPTER:/g)]).length;
-const declaredCount = Number(/Active adapter count:\s*(\d+)/.exec(inventory)?.[1]);
-if (markers !== declaredCount) failures.push(`Adapter inventory says ${declaredCount}; source contains ${markers} markers.`);
+if (markers !== 3) failures.push(`Expected three feature adapters in the adapters directory; source contains ${markers}.`);
 
 if (failures.length) {
   failures.forEach((failure) => console.error(`Phase 4 contract: ${failure}`));

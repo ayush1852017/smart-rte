@@ -47,6 +47,7 @@ describe("canonical clipboard browser entry points", () => {
     pipeline.handleCut({ clipboardData: transfer, preventDefault: () => undefined } as unknown as ClipboardEvent);
     expect(text(editor)).toBe("");
     expect(editor.history.undo).toHaveLength(1);
+    expect(editor.history.undo[0].forward.metadata.source).toBe("cut");
     pipeline.destroy();
   });
 });
