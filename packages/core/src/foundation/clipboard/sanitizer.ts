@@ -47,6 +47,11 @@ export const sanitizeClipboardHtml = (
     ALLOW_UNKNOWN_PROTOCOLS: false,
     FORBID_TAGS: ["script", "iframe", "object", "embed", "form", "style", "svg"],
     FORBID_CONTENTS: ["script", "iframe", "object", "embed", "form", "style", "svg"],
+    CUSTOM_ELEMENT_HANDLING: {
+      tagNameCheck: /^x-[a-z0-9-]+$/,
+      attributeNameCheck: null,
+      allowCustomizedBuiltInElements: false,
+    },
   });
   return {
     source,

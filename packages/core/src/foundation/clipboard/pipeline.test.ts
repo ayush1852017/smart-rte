@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import { parseClipboardPayload } from "./pipeline.js";
+import { ClipboardPayloadTooLargeError, DEFAULT_MAX_CLIPBOARD_BYTES, parseClipboardPayload } from "./pipeline.js";
 import { detectClipboardSource } from "./detection.js";
 import { serializeClipboardRepresentations } from "./serialization.js";
 import { NATIVE_CLIPBOARD_MIME, type SourceNormalizer } from "./types.js";
@@ -45,6 +45,17 @@ describe("Phase 8a clipboard security boundary", () => {
     }, { ownerDocument: document });
     const serialized = JSON.stringify(result.document);
     expect(serialized).not.toContain("vbscript:");
+  });
+
+  it("preserves a sanitized safe custom element as an unknown node", () => {
+    const result = parseClipboardPayload({ html: '<x-customer-widget data-kind="safe">customer content</x-customer-widget>' }, { ownerDocument: document });
+    expect(result.document.children[0]).toMatchObject({ type: "unknown", attrs: { originalType: "x-customer-widget", editable: false } });
+    expect(JSON.stringify(result.document)).toContain("customer content");
+  });
+
+  it("refuses oversized input with a clear diagnostic", () => {
+    const html = `<p>${"x".repeat(DEFAULT_MAX_CLIPBOARD_BYTES)}</p>`;
+    expect(() => parseClipboardPayload({ html }, { ownerDocument: document })).toThrow(ClipboardPayloadTooLargeError);
   });
 });
 

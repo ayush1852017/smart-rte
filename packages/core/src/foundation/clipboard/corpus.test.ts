@@ -5,7 +5,7 @@ import { isTextNode } from "../identity.js";
 import { validate } from "../schema.js";
 import type { SmartNode } from "../types.js";
 import { detectClipboardSource } from "./detection.js";
-import { parseClipboardPayload } from "./pipeline.js";
+import { ClipboardPayloadTooLargeError, estimateClipboardPayloadBytes, parseClipboardPayload } from "./pipeline.js";
 import type { ClipboardSource, RawClipboardPayload } from "./types.js";
 
 interface CapturedFixture {
@@ -33,6 +33,7 @@ const payloadOf = (fixture: CapturedFixture): RawClipboardPayload => ({
   plainText: fixture.representations["text/plain"],
   native: fixture.representations["application/x-smart-rte+json"],
   types: fixture.types,
+  representations: fixture.representations,
 });
 const count = (node: SmartNode, type: string): number => isTextNode(node) ? 0
   : (node.type === type ? 1 : 0) + (node.children || []).reduce((total, child) => total + count(child, type), 0);
@@ -71,5 +72,20 @@ describe("captured Phase 8a corpus", () => {
     const serialized = JSON.stringify(fragment.document);
     const firstWord = (payload.plainText || "").match(/[A-Za-z]{4,}/)?.[0];
     if (firstWord) expect(serialized).toContain(firstWord);
+  });
+
+  it("accepts 10x the largest captured P0 payload and enforces a configured threshold above it", () => {
+    const captured = fixtures.map(([name]) => load(name));
+    const largest = captured.reduce((left, right) => {
+      const bytes = (fixture: CapturedFixture) => Object.values(fixture.representations).reduce((sum, value) => sum + new TextEncoder().encode(value).byteLength, 0);
+      return bytes(right) > bytes(left) ? right : left;
+    });
+    const representations = Object.fromEntries(Object.entries(largest.representations).map(([type, value]) => [type, value.repeat(10)]));
+    const stress: RawClipboardPayload = {
+      html: representations["text/html"], plainText: representations["text/plain"], types: largest.types, representations,
+    };
+    const bytes = estimateClipboardPayloadBytes(stress);
+    expect(parseClipboardPayload(stress, { ownerDocument: document }).document.children.length).toBeGreaterThan(0);
+    expect(() => parseClipboardPayload(stress, { ownerDocument: document, maxBytes: bytes - 1 })).toThrow(ClipboardPayloadTooLargeError);
   });
 });

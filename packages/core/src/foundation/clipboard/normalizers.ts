@@ -17,6 +17,21 @@ const normalizeTransparentContainers = (document: Document) => {
       element.replaceWith(paragraph);
     }
   });
+  const directNodes = Array.from(document.body.childNodes);
+  let paragraph: HTMLParagraphElement | null = null;
+  directNodes.forEach((node) => {
+    if (node.nodeType === Node.TEXT_NODE && node.textContent) {
+      paragraph ||= document.createElement("p");
+      if (!paragraph.parentNode) document.body.insertBefore(paragraph, node);
+      paragraph.append(node);
+    } else if (node.nodeType === Node.ELEMENT_NODE && !["BR", "SPAN", "B", "STRONG", "I", "EM", "U", "S", "A", "CODE"].includes((node as Element).tagName)) {
+      paragraph = null;
+    } else if (node.nodeType === Node.ELEMENT_NODE) {
+      paragraph ||= document.createElement("p");
+      if (!paragraph.parentNode) document.body.insertBefore(paragraph, node);
+      paragraph.append(node);
+    }
+  });
 };
 
 interface ListEntry {

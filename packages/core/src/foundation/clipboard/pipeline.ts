@@ -10,6 +10,22 @@ import type {
   RawClipboardPayload, SanitizedClipboardPayload, SourceNormalizer,
 } from "./types.js";
 
+export const DEFAULT_MAX_CLIPBOARD_BYTES = 5 * 1024 * 1024;
+
+export class ClipboardPayloadTooLargeError extends Error {
+  constructor(readonly actualBytes: number, readonly maximumBytes: number) {
+    super(`Clipboard payload is ${actualBytes} bytes; the limit is ${maximumBytes} bytes.`);
+    this.name = "ClipboardPayloadTooLargeError";
+  }
+}
+
+export const estimateClipboardPayloadBytes = (payload: RawClipboardPayload): number => {
+  const values = payload.representations
+    ? Object.values(payload.representations)
+    : [payload.html || "", payload.plainText || "", payload.native || ""];
+  return values.reduce((total, value) => total + new TextEncoder().encode(value).byteLength, 0);
+};
+
 const genericNormalizer: SourceNormalizer = {
   id: "generic-html",
   sources: ["native", "word", "google-docs", "spreadsheet", "markdown", "html", "plain-text"],
@@ -32,6 +48,9 @@ export const parseClipboardPayload = (
   payload: RawClipboardPayload,
   options: ClipboardPipelineOptions,
 ): ClipboardFragment => {
+  const bytes = estimateClipboardPayloadBytes(payload);
+  const maximum = Math.max(1, Math.floor(options.maxBytes ?? DEFAULT_MAX_CLIPBOARD_BYTES));
+  if (bytes > maximum) throw new ClipboardPayloadTooLargeError(bytes, maximum);
   const detection = detectClipboardSource(payload);
   const plainText = payload.plainText || "";
   const rawHtml = payload.html || textAsHtml(options.ownerDocument, plainText);

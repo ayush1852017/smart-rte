@@ -16,6 +16,8 @@ export interface RawClipboardPayload {
   readonly plainText?: string;
   readonly native?: string;
   readonly types?: readonly string[];
+  /** Complete MIME map when available; used by size guards and adapters. */
+  readonly representations?: Readonly<Record<string, string>>;
 }
 
 export interface ClipboardDetection {
@@ -64,4 +66,5 @@ export interface ClipboardPipelineOptions {
   readonly normalizers?: readonly SourceNormalizer[];
   /** Test/audit switch proving detection is never required for correctness. */
   readonly normalizerMode?: "detected" | "generic";
+  readonly maxBytes?: number;
 }
