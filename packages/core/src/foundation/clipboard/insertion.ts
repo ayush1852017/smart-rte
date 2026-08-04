@@ -18,6 +18,14 @@ export interface ClipboardInsertionResult {
   readonly definingAncestorId: string | null;
 }
 
+/** External paste is a copy: remint every non-text ID before insertion. */
+export const remintClipboardFragmentIds = (fragment: SmartDocument, idFactory: () => string): SmartDocument => {
+  const visit = (node: SmartNode): SmartNode => isTextNode(node) ? structuredClone(node) : {
+    ...structuredClone(node), id: idFactory(), children: node.children?.map(visit),
+  };
+  return visit(fragment) as SmartDocument;
+};
+
 const inlineSize = (node: SmartNode) => isTextNode(node) ? node.text.length : 1;
 const inlineChildren = (node: SmartElementNode) => node.children || [];
 const inlineLength = (node: SmartElementNode) => inlineChildren(node).reduce((total, child) => total + inlineSize(child), 0);

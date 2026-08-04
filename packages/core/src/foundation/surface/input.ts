@@ -14,7 +14,7 @@ import { applyOperations } from "../operations.js";
 import { nodeAtPath, comparePos, inlineGraphemeBoundaries } from "../positions.js";
 import { createScopeIndex } from "../scope/index.js";
 import { TransactionBuilder, type FoundationEditor } from "../editor.js";
-import type { SmartElementNode, SmartNode, SmartOperation, SmartPos, SmartRange, SmartSelection } from "../types.js";
+import type { SmartDocument, SmartElementNode, SmartNode, SmartOperation, SmartPos, SmartRange, SmartSelection } from "../types.js";
 import type { CanonicalInputPipeline, CanonicalSubtreeRenderer } from "./types.js";
 import type { SmartMark } from "../types.js";
 import {
@@ -32,6 +32,18 @@ import {
   type CodeBlockInputResult,
 } from "../block/index.js";
 import { tokenizeCompositionOwner, type CompositionToken } from "../atom/index.js";
+import {
+  deleteClipboardSelection,
+  insertClipboardFragment,
+  parseClipboardPayload,
+  remintClipboardFragmentIds,
+  serializeClipboardRepresentations,
+  sliceClipboardSelection,
+  type ClipboardInsertionResult,
+  type RawClipboardPayload,
+} from "../clipboard/index.js";
+import { FoundationTransactionMap } from "../mapping.js";
+import type { CanonicalInputPipelineOptions } from "./types.js";
 
 interface CompositionState {
   id: string;
@@ -42,6 +54,11 @@ interface CompositionState {
   observer: MutationObserver | null;
   beforeTokens: CompositionToken[];
   activeMarks: SmartMark[];
+}
+
+interface InternalDragState {
+  selection: SmartSelection;
+  fragment: SmartDocument;
 }
 
 const samePos = (left: SmartPos, right: SmartPos) => comparePos(left, right) === 0;
@@ -143,11 +160,13 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
   private readonly unhandled: string[] = [];
   private readonly ownerDocument: Document;
   private destroyed = false;
+  private internalDrag: InternalDragState | null = null;
 
   constructor(
     readonly editor: FoundationEditor,
     readonly renderer: CanonicalSubtreeRenderer,
     private readonly root: HTMLElement,
+    private readonly options: CanonicalInputPipelineOptions = {},
   ) {
     this.ownerDocument = root.ownerDocument;
     root.addEventListener("beforeinput", this.beforeInputListener);
@@ -157,8 +176,11 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
     root.addEventListener("compositionend", this.compositionEndListener);
     root.addEventListener("click", this.clickListener);
     this.ownerDocument.addEventListener("selectionchange", this.selectionChangeListener);
-    root.addEventListener("paste", this.cancelClipboard);
-    root.addEventListener("drop", this.cancelClipboard);
+    root.addEventListener("paste", this.pasteListener);
+    root.addEventListener("copy", this.copyListener);
+    root.addEventListener("cut", this.cutListener);
+    root.addEventListener("dragstart", this.dragStartListener);
+    root.addEventListener("drop", this.dropListener);
     renderer.render(editor.document, editor.selection);
     editor.resolveScope({ want: "describe" });
   }
@@ -180,10 +202,139 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
     this.renderer.render(this.editor.document, this.editor.selection);
   };
   private selectionChangeListener = () => this.syncSelectionFromDom();
-  private cancelClipboard = (event: Event) => {
+  private pasteListener = (event: Event) => this.handlePaste(event as ClipboardEvent);
+  private copyListener = (event: Event) => this.handleCopy(event as ClipboardEvent);
+  private cutListener = (event: Event) => this.handleCut(event as ClipboardEvent);
+  private dragStartListener = (event: Event) => this.handleDragStart(event as DragEvent);
+  private dropListener = (event: Event) => this.handleDrop(event as DragEvent);
+
+  private payloadFromTransfer(transfer: DataTransfer): RawClipboardPayload {
+    const representations = Object.fromEntries(Array.from(transfer.types).filter((type) => type !== "Files").map((type) => [type, transfer.getData(type)]));
+    return {
+      html: representations["text/html"], plainText: representations["text/plain"],
+      native: representations["application/x-smart-rte+json"], types: Array.from(transfer.types), representations,
+    };
+  }
+
+  private writeTransfer(transfer: DataTransfer, document: SmartDocument): void {
+    const representations = serializeClipboardRepresentations(document);
+    Object.entries(representations).forEach(([type, value]) => transfer.setData(type, value));
+  }
+
+  private selectionForPoint(event: DragEvent): SmartSelection {
+    const pointDocument = this.ownerDocument as Document & {
+      caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
+      caretRangeFromPoint?: (x: number, y: number) => Range | null;
+    };
+    const caret = pointDocument.caretPositionFromPoint?.(event.clientX, event.clientY);
+    const fallback = !caret ? pointDocument.caretRangeFromPoint?.(event.clientX, event.clientY) : null;
+    const pos = caret ? this.renderer.mapping.domToPos(caret.offsetNode, caret.offset)
+      : fallback ? this.renderer.mapping.domToPos(fallback.startContainer, fallback.startOffset) : null;
+    const target = pos || this.editor.selection.head;
+    return { type: "text", anchor: target, head: target };
+  }
+
+  private commitClipboard(result: ClipboardInsertionResult, source: "paste" | "drop"): void {
+    if (!result.operations.length) return;
+    const preview = applyOperations(this.editor.document, result.operations);
+    const lookup = createScopeIndex().positions(preview, this.editor.schema);
+    const content = lookup.contentRangeOf(result.selectionTarget.ownerId);
+    const position = lookup.positionOf(result.selectionTarget.ownerId);
+    const base = content?.from || position?.pos || this.editor.selection.head;
+    const target = content && content.from.path.length === content.to.path.length
+      && content.from.path.every((part, index) => part === content.to.path[index])
+      ? { path: [...content.from.path], offset: Math.min(result.selectionTarget.offset, content.to.offset) }
+      : { path: [...base.path], offset: base.offset };
+    this.editor.transact((builder) => {
+      builder.operations.push(...result.operations);
+      builder.setSelection({ type: "text", anchor: target, head: target });
+    }, { source, addToHistory: true });
+    this.renderer.render(this.editor.document, this.editor.selection);
+  }
+
+  handleCopy(event: ClipboardEvent): void {
+    if (!event.clipboardData || collapsed(this.editor.selection)) return;
     event.preventDefault();
-    this.unhandled.push(event.type);
-  };
+    this.writeTransfer(event.clipboardData, sliceClipboardSelection(this.editor.document, this.editor.selection));
+  }
+
+  handleCut(event: ClipboardEvent): void {
+    if (!event.clipboardData || collapsed(this.editor.selection)) return;
+    event.preventDefault();
+    this.writeTransfer(event.clipboardData, sliceClipboardSelection(this.editor.document, this.editor.selection));
+    const deletion = deleteClipboardSelection(this.editor.document, this.editor.selection, this.editor.positions);
+    this.commitClipboard({ ...deletion, definingAncestorId: null }, "paste");
+  }
+
+  handlePaste(event: ClipboardEvent): void {
+    event.preventDefault();
+    if (!event.clipboardData) {
+      this.unhandled.push("paste-without-clipboard-data");
+      return;
+    }
+    const parsed = parseClipboardPayload(this.payloadFromTransfer(event.clipboardData), { ownerDocument: this.ownerDocument });
+    const fragment = remintClipboardFragmentIds(parsed.document, createNodeId);
+    const result = insertClipboardFragment(this.editor.document, this.editor.selection, fragment, {
+      schema: this.editor.schema, positions: this.editor.positions, idFactory: createNodeId,
+    });
+    this.commitClipboard(result, "paste");
+  }
+
+  private handleDragStart(event: DragEvent): void {
+    if (!event.dataTransfer || collapsed(this.editor.selection)) return;
+    const fragment = sliceClipboardSelection(this.editor.document, this.editor.selection);
+    this.internalDrag = { selection: this.editor.selection, fragment };
+    this.writeTransfer(event.dataTransfer, fragment);
+    event.dataTransfer.effectAllowed = "move";
+  }
+
+  handleDrop(event: DragEvent): void {
+    event.preventDefault();
+    if (!event.dataTransfer) {
+      this.unhandled.push("drop-without-data-transfer");
+      return;
+    }
+    const targetSelection = this.selectionForPoint(event);
+    const files = Array.from(event.dataTransfer.files || []);
+    if (files.length) {
+      this.options.onFiles?.(files, targetSelection);
+      return;
+    }
+    if (this.internalDrag) {
+      const deletion = deleteClipboardSelection(this.editor.document, this.internalDrag.selection, this.editor.positions);
+      const preview = applyOperations(this.editor.document, deletion.operations);
+      const mappedSelection = new FoundationTransactionMap(deletion.operations).mapSelection(targetSelection);
+      const lookup = createScopeIndex().positions(preview, this.editor.schema);
+      if (this.internalDrag.selection.type === "node" && this.internalDrag.fragment.children.length === 1) {
+        const moving = this.internalDrag.fragment.children[0];
+        const targetOwner = nodeAtPath(preview, mappedSelection.head.path);
+        if (targetOwner && !isTextNode(targetOwner) && mappedSelection.head.path.length) {
+          const parentPath = mappedSelection.head.path.slice(0, -1);
+          const ownerIndex = mappedSelection.head.path[mappedSelection.head.path.length - 1];
+          const insertionOffset = ownerIndex + (mappedSelection.head.offset > 0 ? 1 : 0);
+          this.internalDrag = null;
+          this.commitClipboard({
+            operations: [...deletion.operations, { type: "insertNode", pos: { path: parentPath, offset: insertionOffset }, node: moving }],
+            selectionTarget: { ownerId: isTextNode(moving) ? targetOwner.id : moving.id, offset: 0 },
+            definingAncestorId: null,
+          }, "drop");
+          return;
+        }
+      }
+      const insertion = insertClipboardFragment(preview, mappedSelection, this.internalDrag.fragment, {
+        schema: this.editor.schema, positions: lookup, idFactory: createNodeId,
+      });
+      this.internalDrag = null;
+      this.commitClipboard({ ...insertion, operations: [...deletion.operations, ...insertion.operations] }, "drop");
+      return;
+    }
+    const parsed = parseClipboardPayload(this.payloadFromTransfer(event.dataTransfer), { ownerDocument: this.ownerDocument });
+    const fragment = remintClipboardFragmentIds(parsed.document, createNodeId);
+    const result = insertClipboardFragment(this.editor.document, targetSelection, fragment, {
+      schema: this.editor.schema, positions: this.editor.positions, idFactory: createNodeId,
+    });
+    this.commitClipboard(result, "drop");
+  }
 
   private commit(builderFn: (builder: TransactionBuilder) => SmartSelection, options: { compositionId?: string } = {}): void {
     this.editor.transact((builder) => builder.setSelection(builderFn(builder)), {
@@ -388,6 +539,9 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
       if (type === "historyUndo") this.editor.undo();
       else this.editor.redo();
       this.renderer.render(this.editor.document, this.editor.selection);
+    } else if (["insertFromPaste", "insertFromDrop", "deleteByCut"].includes(type)) {
+      // Owned by paste/drop/cut events, which carry the actual transfer payload.
+      event.preventDefault();
     } else {
       event.preventDefault();
       this.unhandled.push(type || "unknown");
@@ -643,8 +797,11 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
     this.root.removeEventListener("compositionend", this.compositionEndListener);
     this.root.removeEventListener("click", this.clickListener);
     this.ownerDocument.removeEventListener("selectionchange", this.selectionChangeListener);
-    this.root.removeEventListener("paste", this.cancelClipboard);
-    this.root.removeEventListener("drop", this.cancelClipboard);
+    this.root.removeEventListener("paste", this.pasteListener);
+    this.root.removeEventListener("copy", this.copyListener);
+    this.root.removeEventListener("cut", this.cutListener);
+    this.root.removeEventListener("dragstart", this.dragStartListener);
+    this.root.removeEventListener("drop", this.dropListener);
   }
 }
 
@@ -652,4 +809,5 @@ export const createInputPipeline = (
   editor: FoundationEditor,
   renderer: CanonicalSubtreeRenderer,
   root: HTMLElement,
-): CanonicalInputPipeline => new FoundationInputPipeline(editor, renderer, root);
+  options: CanonicalInputPipelineOptions = {},
+): CanonicalInputPipeline => new FoundationInputPipeline(editor, renderer, root, options);

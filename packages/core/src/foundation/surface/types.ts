@@ -22,6 +22,14 @@ export interface CanonicalInputPipeline {
   handleCompositionStart(event: CompositionEvent): void;
   handleCompositionUpdate(event: CompositionEvent): void;
   handleCompositionEnd(event: CompositionEvent): void;
+  handlePaste(event: ClipboardEvent): void;
+  handleCopy(event: ClipboardEvent): void;
+  handleCut(event: ClipboardEvent): void;
+  handleDrop(event: DragEvent): void;
   syncSelectionFromDom(): void;
   destroy(): void;
+}
+
+export interface CanonicalInputPipelineOptions {
+  onFiles?: (files: readonly File[], position: SmartSelection) => void;
 }
