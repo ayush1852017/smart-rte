@@ -2,6 +2,7 @@ import { createNodeId } from "../identity.js";
 import { parseCanonicalListHtml } from "../list/formats.js";
 import { foundationSchema, repair } from "../schema.js";
 import { detectClipboardSource } from "./detection.js";
+import { capturedSourceNormalizers } from "./normalizers.js";
 import { sanitizeClipboardHtml } from "./sanitizer.js";
 import { parseNativeClipboardDocument } from "./serialization.js";
 import type {
@@ -35,7 +36,10 @@ export const parseClipboardPayload = (
   const plainText = payload.plainText || "";
   const rawHtml = payload.html || textAsHtml(options.ownerDocument, plainText);
   const sanitized = sanitizeClipboardHtml(options.ownerDocument, detection.source, rawHtml, plainText);
-  const normalizer = options.normalizers?.find((candidate) => candidate.sources.includes(detection.source)) || genericNormalizer;
+  const normalizer = options.normalizerMode === "generic" ? genericNormalizer
+    : options.normalizers?.find((candidate) => candidate.sources.includes(detection.source))
+      || capturedSourceNormalizers.find((candidate) => candidate.sources.includes(detection.source))
+      || genericNormalizer;
   const normalized = normalizer.normalize(sanitized);
   const parsed = detection.source === "native" && payload.native
     ? parseNativeClipboardDocument(payload.native)

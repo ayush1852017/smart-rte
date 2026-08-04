@@ -62,4 +62,6 @@ export interface ClipboardRepresentations {
 export interface ClipboardPipelineOptions {
   readonly ownerDocument: Document;
   readonly normalizers?: readonly SourceNormalizer[];
+  /** Test/audit switch proving detection is never required for correctness. */
+  readonly normalizerMode?: "detected" | "generic";
 }
