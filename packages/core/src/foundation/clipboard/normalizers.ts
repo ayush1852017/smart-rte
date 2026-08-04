@@ -1,4 +1,4 @@
-import { markdownToCompatibilityHtml } from "../../markdown/compatibility.js";
+import { parseCanonicalListMarkdown, serializeCanonicalListHtml } from "../list/formats.js";
 import type { NormalizedClipboardPayload, SanitizedClipboardPayload, SourceNormalizer } from "./types.js";
 
 const listTags = new Set(["UL", "OL"]);
@@ -135,7 +135,12 @@ export const markdownClipboardNormalizer: SourceNormalizer = {
   id: "markdown",
   sources: ["markdown"],
   normalize(payload) {
-    return { html: markdownToCompatibilityHtml(payload.plainText), plainText: payload.plainText, repairs: ["markdown:gfm-parse"] };
+    const document = parseCanonicalListMarkdown(payload.plainText);
+    return {
+      html: serializeCanonicalListHtml(document, { clean: true, fragment: true }),
+      plainText: payload.plainText,
+      repairs: ["markdown:gfm-parse"],
+    };
   },
 };
 

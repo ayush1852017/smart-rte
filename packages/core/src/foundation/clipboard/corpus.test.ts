@@ -33,7 +33,7 @@ const expectedCanonicalHashes: Record<string, string> = {
   "google-docs-clipboard.clipboard.json": "53c031ef",
   "google-sheets-clipboard.clipboard.json": "7d90f1a7",
   "excel-clipboard.clipboard.json": "8f56ffb5",
-  "markdown-plain-text-clipboard.clipboard.json": "7b1d5a9f",
+  "markdown-plain-text-clipboard.clipboard.json": "fbe7bef8",
   "native-smart-rte-clipboard.clipboard.json": "4e57a651",
   "plain-text-clipboard.clipboard.json": "338a8736",
   "generic-web-clipboard.clipboard.json": "0c01e672",
