@@ -12,6 +12,7 @@ import { createReactEditorPluginRuntime, matchesPluginShortcut, type ReactContex
 import { createEditorFormatRuntime, type EditorFormatConfig, type EditorFormatDefinition, type EditorFormatExportResult } from '../formatRuntime.js';
 import { createBuiltInFormatDefinitions } from '../builtInFormatDefinitions.js';
 import { createDomEditorController, type DomEditorController } from '../editorController.js';
+import { insertCanonicalClipboardData } from '../canonicalClipboardRuntime.js';
 import {
   executeCanonicalListCheck,
   executeCanonicalListDepth,
@@ -2040,12 +2041,12 @@ export function ClassicEditor({
     } catch {}
   };
 
-  type CleanHtmlOptions = {
+  type CleanImportHtmlOptions = {
     preserveColors?: boolean;
     preserveDocumentLayout?: boolean;
   };
 
-  const cleanPastedHtml = (html: string, options: CleanHtmlOptions = {}) => {
+  const cleanImportedHtml = (html: string, options: CleanImportHtmlOptions = {}) => {
     const shouldPreserveColors = options.preserveColors ?? preserveColors;
     const shouldPreserveDocumentLayout = options.preserveDocumentLayout ?? false;
     const template = document.createElement('template');
@@ -2171,9 +2172,9 @@ export function ClassicEditor({
     sel?.addRange(range);
   };
 
-  const insertImportedHtml = (html: string, mode: 'replace' | 'append', cleanOptions?: CleanHtmlOptions) => {
+  const insertImportedHtml = (html: string, mode: 'replace' | 'append', cleanOptions?: CleanImportHtmlOptions) => {
     try {
-      const cleanHtml = cleanPastedHtml(html, cleanOptions);
+      const cleanHtml = cleanImportedHtml(html, cleanOptions);
       if (mode === 'replace') replaceEditorHtml(cleanHtml);
       else insertHtmlAtEnd(cleanHtml);
       normalizeEditorContent();
@@ -2181,14 +2182,6 @@ export function ClassicEditor({
     } catch (error) {
       console.error('Error inserting imported content:', error);
     }
-  };
-
-  const insertCleanHtml = (html: string) => {
-    try {
-      document.execCommand("insertHTML", false, cleanPastedHtml(html));
-      normalizeEditorContent();
-      emitChange();
-    } catch {}
   };
 
   const ensureTableWrappers = (root: HTMLElement) => {
@@ -4643,10 +4636,12 @@ export function ClassicEditor({
             }
 
             pushEditorHistory();
-            const html = e.clipboardData?.getData("text/html");
-            if (html) {
+            if (e.clipboardData?.types.length) {
               e.preventDefault();
-              insertCleanHtml(cleanPastedHtml(html));
+              if (insertCanonicalClipboardData(e.clipboardData, document)) {
+                normalizeEditorContent();
+                emitChange();
+              }
             }
           }}
           onDragOver={(e) => {
