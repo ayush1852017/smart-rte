@@ -1050,52 +1050,6 @@ export function ClassicEditor({
     } catch {}
   };
 
-  const copyCellOrBlockStyles = (from: HTMLElement, to: HTMLElement) => {
-    to.innerHTML = from.innerHTML || "<br>";
-    const style = from.getAttribute("style");
-    if (style) to.setAttribute("style", style);
-  };
-
-  const applyHeaderCellStyle = (cell: HTMLElement) => {
-    cell.style.fontWeight = "700";
-    cell.style.background = "#f3f4f6";
-    cell.style.textAlign = cell.style.textAlign || "left";
-  };
-
-  const clearHeaderCellStyle = (cell: HTMLElement) => {
-    if (cell.style.fontWeight === "700" || cell.style.fontWeight === "bold") cell.style.fontWeight = "";
-    if (cell.style.background === "var(--srte-surface-subtle)" || cell.style.background === "rgb(243, 244, 246)" || cell.style.background === "#f3f4f6") cell.style.background = "";
-  };
-
-  const replaceTableCellTag = (cell: HTMLTableCellElement, tag: "td" | "th") => {
-    const replacement = document.createElement(tag);
-    replacement.innerHTML = cell.innerHTML || "&nbsp;";
-    replacement.colSpan = cell.colSpan;
-    replacement.rowSpan = cell.rowSpan;
-    const style = cell.getAttribute("style");
-    if (style) replacement.setAttribute("style", style);
-    if ((cell as any).__rtePrevBg != null) {
-      replacement.style.background = (cell as any).__rtePrevBg || "";
-      delete (cell as any).__rtePrevBg;
-    }
-    if (
-      replacement.style.background === "var(--srte-accent-bg)" ||
-      replacement.style.background.includes("59, 130, 246") ||
-      replacement.style.background.includes("59, 158, 255")
-    ) {
-      replacement.style.background = "";
-    }
-    replacement.style.outline = "";
-    replacement.style.outlineOffset = "";
-    replacement.style.border = replacement.style.border || "1px solid #d1d5db";
-    replacement.style.padding = replacement.style.padding || "6px";
-    replacement.style.minWidth = replacement.style.minWidth || "60px";
-    if (tag === "th") applyHeaderCellStyle(replacement);
-    else clearHeaderCellStyle(replacement);
-    cell.parentElement?.replaceChild(replacement, cell);
-    return replacement as HTMLTableCellElement;
-  };
-
   const normalizeBlockTag = (blockName: string) => {
     const tag = blockName.replace(/[<>]/g, "").toLowerCase() || "p";
     return /^(p|h1|h2|h3|h4|h5|h6|pre|blockquote)$/.test(tag) ? tag : null;
@@ -2350,22 +2304,6 @@ export function ClassicEditor({
     }
   };
 
-  const buildTableHTML = (rows: number, cols: number) => {
-    const safeRows = Math.max(1, Math.min(50, Math.floor(rows) || 1));
-    const safeCols = Math.max(1, Math.min(20, Math.floor(cols) || 1));
-    let html = '<div data-table-wrapper="true" style="overflow-x:auto;-webkit-overflow-scrolling:touch;width:100%;max-width:100%;display:block;"><table style="border-collapse:collapse;min-width:100%;"><tbody>';
-    for (let r = 0; r < safeRows; r++) {
-      html += "<tr>";
-      for (let c = 0; c < safeCols; c++) {
-        html +=
-          '<td style="border:1px solid #d1d5db;padding:6px;min-width:60px;">&nbsp;</td>';
-      }
-      html += "</tr>";
-    }
-    html += "</tbody></table></div>";
-    return html;
-  };
-
   const insertTable = () => {
     try {
       const el = editableRef.current;
@@ -2403,41 +2341,9 @@ export function ClassicEditor({
           const firstCell = inserted.querySelector("td,th");
           if (firstCell instanceof HTMLTableCellElement) moveCaretToCell(firstCell, false);
           handleInput();
-          return;
         }
+        return;
       }
-      const html = buildTableHTML(tableRows, tableCols);
-      // Insert via Range for broader support
-      const wrapper = document.createElement("div");
-      wrapper.innerHTML = html;
-      const node = wrapper.firstChild as HTMLElement | null;
-      if (!node || !range) return;
-      pushEditorHistory();
-      if (!range.collapsed) range.deleteContents();
-      range.insertNode(node);
-      
-      // Add resize handles to the new table
-      const insertedTable = node instanceof HTMLTableElement ? node : node.querySelector("table");
-      if (insertedTable) {
-        const tbody = insertedTable.querySelector('tbody');
-        if (tbody) {
-          const rows = Array.from(tbody.querySelectorAll('tr'));
-          rows.forEach((row, index) => {
-            (row as HTMLElement).setAttribute('data-row-index', String(index));
-            const cells = cellsOfRow(row as HTMLTableRowElement);
-            cells.forEach((cell, cellIndex) => {
-              (cell as HTMLElement).setAttribute('data-col-index', String(cellIndex));
-            });
-          });
-        }
-      }
-      
-      // Move caret into first cell
-      const firstCell = node.querySelector(
-        "td,th"
-      ) as HTMLTableCellElement | null;
-      if (firstCell) moveCaretToCell(firstCell, false);
-      handleInput();
     } catch {}
   };
 
@@ -2535,6 +2441,7 @@ export function ClassicEditor({
     ) as HTMLTableCellElement[];
 
   const clearSelectionDecor = () => {
+    document.querySelectorAll('[data-smart-ui="table-cell-selection"]').forEach((overlay) => overlay.remove());
     const sel = selectionRef.current;
     if (!sel) return;
     const { tbody, sr, sc, er, ec } = sel;
@@ -2558,14 +2465,44 @@ export function ClassicEditor({
     ec: number
   ) => {
     clearSelectionDecor();
-    selectionRef.current = { tbody, sr, sc, er, ec };
-    const cells = getCellsInGridRect(tbody, sr, sc, er, ec);
+    const { grid } = getTableGrid(tbody);
+    const snapped = { sr: Math.min(sr, er), sc: Math.min(sc, ec), er: Math.max(sr, er), ec: Math.max(sc, ec) };
+    let changed = true;
+    while (changed) {
+      changed = false;
+      const touched = getCellsInGridRect(tbody, snapped.sr, snapped.sc, snapped.er, snapped.ec);
+      touched.forEach((cell) => {
+        const coordinates: Array<{ row: number; column: number }> = [];
+        grid.forEach((row, rowIndex) => row.forEach((candidate, column) => { if (candidate === cell) coordinates.push({ row: rowIndex, column }); }));
+        const next = {
+          sr: Math.min(snapped.sr, ...coordinates.map((point) => point.row)),
+          sc: Math.min(snapped.sc, ...coordinates.map((point) => point.column)),
+          er: Math.max(snapped.er, ...coordinates.map((point) => point.row)),
+          ec: Math.max(snapped.ec, ...coordinates.map((point) => point.column)),
+        };
+        if (next.sr !== snapped.sr || next.sc !== snapped.sc || next.er !== snapped.er || next.ec !== snapped.ec) { Object.assign(snapped, next); changed = true; }
+      });
+    }
+    selectionRef.current = { tbody, ...snapped };
+    const cells = getCellsInGridRect(tbody, snapped.sr, snapped.sc, snapped.er, snapped.ec);
     cells.forEach((cell) => {
       (cell as any).__rtePrevBg = cell.style.background || "";
       cell.style.background = "var(--srte-accent-bg)";
       cell.style.outline = "2px solid var(--srte-accent)";
       cell.style.outlineOffset = "-2px";
     });
+    if (cells.length) {
+      const bounds = cells.map((cell) => cell.getBoundingClientRect()).reduce((box, rect) => ({
+        top: Math.min(box.top, rect.top), left: Math.min(box.left, rect.left),
+        right: Math.max(box.right, rect.right), bottom: Math.max(box.bottom, rect.bottom),
+      }), { top: Number.POSITIVE_INFINITY, left: Number.POSITIVE_INFINITY, right: 0, bottom: 0 });
+      const overlay = document.createElement("div");
+      overlay.setAttribute("data-smart-ui", "table-cell-selection");
+      overlay.setAttribute("aria-label", `${cells.length} table cells selected`);
+      overlay.contentEditable = "false";
+      overlay.style.cssText = `position:fixed;pointer-events:none;z-index:9999;top:${bounds.top}px;left:${bounds.left}px;width:${Math.max(0, bounds.right - bounds.left)}px;height:${Math.max(0, bounds.bottom - bounds.top)}px`;
+      document.body.appendChild(overlay);
+    }
   };
 
   const canMergeSelection = () => {
@@ -2618,33 +2555,12 @@ export function ClassicEditor({
         return;
       }
     }
-    // Collect content and remove other cells
-    const contents: string[] = [];
-    const cellsToMerge = getCellsInGridRect(tbody, sr, sc, er, ec);
-    cellsToMerge.forEach((cell) => {
-      if (cell === anchor) return;
-      const html = cell.innerHTML.trim();
-      if (html) contents.push(html);
-    });
-    if (contents.length) {
-      anchor.innerHTML = (anchor.innerHTML || "") + " " + contents.join(" ");
-    }
-    // Set spans
-    anchor.colSpan = ec - sc + 1;
-    anchor.rowSpan = er - sr + 1;
-    // Remove other cells
-    cellsToMerge.forEach((cell) => {
-      if (cell !== anchor) cell.remove();
-    });
-    moveCaretToCell(anchor, false);
-    clearSelectionDecor();
-    handleInput();
   };
 
   const addRow = (cell: HTMLTableCellElement, dir: "above" | "below") => {
     const pos = getCellPosition(cell);
     if (!pos) return;
-    const { row, tbody, rIdx, table } = pos;
+    const { rIdx, table } = pos;
     const insertIndex = dir === "above" ? rIdx : rIdx + 1;
     const replacement = editorControllerRef.current!.bindRoot(editableRef.current).executeTableCommand(table, {
       id: "table.row.add",
@@ -2657,26 +2573,12 @@ export function ClassicEditor({
       addTableResizeHandles();
       return;
     }
-    const newRow = document.createElement("tr");
-    const numCols = Array.from(row.children).filter((c) =>
-      ["TD", "TH"].includes((c as HTMLElement).tagName)
-    ).length;
-    for (let i = 0; i < numCols; i++) {
-      const td = document.createElement("td");
-      td.style.border = "1px solid #d1d5db";
-      td.style.padding = "6px";
-      td.style.minWidth = "60px";
-      td.innerHTML = "&nbsp;";
-      newRow.appendChild(td);
-    }
-    const refRow = tbody.children[insertIndex] || null;
-    tbody.insertBefore(newRow, refRow);
   };
 
   const deleteRow = (cell: HTMLTableCellElement) => {
     const pos = getCellPosition(cell);
     if (!pos) return;
-    const { row, tbody, table, rIdx } = pos;
+    const { table, rIdx } = pos;
     const replacement = editorControllerRef.current!.bindRoot(editableRef.current).executeTableCommand(table, {
       id: "table.row.remove",
       input: { index: rIdx },
@@ -2689,16 +2591,12 @@ export function ClassicEditor({
       addTableResizeHandles();
       return;
     }
-    tbody.removeChild(row);
-    if (tbody.querySelectorAll("tr").length === 0) {
-      table.parentElement?.removeChild(table);
-    }
   };
 
   const addCol = (cell: HTMLTableCellElement, dir: "left" | "right") => {
     const pos = getCellPosition(cell);
     if (!pos) return;
-    const { tbody, cIdx } = pos;
+    const { cIdx } = pos;
     const insertIndex = dir === "left" ? cIdx : cIdx + 1;
     const replacement = editorControllerRef.current!.bindRoot(editableRef.current).executeTableCommand(pos.table, {
       id: "table.column.add",
@@ -2711,26 +2609,12 @@ export function ClassicEditor({
       addTableResizeHandles();
       return;
     }
-    const rows = Array.from(tbody.querySelectorAll("tr"));
-    for (const r of rows) {
-      const cells = Array.from(r.children).filter((c) =>
-        ["TD", "TH"].includes((c as HTMLElement).tagName)
-      );
-      const td = document.createElement("td");
-      td.style.border = "1px solid #d1d5db";
-      td.style.padding = "6px";
-      td.style.minWidth = "60px";
-      td.innerHTML = "&nbsp;";
-      const ref = (cells[insertIndex] as HTMLElement) || null;
-      if (ref) r.insertBefore(td, ref);
-      else r.appendChild(td);
-    }
   };
 
   const deleteCol = (cell: HTMLTableCellElement) => {
     const pos = getCellPosition(cell);
     if (!pos) return;
-    const { tbody, table, cIdx } = pos;
+    const { table, cIdx } = pos;
     const replacement = editorControllerRef.current!.bindRoot(editableRef.current).executeTableCommand(table, {
       id: "table.column.remove",
       input: { index: cIdx },
@@ -2744,17 +2628,6 @@ export function ClassicEditor({
       addTableResizeHandles();
       return;
     }
-    const rows = Array.from(tbody.querySelectorAll("tr"));
-    for (const r of rows) {
-      const cells = Array.from(r.children).filter((c) =>
-        ["TD", "TH"].includes((c as HTMLElement).tagName)
-      );
-      const target = cells[cIdx] as HTMLElement | undefined;
-      if (target) r.removeChild(target);
-    }
-    // If table has no columns left, remove it
-    const hasAnyCell = table.querySelector("td,th");
-    if (!hasAnyCell) table.parentElement?.removeChild(table);
   };
 
   const toggleHeaderCell = (cell: HTMLTableCellElement) => {
@@ -2771,26 +2644,20 @@ export function ClassicEditor({
       addTableResizeHandles();
       return;
     }
-    const isTh = cell.tagName === "TH";
-    replaceTableCellTag(cell, isTh ? "td" : "th");
-    handleInput();
   };
 
   const deleteTable = (cell: HTMLTableCellElement) => {
     const pos = getCellPosition(cell);
     if (!pos) return;
     const { table } = pos;
-    if (editorControllerRef.current!.bindRoot(editableRef.current).removeTable(table)) return;
-    table.parentElement?.removeChild(table);
+    editorControllerRef.current!.bindRoot(editableRef.current).removeTable(table);
   };
 
   const splitCell = (cell: HTMLTableCellElement) => {
     const pos = getCellPosition(cell);
     if (!pos) return;
-    const { tbody, rIdx, cIdx } = pos;
-    const rs = Math.max(1, cell.rowSpan || 1);
-    const cs = Math.max(1, cell.colSpan || 1);
-    if (rs === 1 && cs === 1) return;
+    const { rIdx, cIdx } = pos;
+    if (Math.max(1, cell.rowSpan || 1) === 1 && Math.max(1, cell.colSpan || 1) === 1) return;
     clearSelectionDecor();
     const replacement = editorControllerRef.current!.bindRoot(editableRef.current).executeTableCommand(pos.table, {
       id: "table.cell.split",
@@ -2803,38 +2670,6 @@ export function ClassicEditor({
       addTableResizeHandles();
       return;
     }
-    // Reset current cell
-    cell.rowSpan = 1;
-    cell.colSpan = 1;
-    // Add missing cells in the current row
-    const currentRow = Array.from(tbody.querySelectorAll("tr"))[rIdx];
-    for (let j = 1; j < cs; j++) {
-      const td = document.createElement("td");
-      td.style.border = "1px solid #d1d5db";
-      td.style.padding = "6px";
-      td.style.minWidth = "60px";
-      td.innerHTML = "&nbsp;";
-      const cells = cellsOfRow(currentRow as HTMLTableRowElement);
-      const ref = cells[cIdx + j] || null;
-      (currentRow as HTMLTableRowElement).insertBefore(td, ref);
-    }
-    // For extra rows, insert cells at the same column index
-    for (let i = 1; i < rs; i++) {
-      const row = Array.from(tbody.querySelectorAll("tr"))[
-        rIdx + i
-      ] as HTMLTableRowElement;
-      for (let j = 0; j < cs; j++) {
-        const td = document.createElement("td");
-        td.style.border = "1px solid #d1d5db";
-        td.style.padding = "6px";
-        td.style.minWidth = "60px";
-        td.innerHTML = "&nbsp;";
-        const cells = cellsOfRow(row);
-        const ref = cells[cIdx + j] || null;
-        row.insertBefore(td, ref);
-      }
-    }
-    handleInput();
   };
 
   const toggleHeaderRow = (cell: HTMLTableCellElement) => {
@@ -2851,18 +2686,6 @@ export function ClassicEditor({
       addTableResizeHandles();
       return;
     }
-    const { row } = pos;
-    const cells = cellsOfRow(row);
-    const shouldMakeHeader = cells.some((c) => c.tagName !== "TH");
-    for (const c of cells) {
-      const isTh = c.tagName === "TH";
-      if (shouldMakeHeader && !isTh) {
-        replaceTableCellTag(c, "th");
-      } else if (!shouldMakeHeader && isTh) {
-        replaceTableCellTag(c, "td");
-      }
-    }
-    handleInput();
   };
 
   const toggleHeaderColumn = (cell: HTMLTableCellElement) => {
@@ -2879,22 +2702,6 @@ export function ClassicEditor({
       addTableResizeHandles();
       return;
     }
-    const { tbody, cIdx } = pos;
-    const { grid } = getTableGrid(tbody);
-    const seen = new Set<HTMLTableCellElement>();
-    const columnCells = grid
-      .map((row) => row?.[cIdx])
-      .filter((candidate): candidate is HTMLTableCellElement => {
-        if (!candidate || seen.has(candidate)) return false;
-        seen.add(candidate);
-        return true;
-      });
-    const shouldMakeHeader = columnCells.some((c) => c.tagName !== "TH");
-
-    for (const c of columnCells) {
-      replaceTableCellTag(c, shouldMakeHeader ? "th" : "td");
-    }
-    handleInput();
   };
 
   const applyBgToSelection = (
@@ -2939,12 +2746,7 @@ export function ClassicEditor({
         return;
       }
     }
-    const applyFill = (cell: HTMLTableCellElement) => {
-      cell.style.background = hex;
-      if (readableColor) cell.style.color = readableColor;
-    };
     clearSelectionDecor();
-    targetCells.forEach(applyFill);
   };
 
   const tableCellFillHex = (cell: HTMLTableCellElement) => {
@@ -5095,6 +4897,29 @@ export function ClassicEditor({
             }
             const nativeAnchor = window.getSelection()?.anchorNode;
             const nativeElement = nativeAnchor instanceof HTMLElement ? nativeAnchor : nativeAnchor?.parentElement;
+            const activeTableCell = getClosestCell(nativeAnchor || null);
+            if (e.key === "Tab" && table && activeTableCell) {
+              const position = getCellPosition(activeTableCell);
+              if (position) {
+                e.preventDefault();
+                const logical = getTableGrid(position.tbody).grid;
+                const ordered: HTMLTableCellElement[] = [];
+                logical.forEach((row) => row.forEach((cell) => { if (cell && ordered[ordered.length - 1] !== cell && !ordered.includes(cell)) ordered.push(cell); }));
+                const current = ordered.indexOf(activeTableCell);
+                const target = ordered[current + (e.shiftKey ? -1 : 1)];
+                if (target) moveCaretToCell(target, e.shiftKey);
+                else if (!e.shiftKey && current === ordered.length - 1) {
+                  const replacement = editorControllerRef.current!.bindRoot(editableRef.current).executeTableCommand(position.table, {
+                    id: "table.row.add", input: { index: logical.length },
+                  });
+                  const next = replacement?.tBodies[0] ? getTableGrid(replacement.tBodies[0]).grid[logical.length]?.[0] : null;
+                  if (next) moveCaretToCell(next, false);
+                  addTableResizeHandles();
+                  handleInput();
+                }
+                return;
+              }
+            }
             const activeCodeBlock = nativeElement?.closest("pre");
             if (activeCodeBlock && editableRef.current?.contains(activeCodeBlock)
               && (e.key === "Enter" || e.key === "Tab")) {

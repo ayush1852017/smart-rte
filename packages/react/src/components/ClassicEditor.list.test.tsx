@@ -822,7 +822,7 @@ describe("ClassicEditor lists", () => {
 
     expect(editor.querySelectorAll("tr > td")).toHaveLength(2);
     expect(cell.style.border).toContain("red");
-    expect(tab.defaultPrevented).toBe(false);
+    expect(tab.defaultPrevented).toBe(true);
     expect(Array.from(cell.querySelectorAll(":scope > ol > li"), (item) => item.textContent)).toEqual(["one", "two"]);
     expect(cell.querySelector("ol > li > ol")).toBeNull();
     expect(editor.querySelector("tr > ol, tbody > ol, table > ol")).toBeNull();
