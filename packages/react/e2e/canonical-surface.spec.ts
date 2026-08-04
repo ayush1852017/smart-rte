@@ -212,7 +212,11 @@ test.describe("Phase 2.5 canonical editing surface", () => {
     });
     expect(result.prevented).toEqual([true, true, true]);
     expect(result.text).toBe("start");
-    expect(result.logged).toEqual(expect.arrayContaining(["insertFromYank", "paste", "drop"]));
+    expect(result.logged).toEqual(expect.arrayContaining([
+      "insertFromYank",
+      "paste-without-clipboard-data",
+      "drop-without-data-transfer",
+    ]));
   });
 
   test("promotes a native crossing selection before storing it", async ({ page }) => {

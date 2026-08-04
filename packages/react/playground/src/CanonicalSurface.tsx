@@ -11,12 +11,14 @@ import {
   type CanonicalSubtreeRenderer,
   type FoundationEditor,
   type SmartDocument,
+  type RawClipboardPayload,
   type SmartSchema,
 } from "smartrte-core/foundation";
 import { runDualEngineListShadowCorpus } from "../../src/adapters/legacyListShadowComparator.js";
 import { runInlineShadowCorpus } from "../../src/test-harness/inlineShadowComparator.js";
 import { runBlockShadowCorpus } from "../../src/test-harness/blockShadowComparator.js";
 import { runAtomShadowCorpus } from "../../src/test-harness/atomShadowComparator.js";
+import { compareClipboardFixture } from "../../src/test-harness/clipboardShadowComparator.js";
 
 declare global {
   interface Window {
@@ -30,6 +32,7 @@ declare global {
       runInlineShadowCorpus: (scenarios?: number) => ReturnType<typeof runInlineShadowCorpus>;
       runBlockShadowCorpus: (scenarios?: number) => ReturnType<typeof runBlockShadowCorpus>;
       runAtomShadowCorpus: (scenarios?: number) => ReturnType<typeof runAtomShadowCorpus>;
+      compareClipboardFixture: (fixtureId: string, payload: RawClipboardPayload) => ReturnType<typeof compareClipboardFixture>;
       runAtomLifecycle: () => { completed: boolean; removedByUndo: boolean; staleDropped: boolean; historyDepth: number };
     };
   }
@@ -179,6 +182,12 @@ export default function CanonicalSurface() {
       runInlineShadowCorpus: (scenarios = 1_000) => runInlineShadowCorpus(scenarios),
       runBlockShadowCorpus: (scenarios = 1_000) => runBlockShadowCorpus(scenarios),
       runAtomShadowCorpus: (scenarios = 700) => runAtomShadowCorpus(scenarios),
+      compareClipboardFixture: (fixtureId, payload) => compareClipboardFixture(
+        fixtureId,
+        payload,
+        document,
+        "expected-normalization",
+      ),
       runAtomLifecycle: () => {
         const declaration = atomDeclarations.find((entry) => entry.type === "image")!;
         const scope = { kind: "empty", range: { from: { path: [0], offset: 0 }, to: { path: [0], offset: 0 } }, isolatingAncestorId: null, clamped: false } as const;
