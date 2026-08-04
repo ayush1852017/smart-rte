@@ -25,3 +25,4 @@ export * from "./marks/index.js";
 export * from "./security/urlPolicy.js";
 export * from "./structural/index.js";
 export * from "./block/index.js";
+export * from "./table/index.js";

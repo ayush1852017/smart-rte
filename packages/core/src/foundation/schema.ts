@@ -13,6 +13,8 @@ import type {
   ValidationError,
 } from "./types.js";
 import { listNodeSpecs } from "./list/schema.js";
+import { tableNodeSpecs } from "./table/schema.js";
+import { repairTableGeometry, validateTableGeometry } from "./table/grid.js";
 import { canonicalMarkOrder, compareMarks } from "./marks/canonical.js";
 import { hardBreakNodeSpec, inlineMarkSpecs } from "./marks/schema.js";
 
@@ -190,6 +192,7 @@ export const foundationSchema = createSchema({
     { type: "blockquote", group: "block", content: "block+", attributes: blockAttrs, defining: true },
     { type: "code_block", group: "block", content: "text*", marks: "", attributes: { ...blockAttrs, language: stringAttr }, defining: true },
     ...listNodeSpecs,
+    ...tableNodeSpecs,
     { type: "text", group: "inline", marks: "_all" },
     hardBreakNodeSpec,
     { type: "unknown", group: "block", atomic: true, isolating: true, selectable: true, attributes: {
@@ -262,6 +265,9 @@ export const validate = (document: SmartDocument, schema: SmartSchema = foundati
       errors.push({ path, code: "unexpected-content", message: `Node "${node.type}" does not allow children.` });
     }
     children.forEach((child, index) => visit(child, [...path, index], spec));
+    if (node.type === "table") validateTableGeometry(node).forEach((issue) => errors.push({
+      path, code: `table-${issue.code}`, message: issue.message,
+    }));
   };
   visit(document, []);
   return errors;
@@ -371,7 +377,12 @@ export const repair = (
         ? child
         : { type: "paragraph", id: createNodeId(), children: [child] });
     }
-    const repaired: SmartElementNode = { type: source.type, id, ...(Object.keys(attrs).length ? { attrs } : {}), ...(spec.content ? { children } : {}) };
+    let repaired: SmartElementNode = { type: source.type, id, ...(Object.keys(attrs).length ? { attrs } : {}), ...(spec.content ? { children } : {}) };
+    if (source.type === "table") {
+      const geometry = repairTableGeometry(repaired);
+      repaired = geometry.table;
+      geometry.repairs.forEach((issue) => repairs.push({ path, code: `table-${issue.code}`, message: issue.message, before: source, after: repaired }));
+    }
     return repaired;
   };
   const root = repairNode(input, [], "document");

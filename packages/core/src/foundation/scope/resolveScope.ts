@@ -1,4 +1,5 @@
 import { isTextNode } from "../identity.js";
+import { occupancyGridFor, type GridCell } from "../table/index.js";
 import type {
   ResolvedPos,
   SmartDocument,
@@ -666,37 +667,6 @@ const resolveListSelection = (context: ResolutionContext): ResolvedScope => {
   return { kind: "mixed", ...baseFor(context), parts: parts.map((part) => part.scope) };
 };
 
-interface GridCell { entry: Entry; top: number; left: number; bottom: number; right: number }
-interface Grid { table: Entry; cells: GridCell[]; occupancy: Array<Array<GridCell | undefined>> }
-
-const integerAttr = (node: SmartElementNode, key: "rowspan" | "colspan") => {
-  const value = node.attrs?.[key];
-  return Number.isInteger(value) && Number(value) > 0 ? Number(value) : 1;
-};
-
-const buildGrid = (table: Entry): Grid => {
-  const occupancy: Array<Array<GridCell | undefined>> = [];
-  const cells: GridCell[] = [];
-  const rows = table.children.filter(isTableRow);
-  rows.forEach((row, top) => {
-    occupancy[top] ||= [];
-    let left = 0;
-    row.children.filter(isTableCell).forEach((entry) => {
-      while (occupancy[top][left]) left += 1;
-      const rowspan = integerAttr(entry.node, "rowspan");
-      const colspan = integerAttr(entry.node, "colspan");
-      const cell = { entry, top, left, bottom: top + rowspan - 1, right: left + colspan - 1 };
-      cells.push(cell);
-      for (let rowIndex = cell.top; rowIndex <= cell.bottom; rowIndex += 1) {
-        occupancy[rowIndex] ||= [];
-        for (let column = cell.left; column <= cell.right; column += 1) occupancy[rowIndex][column] = cell;
-      }
-      left += colspan;
-    });
-  });
-  return { table, cells, occupancy };
-};
-
 const endpointCell = (endpoint: Endpoint) => nearestAncestor(endpoint.entry, isTableCell);
 const touchedCells = (context: ResolutionContext, table: Entry) => {
   if (context.from.rank === context.to.rank) {
@@ -707,45 +677,51 @@ const touchedCells = (context: ResolutionContext, table: Entry) => {
 };
 
 const tablePart = (context: ResolutionContext, table: Entry): TableGridScope | EmptyScope => {
-  const grid = buildGrid(table);
+  const grid = occupancyGridFor(table.node);
   const fromCell = endpointCell(context.from);
   const toCell = endpointCell(context.to);
   let selected: GridCell[];
   if (fromCell && toCell && context.from.resolved.pos && context.to.resolved.pos) {
-    const first = grid.cells.find((cell) => cell.entry === fromCell);
-    const last = grid.cells.find((cell) => cell.entry === toCell);
+    const first = grid.anchors.find((cell) => cell.cellId === fromCell.node.id);
+    const last = grid.anchors.find((cell) => cell.cellId === toCell.node.id);
     if (first && last && context.from.resolved.pos && context.to.resolved.pos && fromCell !== toCell) {
       const bounds = {
         top: Math.min(first.top, last.top), left: Math.min(first.left, last.left),
         bottom: Math.max(first.bottom, last.bottom), right: Math.max(first.right, last.right),
       };
-      selected = grid.cells.filter((cell) => cell.top >= bounds.top && cell.left >= bounds.left && cell.top <= bounds.bottom && cell.left <= bounds.right);
-    } else selected = grid.cells.filter((cell) => touchedCells(context, table).includes(cell.entry));
-  } else selected = grid.cells.filter((cell) => touchedCells(context, table).includes(cell.entry));
+      selected = grid.anchors.filter((cell) => cell.top >= bounds.top && cell.left >= bounds.left && cell.top < bounds.bottom && cell.left < bounds.right);
+    } else {
+      const touched = new Set(touchedCells(context, table).map((entry) => entry.node.id));
+      selected = grid.anchors.filter((cell) => touched.has(cell.cellId));
+    }
+  } else {
+    const touched = new Set(touchedCells(context, table).map((entry) => entry.node.id));
+    selected = grid.anchors.filter((cell) => touched.has(cell.cellId));
+  }
   if (!selected.length) return emptyScope(context);
   const rect = {
     top: Math.min(...selected.map((cell) => cell.top)),
     left: Math.min(...selected.map((cell) => cell.left)),
-    bottom: Math.max(...selected.map((cell) => cell.bottom)),
-    right: Math.max(...selected.map((cell) => cell.right)),
+    bottom: Math.max(...selected.map((cell) => cell.bottom)) - 1,
+    right: Math.max(...selected.map((cell) => cell.right)) - 1,
   };
-  const selectedSet = new Set(selected);
+  const selectedSet = new Set(selected.map((cell) => cell.cellId));
   const covered = new Set<string>();
   let rectangular = true;
   for (let row = rect.top; row <= rect.bottom; row += 1) {
     for (let column = rect.left; column <= rect.right; column += 1) {
-      const occupant = grid.occupancy[row]?.[column];
-      if (!occupant || !selectedSet.has(occupant)) rectangular = false;
-      if (occupant && (occupant.top < rect.top || occupant.left < rect.left)) covered.add(occupant.entry.node.id);
+      const occupant = grid.at(row, column);
+      if (!occupant || !selectedSet.has(occupant.cellId)) rectangular = false;
+      if (occupant && (occupant.top < rect.top || occupant.left < rect.left)) covered.add(occupant.cellId);
     }
   }
-  if (selected.some((cell) => cell.bottom > rect.bottom || cell.right > rect.right)) rectangular = false;
+  if (selected.some((cell) => cell.bottom - 1 > rect.bottom || cell.right - 1 > rect.right)) rectangular = false;
   return {
     kind: "table-grid",
     ...baseFor(context, nearestAncestor(table, (entry) => entry.isolating)),
     tableId: table.node.id,
     rect,
-    cellIds: selected.map((cell) => cell.entry.node.id),
+    cellIds: selected.map((cell) => cell.cellId),
     coveredCellIds: [...covered],
     rectangular,
   };
