@@ -395,12 +395,10 @@ export function ClassicEditor({
     if (typeof value === "string" && value !== el.innerHTML) {
       el.innerHTML = value || "";
       fixNegativeMargins(el);
-      normalizeInvalidTableNesting(el);
       ensureTableWrappers(el);
       ensureCaretBoundaryParagraphs(el);
       addTableResizeHandles();
     }
-    normalizeInvalidTableNesting(el);
     ensureCaretBoundaryParagraphs(el);
     // Suppress native context menu inside table cells at capture phase
     const onCtx = (evt: Event) => {
@@ -2293,35 +2291,6 @@ export function ClassicEditor({
     }
   };
 
-  // LEGACY_TABLE_TOUCHPOINT: table-extraction-from-list owner=Phase6
-  const normalizeInvalidTableNesting = (root: HTMLElement) => {
-    const getOuterList = (item: HTMLElement) => {
-      let list = item.parentElement as HTMLElement | null;
-      while (list?.parentElement?.tagName === "LI") {
-        const parentList = list.parentElement.parentElement as HTMLElement | null;
-        if (!parentList || !["UL", "OL"].includes(parentList.tagName)) break;
-        list = parentList;
-      }
-      return list;
-    };
-
-    root.querySelectorAll("table").forEach((table) => {
-      const tableBlock = (table.closest('[data-table-wrapper="true"]') || table) as HTMLElement;
-      const codeBlock = tableBlock.closest("pre") as HTMLElement | null;
-      if (codeBlock?.parentElement) {
-        codeBlock.parentElement.insertBefore(tableBlock, codeBlock.nextSibling);
-        return;
-      }
-
-      const listItem = tableBlock.closest("li") as HTMLElement | null;
-      if (!listItem) return;
-      const outerList = getOuterList(listItem);
-      if (outerList?.parentElement) {
-        outerList.parentElement.insertBefore(tableBlock, outerList.nextSibling);
-      }
-    });
-  };
-
   const isCaretBoundaryBlock = (node: ChildNode | null) => {
     if (!(node instanceof HTMLElement)) return false;
     const tag = node.tagName.toLowerCase();
@@ -2364,8 +2333,6 @@ export function ClassicEditor({
     
     // Auto-fix negative margins that might cause visibility issues
     fixNegativeMargins(el);
-    // Tables are document-level blocks and must not remain inside code or list items.
-    normalizeInvalidTableNesting(el);
     // Ensure tables are wrapped for horizontal scrolling
     ensureTableWrappers(el);
     // Keep a reachable typing position around isolating blocks at document edges
