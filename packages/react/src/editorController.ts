@@ -25,6 +25,7 @@ import {
 } from "./adapters/domInlineAtomCommandBridge.js";
 import {
   executeDomTableCommand,
+  executeDomTableInsert,
   executeDomTableRemoval,
   type DomTableCommand,
 } from "./adapters/domTableCommandBridge.js";
@@ -295,12 +296,9 @@ export class DomEditorController {
     if (!snapshot?.selection || snapshot.selection.type !== "text") return null;
     const topLevelIndex = snapshot.selection.anchor.path[0];
     if (!Number.isInteger(topLevelIndex)) return null;
-    const path = [Math.min(topLevelIndex + 1, snapshot.document.children.length)];
-    const result = this.execute("table.insert", { path, rows, columns, headerRow });
-    if (!result) return null;
-    const candidate = this.root.children[path[0]];
-    if (candidate instanceof HTMLTableElement) return candidate;
-    return candidate?.querySelector("table") || null;
+    const inserted = executeDomTableInsert(this.root, topLevelIndex, rows, columns, headerRow);
+    if (inserted) this.emitLocalizedChange("table.insert");
+    return inserted;
   }
 
   removeTable(table: HTMLTableElement): boolean {

@@ -90,7 +90,7 @@ export const insertTableCommand: TableCommand<InsertTableParams> = (_document, s
       }),
     })),
   };
-  return [{ type: "insertNode", pos: target.parentPos, node: table }];
+  return [{ type: "insertNode", pos: { ...target.parentPos, offset: target.parentPos.offset + (params.placement === "after" ? 1 : 0) }, node: table }];
 };
 
 export const removeTableCommand: TableCommand<Record<string, never>> = (_document, scope, _params, ctx) => {

@@ -119,6 +119,7 @@ const serializeBlock = (node: SmartElementNode, includeIds: boolean, listDepth =
     const colspan = Math.max(1, Number(node.attrs?.colspan) || 1);
     const styles = [
       node.attrs?.background ? `background:${String(node.attrs.background)}` : "",
+      node.attrs?.textColor ? `color:${String(node.attrs.textColor)}` : "",
       node.attrs?.borders ? `border:${String(node.attrs.borders)}` : "",
       node.attrs?.verticalAlign ? `vertical-align:${String(node.attrs.verticalAlign)}` : "",
     ].filter(Boolean).join(";");
@@ -302,9 +303,11 @@ const parseBlock = (node: HtmlNode): SmartElementNode | null => {
     };
     const background = styleValue(node, "background") || styleValue(node, "background-color");
     const borders = styleValue(node, "border");
+    const textColor = styleValue(node, "color");
     const verticalAlign = styleValue(node, "vertical-align");
     if (background) cellAttrs.background = background;
     if (borders) cellAttrs.borders = borders;
+    if (textColor) cellAttrs.textColor = textColor;
     if (verticalAlign) cellAttrs.verticalAlign = verticalAlign;
     const blockTags = ["p", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "blockquote", "pre", "table"];
     const children = elementChildren(node).filter((child) => blockTags.includes(child.tagName || ""))

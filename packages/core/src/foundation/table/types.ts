@@ -62,7 +62,7 @@ export interface TableIds {
   readonly paragraphIds: readonly string[];
 }
 
-export interface InsertTableParams { readonly rows: number; readonly columns: number; readonly withHeader?: boolean; readonly ids: TableIds }
+export interface InsertTableParams { readonly rows: number; readonly columns: number; readonly withHeader?: boolean; readonly placement?: "before" | "after"; readonly ids: TableIds }
 export interface RowParams { readonly position?: "before" | "after"; readonly rowIndex?: number; readonly rowId?: string; readonly cellIds?: readonly string[]; readonly paragraphIds?: readonly string[] }
 export interface ColumnParams { readonly position?: "before" | "after"; readonly columnIndex?: number; readonly cellIds?: readonly string[]; readonly paragraphIds?: readonly string[] }
 export interface HeaderParams { readonly target: "row" | "column" | "both" | "none" }
