@@ -1,5 +1,6 @@
 import { invertTransaction } from "./transactions.js";
-import type { HistoryEntry, SmartHistory, SmartOperation, SmartTransaction } from "./types.js";
+import { isTextNode } from "./identity.js";
+import type { Attrs, HistoryEntry, SmartHistory, SmartNode, SmartOperation, SmartTransaction } from "./types.js";
 
 export const DEFAULT_HISTORY_LIMIT = 200;
 export const DEFAULT_COALESCENCE_WINDOW_MS = 400;
@@ -20,6 +21,9 @@ const equalPos = (left: { path: number[]; offset: number }, right: { path: numbe
   left.offset === right.offset && left.path.length === right.path.length && left.path.every((part, index) => part === right.path[index]);
 
 const canCoalesce = (previous: SmartTransaction, next: SmartTransaction, windowMs: number): boolean => {
+  if (previous.metadata.historyGroup || next.metadata.historyGroup) {
+    return Boolean(previous.metadata.historyGroup && previous.metadata.historyGroup === next.metadata.historyGroup);
+  }
   if (previous.metadata.compositionId || next.metadata.compositionId) {
     return Boolean(previous.metadata.compositionId && previous.metadata.compositionId === next.metadata.compositionId);
   }
@@ -71,4 +75,35 @@ export const popRedo = (history: SmartHistory): { entry: HistoryEntry; history: 
   const entry = history.redo[history.redo.length - 1];
   if (!entry) return null;
   return { entry, history: { ...history, redo: history.redo.slice(0, -1), undo: [...history.undo, entry] } };
+};
+
+const rewriteNodeAttrs = (node: SmartNode, nodeId: string, before: Attrs, after: Attrs): SmartNode => {
+  if (isTextNode(node)) return node;
+  const children = node.children?.map((child) => rewriteNodeAttrs(child, nodeId, before, after));
+  if (node.id !== nodeId) return children ? { ...node, children } : node;
+  if (JSON.stringify(node.attrs || {}) !== JSON.stringify(before)) return children ? { ...node, children } : node;
+  const { attrs: _attrs, ...rest } = node;
+  return Object.keys(after).length ? { ...rest, attrs: structuredClone(after), ...(children ? { children } : {}) } : { ...rest, ...(children ? { children } : {}) };
+};
+
+/** Keeps stored undo/redo payloads applicable through non-history async state updates. */
+export const rebaseHistoryNodeAttributes = (history: SmartHistory, nodeId: string, before: Attrs, after: Attrs): SmartHistory => {
+  const transaction = (value: SmartTransaction): SmartTransaction => ({
+    ...value,
+    operations: value.operations.map((operation) => {
+      if (operation.type === "insertNode" || operation.type === "removeNode") return { ...operation, node: rewriteNodeAttrs(operation.node, nodeId, before, after) };
+      if (operation.type === "replaceNode") return {
+        ...operation,
+        before: rewriteNodeAttrs(operation.before, nodeId, before, after),
+        after: rewriteNodeAttrs(operation.after, nodeId, before, after),
+      };
+      return operation;
+    }),
+  });
+  const entry = (value: HistoryEntry): HistoryEntry => {
+    const forward = transaction(value.forward);
+    const inverse = transaction(value.inverse);
+    return { forward, inverse, estimatedBytes: JSON.stringify(forward).length };
+  };
+  return { ...history, undo: history.undo.map(entry), redo: history.redo.map(entry) };
 };

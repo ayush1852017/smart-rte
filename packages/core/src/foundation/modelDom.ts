@@ -2,6 +2,9 @@ import { isTextNode } from "./identity.js";
 import { nodeAtPath } from "./positions.js";
 import type { ModelDomMapping, SmartDocument, SmartElementNode, SmartNode, SmartPos } from "./types.js";
 import { renderMarkedText } from "./marks/dom.js";
+import { sanitizeAtomSource } from "./atom/security.js";
+
+const atomTypes = new Set(["image", "block_image", "formula", "block_formula", "video", "audio"]);
 
 export const SMART_UI_ATTRIBUTE = "data-smart-ui";
 export const SMART_PROJECTION_ATTRIBUTE = "data-smart-projection";
@@ -21,6 +24,10 @@ const tagForNode = (node: SmartNode): string => {
   if (node.type === "table") return "table";
   if (node.type === "table_row") return "tr";
   if (node.type === "table_cell") return node.attrs?.header === true ? "th" : "td";
+  if (node.type === "image" || node.type === "block_image") return "img";
+  if (node.type === "formula") return "span";
+  if (node.type === "block_formula") return "div";
+  if (node.type === "video" || node.type === "audio") return node.type;
   return "div";
 };
 
@@ -56,6 +63,24 @@ const renderNode = (node: SmartNode, ownerDocument: Document): Node => {
     if (node.attrs?.borders) element.style.border = String(node.attrs.borders);
     if (node.attrs?.verticalAlign) element.style.verticalAlign = String(node.attrs.verticalAlign);
   }
+  if (node.type === "image" || node.type === "block_image") {
+    const source = sanitizeAtomSource(String(node.attrs?.src || ""), { kind: "image", allowBlobPreview: node.attrs?.status === "pending" });
+    if (source) element.setAttribute("src", source);
+    element.setAttribute("alt", typeof node.attrs?.alt === "string" ? node.attrs.alt : "");
+  }
+  if (node.type === "formula" || node.type === "block_formula") {
+    const source = String(node.attrs?.source || "");
+    element.setAttribute("role", "math");
+    element.setAttribute("aria-label", `Mathematical formula: ${source}`);
+    element.setAttribute("data-smart-formula", source);
+    element.textContent = source;
+  }
+  if (node.type === "video" || node.type === "audio") {
+    const source = sanitizeAtomSource(String(node.attrs?.src || ""), { kind: node.type });
+    if (source) element.setAttribute("src", source);
+    element.setAttribute("controls", "");
+    element.setAttribute("aria-label", node.type === "video" ? "Video player" : "Audio player");
+  }
   if (node.type === "hard_break") {
     element.setAttribute("data-smart-atomic", "true");
     return element;
@@ -64,6 +89,11 @@ const renderNode = (node: SmartNode, ownerDocument: Document): Node => {
     element.contentEditable = "false";
     element.setAttribute("data-smart-atomic", "true");
     element.textContent = `[Unsupported: ${String(node.attrs?.originalType || "unknown")}]`;
+    return element;
+  }
+  if (atomTypes.has(node.type)) {
+    element.contentEditable = "false";
+    element.setAttribute("data-smart-atomic", "true");
     return element;
   }
   node.children?.forEach((child) => element.appendChild(renderNode(child, ownerDocument)));
@@ -156,7 +186,7 @@ export class FoundationModelDomMapping implements ModelDomMapping {
   private isInlineOwner(node: SmartElementNode): boolean {
     if (node.type === "paragraph" || node.type === "heading") return true;
     return Boolean(node.children?.length) && node.children!.every((child) =>
-      isTextNode(child) || child.type === "hard_break" || child.attrs?.originalGroup === "inline");
+      isTextNode(child) || child.type === "hard_break" || child.type === "image" || child.type === "formula" || child.attrs?.originalGroup === "inline");
   }
 
   private textDescendant(node: Node): Text | null {

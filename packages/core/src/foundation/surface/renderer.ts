@@ -9,6 +9,9 @@ import type { SmartDocument, SmartElementNode, SmartNode, SmartSelection } from 
 import type { CanonicalSubtreeRenderer } from "./types.js";
 import { renderMarkedText, stableValue } from "../marks/index.js";
 import { occupancyGridFor } from "../table/index.js";
+import { sanitizeAtomSource } from "../atom/security.js";
+
+const atomTypes = new Set(["image", "block_image", "formula", "block_formula", "video", "audio"]);
 
 const tagForNode = (node: SmartElementNode): string => {
   if (node.type === "paragraph") return "p";
@@ -24,6 +27,10 @@ const tagForNode = (node: SmartElementNode): string => {
   if (node.type === "table") return "table";
   if (node.type === "table_row") return "tr";
   if (node.type === "table_cell") return node.attrs?.header === true ? "th" : "td";
+  if (node.type === "image" || node.type === "block_image") return "img";
+  if (node.type === "formula") return "span";
+  if (node.type === "block_formula") return "div";
+  if (node.type === "video" || node.type === "audio") return node.type;
   return "div";
 };
 
@@ -150,6 +157,28 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
       if (node.attrs?.background) element.style.background = String(node.attrs.background); else element.style.removeProperty("background");
       if (node.attrs?.borders) element.style.border = String(node.attrs.borders); else element.style.removeProperty("border");
       if (node.attrs?.verticalAlign) element.style.verticalAlign = String(node.attrs.verticalAlign); else element.style.removeProperty("vertical-align");
+    } else if (node.type === "image" || node.type === "block_image") {
+      const source = sanitizeAtomSource(String(node.attrs?.src || ""), { kind: "image", allowBlobPreview: node.attrs?.status === "pending" });
+      if (source) this.setAttribute(element, "src", source, node.id); else this.removeAttribute(element, "src", node.id);
+      this.setAttribute(element, "alt", typeof node.attrs?.alt === "string" ? node.attrs.alt : "", node.id);
+      if (node.attrs?.width) this.setAttribute(element, "width", String(node.attrs.width), node.id); else this.removeAttribute(element, "width", node.id);
+      if (node.attrs?.height) this.setAttribute(element, "height", String(node.attrs.height), node.id); else this.removeAttribute(element, "height", node.id);
+      this.setAttribute(element, "data-smart-status", String(node.attrs?.status || "ready"), node.id);
+    } else if (node.type === "formula" || node.type === "block_formula") {
+      const source = String(node.attrs?.source || "");
+      this.setAttribute(element, "role", "math", node.id);
+      this.setAttribute(element, "aria-label", `Mathematical formula: ${source}`, node.id);
+      this.setAttribute(element, "data-smart-formula", source, node.id);
+      if (element.textContent !== source) { element.textContent = source; this.recordWrite(node.id); }
+    } else if (node.type === "video" || node.type === "audio") {
+      const source = sanitizeAtomSource(String(node.attrs?.src || ""), { kind: node.type });
+      if (source) this.setAttribute(element, "src", source, node.id); else this.removeAttribute(element, "src", node.id);
+      this.setAttribute(element, "controls", "", node.id);
+      this.setAttribute(element, "aria-label", node.type === "video" ? "Video player" : "Audio player", node.id);
+      if (node.type === "video" && node.attrs?.poster) {
+        const poster = sanitizeAtomSource(String(node.attrs.poster), { kind: "image" });
+        if (poster) this.setAttribute(element, "poster", poster, node.id); else this.removeAttribute(element, "poster", node.id);
+      }
     }
   }
 
@@ -197,12 +226,10 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
     this.syncNodeAttributes(element, node);
     if (node.type === "hard_break") {
       element.setAttribute("data-smart-atomic", "true");
-    } else if (node.type === "unknown" || node.attrs?.atomic === true) {
+    } else if (node.type === "unknown" || node.attrs?.atomic === true || atomTypes.has(node.type)) {
       element.contentEditable = "false";
       element.setAttribute("data-smart-atomic", "true");
-      element.textContent = node.type === "unknown"
-        ? `[Unsupported: ${String(node.attrs?.originalType || "unknown")}]`
-        : "\uFFFC";
+      if (node.type === "unknown") element.textContent = `[Unsupported: ${String(node.attrs?.originalType || "unknown")}]`;
     } else {
       node.children?.forEach((child, index) => element.appendChild(this.createNode(child, [...path, index])));
       if (node.type === "list") (node.children || []).forEach((child, index) => {

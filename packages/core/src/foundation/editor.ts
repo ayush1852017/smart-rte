@@ -1,5 +1,5 @@
-import { createNodeId } from "./identity.js";
-import { popRedo, popUndo, recordHistory, createHistory } from "./history.js";
+import { createNodeId, isTextNode } from "./identity.js";
+import { popRedo, popUndo, recordHistory, createHistory, rebaseHistoryNodeAttributes } from "./history.js";
 import { runNormalization, type NormalizationRun } from "./normalization.js";
 import { applyOperations } from "./operations.js";
 import { resolvePos } from "./positions.js";
@@ -217,6 +217,12 @@ export class FoundationEditor {
       applyTransactionAtomic(this.current, input, this.schema);
       return;
     }
+    const historyAttributeUpdates = input.metadata.addToHistory ? [] : input.operations.flatMap((operation) => {
+      if (operation.type !== "setNodeAttributes") return [];
+      const node = operation.pos.path.reduce<SmartNode | undefined>((current, part) =>
+        current && !isTextNode(current) ? current.children?.[part] : undefined, this.current.document);
+      return node && !isTextNode(node) ? [{ nodeId: node.id, before: operation.before, after: operation.after }] : [];
+    });
     const afterUserOperations = applyOperations(this.current.document, input.operations);
     const normalization = runNormalization({
       document: afterUserOperations,
@@ -233,6 +239,9 @@ export class FoundationEditor {
       storedMarks: structuredClone(transaction.storedMarksAfter),
     };
     this.currentHistory = recordHistory(this.currentHistory, transaction);
+    historyAttributeUpdates.forEach((update) => {
+      this.currentHistory = rebaseHistoryNodeAttributes(this.currentHistory, update.nodeId, update.before, update.after);
+    });
     this.listeners.forEach((listener) => listener(structuredClone(transaction), this.state));
   }
 

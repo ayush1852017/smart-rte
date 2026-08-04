@@ -31,6 +31,7 @@ import {
   insertCodeBlockNewline,
   type CodeBlockInputResult,
 } from "../block/index.js";
+import { tokenizeCompositionOwner, type CompositionToken } from "../atom/index.js";
 
 interface CompositionState {
   id: string;
@@ -43,18 +44,23 @@ interface CompositionState {
   activeMarks: SmartMark[];
 }
 
-interface CompositionToken { text: string; marks: SmartMark[] }
-
 const samePos = (left: SmartPos, right: SmartPos) => comparePos(left, right) === 0;
 const normalizedRange = (selection: SmartSelection): SmartRange => comparePos(selection.anchor, selection.head) <= 0
   ? { from: selection.anchor, to: selection.head }
   : { from: selection.head, to: selection.anchor };
 const collapsed = (selection: SmartSelection) => samePos(selection.anchor, selection.head);
 const inlineText = (owner: SmartElementNode) => (owner.children || []).map((node) => isTextNode(node) ? node.text : "\uFFFC").join("");
-const modelCompositionTokens = (owner: SmartElementNode): CompositionToken[] => (owner.children || [])
-  .filter(isTextNode).map((node) => ({ text: node.text, marks: [...(node.marks || [])] }));
-const tokenUnits = (tokens: readonly CompositionToken[]) => tokens.flatMap((token) =>
-  Array.from({ length: token.text.length }, (_, index) => ({ char: token.text[index], marks: token.marks, key: token.marks.map(markKey).join("|") })));
+interface CompositionUnit { char: string; marks: SmartMark[]; key: string; kind: "text" | "atom" }
+const tokenUnits = (tokens: readonly CompositionToken[]): CompositionUnit[] => {
+  const units: CompositionUnit[] = [];
+  tokens.forEach((token) => {
+    if (token.kind === "atom") units.push({ char: "\uFFFC", marks: [], key: `atom:${token.nodeId}`, kind: "atom" });
+    else for (let index = 0; index < token.text.length; index += 1) {
+      units.push({ char: token.text[index], marks: [...token.marks], key: token.marks.map(markKey).join("|"), kind: "text" });
+    }
+  });
+  return units;
+};
 
 const ownerAt = (editor: FoundationEditor, pos: SmartPos): SmartElementNode => {
   const node = nodeAtPath(editor.document, pos.path);
@@ -149,6 +155,7 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
     root.addEventListener("compositionstart", this.compositionStartListener);
     root.addEventListener("compositionupdate", this.compositionUpdateListener);
     root.addEventListener("compositionend", this.compositionEndListener);
+    root.addEventListener("click", this.clickListener);
     this.ownerDocument.addEventListener("selectionchange", this.selectionChangeListener);
     root.addEventListener("paste", this.cancelClipboard);
     root.addEventListener("drop", this.cancelClipboard);
@@ -163,6 +170,15 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
   private compositionStartListener = (event: Event) => this.handleCompositionStart(event as CompositionEvent);
   private compositionUpdateListener = (event: Event) => this.handleCompositionUpdate(event as CompositionEvent);
   private compositionEndListener = (event: Event) => this.handleCompositionEnd(event as CompositionEvent);
+  private clickListener = (event: Event) => {
+    const target = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-smart-atomic]") : null;
+    const mapped = target ? this.renderer.mapping.domToNode(target) : null;
+    if (!mapped || isTextNode(mapped.node) || this.editor.schema.nodes[mapped.node.type]?.selectable !== true) return;
+    const range = this.editor.positions.rangeOf(mapped.nodeId);
+    if (!range) return;
+    this.editor.setSelection({ type: "node", anchor: range.from, head: range.to }, { source: "api" });
+    this.renderer.render(this.editor.document, this.editor.selection);
+  };
   private selectionChangeListener = () => this.syncSelectionFromDom();
   private cancelClipboard = (event: Event) => {
     event.preventDefault();
@@ -303,6 +319,14 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
     const neighborIndex = index + direction;
     const neighbor = parent.children[neighborIndex];
     if (!neighbor || isTextNode(neighbor)) return;
+    if (this.editor.schema.nodes[neighbor.type]?.atomic === true) {
+      const range = this.editor.positions.rangeOf(neighbor.id);
+      if (range) {
+        this.editor.setSelection({ type: "node", anchor: range.from, head: range.to }, { source: "keyboard" });
+        this.renderer.render(this.editor.document, this.editor.selection);
+      }
+      return;
+    }
     const neighborSize = inlineText(neighbor).length;
     const range = direction < 0
       ? { from: { path: [...parentPath, neighborIndex], offset: neighborSize }, to: position }
@@ -314,6 +338,33 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
     if (this.destroyed) return;
     const type = event.inputType;
     if (this.composition && (type === "insertCompositionText" || type === "deleteCompositionText")) return;
+    if (this.editor.selection.type === "node" && (type === "insertText" || type === "insertReplacementText"
+      || type === "deleteContentBackward" || type === "deleteContentForward")) {
+      const scope = this.editor.resolveScope({ want: "atomic-node" });
+      if ("kind" in scope && scope.kind === "atomic-node") {
+        event.preventDefault();
+        const resolved = this.editor.positions.positionOf(scope.nodeId);
+        const node = resolved?.parent.children?.[resolved.pos.offset];
+        if (!resolved || !node || isTextNode(node)) return;
+        const group = this.editor.schema.nodes[node.type]?.group;
+        const text = type === "insertText" || type === "insertReplacementText" ? event.data || "" : "";
+        this.editor.transact((builder) => {
+          if (group === "inline") {
+            builder.operations.push({ type: "removeNode", pos: resolved.pos, node });
+            if (text) builder.operations.push({ type: "insertText", pos: scope.range.from, text });
+            const caret = { path: [...scope.range.from.path], offset: scope.range.from.offset + text.length };
+            builder.setSelection({ type: "text", anchor: caret, head: caret });
+          } else {
+            const replacement: SmartElementNode = { type: "paragraph", id: createNodeId(), children: text ? [{ type: "text", text }] : [] };
+            builder.operations.push({ type: "replaceNode", pos: resolved.pos, before: node, after: replacement });
+            const caret = { path: [...resolved.pos.path, resolved.pos.offset], offset: text.length };
+            builder.setSelection({ type: "text", anchor: caret, head: caret });
+          }
+        }, { source: "input", addToHistory: true });
+        this.renderer.render(this.editor.document, this.editor.selection);
+        return;
+      }
+    }
     if (type === "insertText" || type === "insertReplacementText") {
       event.preventDefault();
       this.replaceSelection(event.data || "");
@@ -481,7 +532,7 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
     observer?.observe(element as Node, { subtree: true, childList: true, characterData: true });
     this.composition = {
       id: createNodeId(), ownerId: owner.id, ownerPath: [...selection.head.path], beforeText: inlineText(owner), selectionBefore: selection, observer,
-      beforeTokens: modelCompositionTokens(owner),
+      beforeTokens: tokenizeCompositionOwner(owner),
       activeMarks: [...(this.editor.storedMarks || marksAtInsertion(this.editor.document, selection.head, this.editor.schema))],
     };
     this.renderer.beginComposition(owner.id);
@@ -499,7 +550,13 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
     if (element) {
       [...element.childNodes].forEach((direct) => {
         const directElement = direct instanceof HTMLElement ? direct : direct.parentElement;
-        if (directElement?.closest("[data-smart-ui],[data-smart-atomic]")) return;
+        if (directElement?.closest("[data-smart-ui]")) return;
+        const atomic = directElement?.closest<HTMLElement>("[data-smart-atomic]");
+        if (atomic) {
+          const mapped = this.renderer.mapping.domToNode(atomic);
+          if (mapped && !isTextNode(mapped.node)) afterTokens.push({ kind: "atom", nodeId: mapped.node.id, atomType: mapped.node.type });
+          return;
+        }
         const text = direct.textContent || "";
         if (!text) return;
         const marks: SmartMark[] = [];
@@ -514,7 +571,7 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
           }
           cursor = cursor.parentElement;
         }
-        afterTokens.push({ text, marks: canonicalMarkOrder(marks) });
+        afterTokens.push({ kind: "text", text, marks: canonicalMarkOrder(marks) });
       });
     }
     const beforeUnits = tokenUnits(state.beforeTokens);
@@ -532,6 +589,11 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
     const domCaret = domSelection?.focusNode ? this.renderer.mapping.domToPos(domSelection.focusNode, domSelection.focusOffset) : null;
     this.renderer.endComposition();
     this.composition = null;
+    // Atoms are opaque composition boundaries. If a browser mutation crosses,
+    // reject the DOM mutation and restore the unchanged canonical owner.
+    if (removed.some((unit) => unit.kind === "atom") || inserted.some((unit) => unit.kind === "atom")) {
+      return this.renderer.render(this.editor.document, this.editor.selection);
+    }
     if (!removed.length && !inserted.length) return this.renderer.render(this.editor.document, this.editor.selection);
     this.commit((builder) => {
       if (removed.length) queueInlineDeletion(builder, state.ownerPath, ownerAt(this.editor, { path: state.ownerPath, offset: prefix }), prefix, prefix + removed.length);
@@ -579,6 +641,7 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
     this.root.removeEventListener("compositionstart", this.compositionStartListener);
     this.root.removeEventListener("compositionupdate", this.compositionUpdateListener);
     this.root.removeEventListener("compositionend", this.compositionEndListener);
+    this.root.removeEventListener("click", this.clickListener);
     this.ownerDocument.removeEventListener("selectionchange", this.selectionChangeListener);
     this.root.removeEventListener("paste", this.cancelClipboard);
     this.root.removeEventListener("drop", this.cancelClipboard);

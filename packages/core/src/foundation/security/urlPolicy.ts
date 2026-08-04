@@ -1,4 +1,5 @@
 const allowedProtocols = new Set(["http:", "https:", "mailto:", "tel:"]);
+const resourceProtocols = new Set(["http:", "https:"]);
 
 export interface SafeLinkAttrs {
   href: string;
@@ -60,4 +61,21 @@ export const sanitizeLinkTarget = (target: string | undefined): string | undefin
 export const sanitizeLinkAttrs = (input: { href?: string; target?: string }): SafeLinkAttrs | null => {
   const href = sanitizeLinkHref(input.href);
   return href ? { href, target: sanitizeLinkTarget(input.target) } : null;
+};
+
+export const sanitizeResourceUrl = (
+  input: string | undefined | null,
+  options: { allowBlob?: boolean; allowedDataMimeTypes?: ReadonlySet<string> } = {},
+): string | null => {
+  const value = input?.trim() || "";
+  if (!value || /[\u0000-\u001f\u007f]/.test(value)) return null;
+  if (options.allowBlob && /^blob:/i.test(value)) return value;
+  const data = value.match(/^data:([^;,]+)(?:;[^,]*)?,/i);
+  if (data) return options.allowedDataMimeTypes?.has(data[1].toLowerCase()) ? value : null;
+  try {
+    const parsed = new URL(value);
+    return resourceProtocols.has(parsed.protocol) ? value : null;
+  } catch {
+    return null;
+  }
 };

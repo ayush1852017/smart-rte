@@ -14,6 +14,7 @@ import type {
 } from "./types.js";
 import { listNodeSpecs } from "./list/schema.js";
 import { tableNodeSpecs } from "./table/schema.js";
+import { atomNodeSpecs } from "./atom/schema.js";
 import { repairTableGeometry, validateTableGeometry } from "./table/grid.js";
 import { canonicalMarkOrder, compareMarks } from "./marks/canonical.js";
 import { hardBreakNodeSpec, inlineMarkSpecs } from "./marks/schema.js";
@@ -193,6 +194,7 @@ export const foundationSchema = createSchema({
     { type: "code_block", group: "block", content: "text*", marks: "", attributes: { ...blockAttrs, language: stringAttr }, defining: true },
     ...listNodeSpecs,
     ...tableNodeSpecs,
+    ...atomNodeSpecs,
     { type: "text", group: "inline", marks: "_all" },
     hardBreakNodeSpec,
     { type: "unknown", group: "block", atomic: true, isolating: true, selectable: true, attributes: {
