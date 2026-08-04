@@ -189,11 +189,11 @@ export declare const deleteClipboardSelection: (document: SmartDocument, selecti
 | 15 | PASS | `check-phase8a-contract.mjs`: no clipboard event handling/cleaner remains in `ClassicEditor.tsx`. |
 | 16 | PASS | Retention commit `856425e` precedes deletion commit `77b45ec`. |
 | 17 | PASS with corpus limitation | Eight captures × three browsers = 24 shadow scenarios. Each browser: 8 `expected-normalization`, 0 semantic, 0 data-loss, 0 unknown. The missing Windows fixture is not represented. |
-| 18 | PASS | Phase 7 baseline → Phase 8a: core `369→412`, React `223→228`, browser `174→183`. Removed tests: none. One old browser assertion was updated to require the new precise no-payload diagnostics. |
+| 18 | PASS | Phase 7 baseline → Phase 8a: core `369→412`, React `223→228`, browser `174→186`. Removed tests: none. One old browser assertion was updated to require the new precise no-payload diagnostics. |
 | 19 | PASS | `corpus.test.ts`: 10× largest capture = 1,453,120 bytes; observed 137.70 ms in the final full run; configured threshold rejection also passes. |
 | 20 | PASS | Adapter count remains exactly 3 in source and inventory; enforced by lint. |
 
-Full final runs: `pnpm check` passed; Playwright `183/183` passed across Chromium, Firefox, and WebKit.
+Full final runs: `pnpm check` passed; Playwright `186/186` passed across Chromium, Firefox, and WebKit.
 
 ## E. Known gaps and confidence limits
 
@@ -233,6 +233,7 @@ The full intentional-change catalogue is `docs/PHASE8A_BEHAVIOR_CHANGE_CATALOGUE
 | Generated native documents | **Synthesized/property generated** | Native algebra only, seed `0x8a2026`. |
 | Generated unknown elements | **Synthesized/property generated** | Unknown preservation only, seed `0x8a0bad`. |
 | 10× payload | **Synthesized by repetition of the largest real capture** | Size/latency guard only; not a representative 1.45 MiB document. |
+| DOCX reference import | **Converted/synthesized from a file via Mammoth** | Parser-development convenience only. It is stamped `docx-reference`, is not clipboard HTML, and cannot satisfy a captured-source gate. |
 
 Real-world sources still uncovered: Word Windows (blocking), Word Online, Outlook, Notion, Confluence, Apple Notes, and rich generic web HTML. The first is expected to break list grouping today; the P2 sources may expose new wrapper, list, and style patterns but are not Phase 8a P0.
 
@@ -241,5 +242,5 @@ Real-world sources still uncovered: Word Windows (blocking), Word Online, Outloo
 - Canonical-authority takeover: **not implemented**. The three migration adapters remain.
 - Adapter removal: **not implemented**; count stayed `3→3`, as required for 8a.
 - Plugin runtime: **not implemented in this phase**.
-- Whole-file import: **not implemented**.
+- Product whole-file import: **not implemented**. The developer-only capture page can convert DOCX into an explicitly non-captured reference fixture; that result never enters the P0 corpus or product clipboard pipeline.
 - Clipboard parsing, canonical-fragment insertion routing, and product paste routing are in scope. The external product runtime is temporary 8a scaffolding and is explicitly owned for deletion/replacement by 8b.

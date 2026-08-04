@@ -17,6 +17,18 @@ The Phase 8a P0 corpus must contain clipboard payloads captured from real applic
 6. Download the JSON payload. The page prevents the normal paste and records every string MIME representation without transforming it.
 7. Put the file under `packages/core/src/foundation/clipboard/fixtures/captured/p0/`.
 
+## Import options
+
+The capture page can import an existing `.clipboard.json` produced on another
+computer. This is the correct way to bring a genuine Windows or macOS clipboard
+payload into this workspace.
+
+It can also import a `.docx` file as a **reference fixture**. That path converts
+the document through Mammoth and stamps the result with
+`provenance.kind: "docx-reference"`. A DOCX package does not contain Word's
+clipboard HTML, so these reference fixtures must not be placed in the captured
+P0 corpus and cannot clear the Word Windows/macOS clipboard gate.
+
 Do not capture client, company, or otherwise confidential content. Build disposable test documents.
 
 ## Blocking P0 matrix
