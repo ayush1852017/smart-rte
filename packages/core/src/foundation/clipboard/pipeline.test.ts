@@ -2,7 +2,9 @@
 import { describe, expect, it } from "vitest";
 import { parseClipboardPayload } from "./pipeline.js";
 import { detectClipboardSource } from "./detection.js";
-import type { SourceNormalizer } from "./types.js";
+import { serializeClipboardRepresentations } from "./serialization.js";
+import { NATIVE_CLIPBOARD_MIME, type SourceNormalizer } from "./types.js";
+import type { SmartDocument } from "../types.js";
 
 describe("Phase 8a clipboard security boundary", () => {
   it("structurally sanitizes before invoking a source normalizer", () => {
@@ -52,5 +54,36 @@ describe("clipboard source detection is a hint", () => {
     expect(detectClipboardSource({ html: '<div id="docs-internal-guid-1">x</div>' }).source).toBe("google-docs");
     expect(detectClipboardSource({ plainText: "# Heading" }).source).toBe("markdown");
     expect(parseClipboardPayload({ html: "<p>generic</p>" }, { ownerDocument: document }).document).toBeTruthy();
+  });
+});
+
+describe("native clipboard round-trip", () => {
+  it("is lossless for 1,000 generated valid text documents (seed 0x8a2026)", () => {
+    let seed = 0x8a2026;
+    const random = () => {
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+      return seed;
+    };
+    for (let run = 0; run < 1_000; run += 1) {
+      const children = Array.from({ length: 1 + random() % 8 }, (_, index) => ({
+        type: "paragraph" as const,
+        id: `p-${run}-${index}-${random()}`,
+        children: [{
+          type: "text" as const,
+          text: `text-${random()}`,
+          ...(random() % 2 ? { marks: [{ type: "bold" }] } : {}),
+        }],
+      }));
+      const original: SmartDocument = { type: "doc", id: `doc-${run}-${random()}`, children };
+      const copied = serializeClipboardRepresentations(original);
+      expect(copied["text/html"]).not.toMatch(/data-smart-id|data-smart-ui/);
+      const parsed = parseClipboardPayload({
+        native: copied[NATIVE_CLIPBOARD_MIME],
+        html: copied["text/html"],
+        plainText: copied["text/plain"],
+        types: [NATIVE_CLIPBOARD_MIME, "text/html", "text/plain"],
+      }, { ownerDocument: document });
+      expect(parsed.document).toEqual(original);
+    }
   });
 });

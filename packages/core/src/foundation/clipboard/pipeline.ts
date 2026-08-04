@@ -3,6 +3,7 @@ import { parseCanonicalListHtml } from "../list/formats.js";
 import { foundationSchema, repair } from "../schema.js";
 import { detectClipboardSource } from "./detection.js";
 import { sanitizeClipboardHtml } from "./sanitizer.js";
+import { parseNativeClipboardDocument } from "./serialization.js";
 import type {
   ClipboardFragment, ClipboardPipelineOptions, NormalizedClipboardPayload,
   RawClipboardPayload, SanitizedClipboardPayload, SourceNormalizer,
@@ -36,7 +37,9 @@ export const parseClipboardPayload = (
   const sanitized = sanitizeClipboardHtml(options.ownerDocument, detection.source, rawHtml, plainText);
   const normalizer = options.normalizers?.find((candidate) => candidate.sources.includes(detection.source)) || genericNormalizer;
   const normalized = normalizer.normalize(sanitized);
-  const parsed = parseCanonicalListHtml(normalized.html);
+  const parsed = detection.source === "native" && payload.native
+    ? parseNativeClipboardDocument(payload.native)
+    : parseCanonicalListHtml(normalized.html);
   const repaired = repair({ ...parsed, id: parsed.id || createNodeId() }, foundationSchema);
   return { source: detection.source, document: repaired.doc, repairs: [...normalized.repairs, ...repaired.repairs] };
 };

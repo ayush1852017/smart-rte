@@ -53,6 +53,12 @@ export interface ClipboardFragment {
   readonly repairs: readonly (Repair | string)[];
 }
 
+export interface ClipboardRepresentations {
+  readonly [NATIVE_CLIPBOARD_MIME]: string;
+  readonly "text/html": string;
+  readonly "text/plain": string;
+}
+
 export interface ClipboardPipelineOptions {
   readonly ownerDocument: Document;
   readonly normalizers?: readonly SourceNormalizer[];
