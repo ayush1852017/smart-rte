@@ -3,3 +3,4 @@ export * from "./detection.js";
 export * from "./pipeline.js";
 export * from "./serialization.js";
 export * from "./normalizers.js";
+export * from "./insertion.js";
