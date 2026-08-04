@@ -106,7 +106,10 @@ describe("captured Phase 8a corpus", () => {
       html: representations["text/html"], plainText: representations["text/plain"], types: largest.types, representations,
     };
     const bytes = estimateClipboardPayloadBytes(stress);
+    const started = performance.now();
     expect(parseClipboardPayload(stress, { ownerDocument: document }).document.children.length).toBeGreaterThan(0);
+    const elapsedMs = performance.now() - started;
+    console.log(`Phase 8a 10x captured-payload parse: ${bytes} bytes in ${elapsedMs.toFixed(2)}ms`);
     expect(() => parseClipboardPayload(stress, { ownerDocument: document, maxBytes: bytes - 1 })).toThrow(ClipboardPayloadTooLargeError);
   });
 });
