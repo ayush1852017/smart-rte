@@ -37,6 +37,8 @@ const payloadOf = (fixture: CapturedFixture): RawClipboardPayload => ({
 });
 const count = (node: SmartNode, type: string): number => isTextNode(node) ? 0
   : (node.type === type ? 1 : 0) + (node.children || []).reduce((total, child) => total + count(child, type), 0);
+const hasSpan = (node: SmartNode): boolean => isTextNode(node) ? false
+  : (Number(node.attrs?.rowspan) > 1 || Number(node.attrs?.colspan) > 1) || (node.children || []).some(hasSpan);
 
 describe("captured Phase 8a corpus", () => {
   it.each(fixtures)("detects and parses real capture %s", (name, expectedSource) => {
@@ -63,6 +65,7 @@ describe("captured Phase 8a corpus", () => {
     expect(count(docs, "table")).toBe(1);
     expect(count(excel, "table")).toBe(1);
     expect(count(sheets, "table")).toBe(1);
+    expect([word, docs, excel, sheets].some(hasSpan)).toBe(true);
   });
 
   it.each(fixtures)("keeps real capture %s non-destructive through the generic path", (name) => {
