@@ -3,6 +3,7 @@ import type { NormalizedClipboardPayload, SanitizedClipboardPayload, SourceNorma
 
 const listTags = new Set(["UL", "OL"]);
 const blockSelector = ":scope > p, :scope > h1, :scope > h2, :scope > h3, :scope > h4, :scope > h5, :scope > h6, :scope > ul, :scope > ol, :scope > blockquote, :scope > pre, :scope > table, :scope > div";
+const msoListPattern = /(?:^|;)\s*mso-list\s*:\s*([^\s;]+)\s+level(\d+)\s+([^\s;]+)/i;
 
 const unwrap = (element: Element) => element.replaceWith(...Array.from(element.childNodes));
 
@@ -49,6 +50,89 @@ const listShell = (source: HTMLElement) => {
   const shell = source.cloneNode(false) as HTMLElement;
   shell.removeAttribute("start");
   return shell;
+};
+
+interface MsoListEntry {
+  element: HTMLElement;
+  markerElement: HTMLElement | null;
+  listKey: string;
+  level: number;
+  tagName: "UL" | "OL";
+  start?: number;
+}
+
+const msoListEntry = (element: Element): MsoListEntry | null => {
+  if (element.tagName !== "P") return null;
+  const match = msoListPattern.exec(element.getAttribute("style") || "");
+  if (!match) return null;
+  const markerElement = Array.from(element.querySelectorAll<HTMLElement>("span")).find((span) =>
+    /(?:^|;)\s*mso-list\s*:\s*Ignore(?:\s*;|\s*$)/i.test(span.getAttribute("style") || ""));
+  const marker = markerElement?.textContent?.replace(/\u00a0/g, " ").trim() || "";
+  const ordered = /^(?:\d+|[a-z]+|[ivxlcdm]+)[.)]/i.test(marker);
+  const start = ordered ? Number.parseInt(marker, 10) : undefined;
+  return {
+    element: element as HTMLElement,
+    markerElement: markerElement ?? null,
+    listKey: `${match[1]}:${match[3]}`,
+    level: Math.max(1, Number(match[2]) || 1),
+    tagName: ordered ? "OL" : "UL",
+    ...(start !== undefined && Number.isFinite(start) && start > 1 ? { start } : {}),
+  };
+};
+
+/** Converts real Office `mso-list` paragraph runs before generic wrappers move them. */
+const normalizeMsoLists = (document: Document) => {
+  const visit = (parent: Element) => {
+    const children = Array.from(parent.children);
+    for (let index = 0; index < children.length;) {
+      const first = msoListEntry(children[index]);
+      if (!first) {
+        visit(children[index]);
+        index += 1;
+        continue;
+      }
+      const entries = [first];
+      let cursor = index + 1;
+      while (cursor < children.length) {
+        const next = msoListEntry(children[cursor]);
+        if (!next || next.listKey !== first.listKey) break;
+        entries.push(next);
+        cursor += 1;
+      }
+
+      const roots: HTMLElement[] = [];
+      const lists: HTMLElement[] = [];
+      const lastItems: HTMLElement[] = [];
+      entries.forEach((entry) => {
+        entry.markerElement?.remove();
+        Array.from(entry.element.children).forEach((child) => {
+          if (!child.textContent?.trim() && !child.querySelector("img,br,table")) child.remove();
+        });
+        const level = Math.min(entry.level, lists.length + 1);
+        const parentItem = level > 1 ? lastItems[level - 2] : undefined;
+        let list = lists[level - 1];
+        const needsList = !list || list.tagName !== entry.tagName || (level > 1 && list.parentElement !== parentItem);
+        if (needsList) {
+          list = document.createElement(entry.tagName.toLowerCase());
+          if (entry.tagName === "OL" && entry.start) list.setAttribute("start", String(entry.start));
+          if (level === 1) roots.push(list);
+          else parentItem?.append(list);
+          lists[level - 1] = list;
+        }
+        lists.length = level;
+        lastItems.length = level;
+        const item = document.createElement("li");
+        item.append(...Array.from(entry.element.childNodes));
+        list.append(item);
+        lastItems[level - 1] = item;
+      });
+      entries[0].element.replaceWith(...roots);
+      entries.slice(1).forEach((entry) => entry.element.remove());
+      roots.forEach(visit);
+      index = cursor;
+    }
+  };
+  visit(document.body);
 };
 
 /** Regroups Office/Docs runs that encode each visual item as a sibling list. */
@@ -99,6 +183,7 @@ const normalizeDeclaredLevelLists = (document: Document) => {
 };
 
 const normalizedHtml = (payload: SanitizedClipboardPayload, id: string): NormalizedClipboardPayload => {
+  normalizeMsoLists(payload.document);
   normalizeTransparentContainers(payload.document);
   normalizeDeclaredLevelLists(payload.document);
   return { html: payload.document.body.innerHTML, plainText: payload.plainText, repairs: [`${id}:transparent-containers-and-declared-list-levels`] };

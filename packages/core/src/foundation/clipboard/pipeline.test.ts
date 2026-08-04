@@ -87,6 +87,25 @@ describe("clipboard source detection is a hint", () => {
     expect(detectClipboardSource({ plainText: "# Heading" }).source).toBe("markdown");
     expect(parseClipboardPayload({ html: "<p>generic</p>" }, { ownerDocument: document }).document).toBeTruthy();
   });
+
+  it("converts Office mso-list paragraphs into ordered and nested canonical lists", () => {
+    const result = parseClipboardPayload({
+      html: [
+        '<p style="mso-list:l0 level1 lfo1"><span style="mso-list:Ignore">1.<span>&nbsp;</span></span>First</p>',
+        '<p style="mso-list:l0 level2 lfo1"><span style="mso-list:Ignore">a.<span>&nbsp;</span></span>Nested</p>',
+        '<p style="mso-list:l0 level1 lfo1"><span style="mso-list:Ignore">2.<span>&nbsp;</span></span>Second</p>',
+      ].join(""),
+      plainText: "1. First\na. Nested\n2. Second",
+    }, { ownerDocument: document });
+    const serialized = JSON.stringify(result.document);
+    expect(result.source).toBe("word");
+    expect(result.document.children[0]).toMatchObject({ type: "list", attrs: { style: "decimal" } });
+    expect(serialized.match(/"type":"list"/g)).toHaveLength(2);
+    expect(serialized.match(/"type":"list_item"/g)).toHaveLength(3);
+    expect(serialized).toContain("First");
+    expect(serialized).toContain("Nested");
+    expect(serialized).not.toMatch(/1\.|a\.|2\./);
+  });
 });
 
 describe("native clipboard round-trip", () => {

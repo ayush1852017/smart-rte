@@ -148,8 +148,8 @@ export declare const deleteClipboardSelection: (document: SmartDocument, selecti
 
 | Spec | Implementation | Reason | Reversal blast radius |
 |---|---|---|---|
-| P0 includes Word Windows | No Windows Word fixture exists | No Windows Word clipboard was available during capture | High for Word import correctness; low for API shape. A real fixture may force `mso-list`, VML, and Office namespace normalization changes. |
-| Word list normalization handles literal-glyph `mso-list` paragraphs | Implemented declared-level regrouping for captured Word macOS/Docs semantic lists; no claimed `mso-list` converter | Writing it against invented HTML would create false confidence | Medium, localized to the Word source normalizer. |
+| P0 includes Word Windows | A Windows DOCX-derived reference exists, but no native Windows Word clipboard capture exists | Mammoth conversion is useful parser input but does not reproduce Windows clipboard HTML | High for source-specific evidence; low for API shape. Windows Office-version quirks remain unproven. |
+| Word list normalization handles literal-glyph `mso-list` paragraphs | Implemented against the genuine macOS Word capture, with a synthesized nested/ordered regression test | The replacement Mac payload contains real `mso-list`, conditional comments, `<o:p>`, VML, and marker spans | Medium, localized to the Word source normalizer. Windows-specific variants remain unproven. |
 | Native application fixture exercises lossless custom MIME | Current product capture contains legacy HTML only and is detected as Word | Native MIME is emitted by the canonical surface, but the current product remains DOM-authoritative until 8b | Low for the pipeline; medium for product integration evidence. |
 | Browser drag test uses the browser's complete drag gesture | The three-browser test calls the pipeline's drag-start entry point with a real `DataTransfer`, then drops through the public drop entry point | Synthetic native selection changes made dispatched drag events engine-dependent; the model move contract is what this test isolates | Low code blast radius; evidence gap for pointer-driven drag UX. |
 | Transaction metadata identifies cut as cut | Cut deletion uses source `"paste"` | Phase 1's frozen source union has no `cut` member | High to change the transaction contract; telemetry currently cannot distinguish cut deletion from paste replacement. |
@@ -161,7 +161,7 @@ export declare const deleteClipboardSelection: (document: SmartDocument, selecti
 
 - Detection is a hint only. Native MIME wins, spreadsheet markers are checked before Word markers, then Word, Google Docs, Markdown, generic HTML, and plain text. Every captured fixture also runs through the generic path.
 - DOMPurify 3.x is the HTML sanitizer. Sanitization is structurally before normalization through the branded `SanitizedClipboardPayload`; the Phase 8a lint gate checks call ordering.
-- Word/Docs list runs carrying `aria-level`/`data-aria-level` are regrouped by level and list tag. The classic Windows `mso-list` grouping rule is deliberately not locked without a real capture.
+- Word `mso-list` paragraphs are grouped by list ID/override and level; literal marker spans are removed, orderedness is inferred from the marker, and nesting is materialized. Docs/Office-web runs carrying `aria-level`/`data-aria-level` continue to use declared-level regrouping.
 - A grid pasted into a cell becomes a nested table. Phase 6 makes nested tables legal and geometry repair runs afterward.
 - A multi-block fragment pasted into a list becomes sibling list items after the target item. Existing list fragments contribute their items.
 - The nearest schema node with `defining: true` is reported and preserved; blockquote and table-cell identity remain stable while their content changes.
@@ -174,9 +174,9 @@ export declare const deleteClipboardSelection: (document: SmartDocument, selecti
 |---|---|---|
 | 1 | PASS | `pipeline.test.ts` order probe; `check-phase8a-contract.mjs` enforces sanitize-before-normalize. |
 | 2 | PASS | `pipeline.test.ts`: 1,000 lossless native documents, seed `0x8a2026`. |
-| 3 | **FAIL** | `corpus.test.ts` passes for eight real captures, but the required Word Windows P0 fixture is absent. |
+| 3 | **FAIL** | `corpus.test.ts` passes for eight real captures, including genuine desktop Word macOS HTML, but the required native Word Windows P0 clipboard capture is absent. The supplied Windows DOCX conversion is tested separately as reference-only evidence. |
 | 4 | PASS for captured corpus | `corpus.test.ts`: all eight real captures survive generic parsing and validate without losing sampled visible text. This does not substitute for the missing P0 fixture. |
-| 5 | **FAIL** | Captured Word macOS and Google Docs nested ordered/unordered lists pass. Classic Windows `mso-list` is untested and unimplemented. |
+| 5 | **FAIL** | Real macOS `mso-list` bullet paragraphs pass, and a synthesized fixture proves nested ordered conversion. The captured Mac sample has only level-1 bullets, and no native Windows capture proves nested ordered/unordered Office variants, so the corpus gate remains open. |
 | 6 | PASS | `corpus.test.ts`: Excel/Sheets tables and captured merged spans survive and use Phase 6 repair. |
 | 7 | PASS | `insertion.test.ts`: defining owner, list, nested table, code, cross-block, and atom cases. `clipboard-workflows.spec.ts` covers browser insertion. |
 | 8 | PASS | `input.test.ts` and three-browser workflow: paste-over-selection is one history entry and one undo. |
@@ -189,15 +189,15 @@ export declare const deleteClipboardSelection: (document: SmartDocument, selecti
 | 15 | PASS | `check-phase8a-contract.mjs`: no clipboard event handling/cleaner remains in `ClassicEditor.tsx`. |
 | 16 | PASS | Retention commit `856425e` precedes deletion commit `77b45ec`. |
 | 17 | PASS with corpus limitation | Eight captures × three browsers = 24 shadow scenarios. Each browser: 8 `expected-normalization`, 0 semantic, 0 data-loss, 0 unknown. The missing Windows fixture is not represented. |
-| 18 | PASS | Phase 7 baseline → Phase 8a: core `369→412`, React `223→228`, browser `174→186`. Removed tests: none. One old browser assertion was updated to require the new precise no-payload diagnostics. |
-| 19 | PASS | `corpus.test.ts`: 10× largest capture = 1,453,120 bytes; observed 137.70 ms in the final full run; configured threshold rejection also passes. |
+| 18 | PASS | Phase 7 baseline → current Phase 8a: core `369→414`, React `223→228`, browser `174→186`. Removed tests: none. One old browser assertion was updated to require the new precise no-payload diagnostics. |
+| 19 | PASS | `corpus.test.ts`: 10× the complete largest captured representation map = 27,136,620 bytes (the Mac fixture includes RTF); observed 521.27 ms in the final unit run with an explicit benchmark allowance. The normal 5 MiB guard rejects it, and the configured threshold boundary also passes. |
 | 20 | PASS | Adapter count remains exactly 3 in source and inventory; enforced by lint. |
 
-Full final runs: `pnpm check` passed; Playwright `186/186` passed across Chromium, Firefox, and WebKit.
+Full final runs: `pnpm check` passed (`414/414` core, `228/228` React); Playwright `186/186` passed across Chromium, Firefox, and WebKit.
 
 ## E. Known gaps and confidence limits
 
-1. Word Windows is the blocking gap. No real `mso-list`, conditional-comment, `<o:p>`, namespace, or VML payload exists in the corpus.
+1. Word Windows is still the blocking gap. The corpus now contains real `mso-list`, conditional-comment, `<o:p>`, namespace, and VML payloads from Word macOS, but the supplied Windows file is explicitly a Mammoth DOCX conversion and cannot prove native Windows clipboard behavior.
 2. The current product's “native” capture is not native MIME. Exact native round-trip is property-tested and canonical-surface-tested, but not captured from the current ClassicEditor product path.
 3. The product remains DOM-authoritative after the canonical parser returns clean HTML. `canonicalClipboardRuntime.ts` intentionally uses `execCommand("insertHTML")`; 8b owns replacing this with persistent canonical authority.
 4. The clipboard shadow corpus has eight composite real captures, not thousands of distinct captures. It is cross-browser but shallow in source/version diversity.
@@ -221,7 +221,7 @@ The full intentional-change catalogue is `docs/PHASE8A_BEHAVIOR_CHANGE_CATALOGUE
 
 | Fixture | Provenance | What it proves / does not prove |
 |---|---|---|
-| `word-macos` | **Captured from real application** | Proves the captured macOS Office-web semantic-list/table path; does not prove Windows desktop `mso-list` or VML. |
+| `word-macos` | **Captured from real application** | Proves a real desktop Mac Word path with `mso-list` marker spans, conditional comments, `<o:p>`, VML fallback, table, and image. This particular capture has level-1 bullet lists only; it does not prove Windows output or nested/ordered Word lists. |
 | `google-docs` | **Captured from real application** | Proves the captured Docs wrapper, list, table, marks, link, and image payload. |
 | `google-sheets` | **Captured from real application** | Proves the captured Sheets grid/merged-cell path. |
 | `excel` | **Captured from real application** | Proves the captured Excel grid/merged-cell path; formulas/number semantics are intentionally text-only. |
@@ -232,10 +232,10 @@ The full intentional-change catalogue is `docs/PHASE8A_BEHAVIOR_CHANGE_CATALOGUE
 | Hostile HTML fixtures | **Synthesized** | Security regression inputs only; not representative of Word/Docs. |
 | Generated native documents | **Synthesized/property generated** | Native algebra only, seed `0x8a2026`. |
 | Generated unknown elements | **Synthesized/property generated** | Unknown preservation only, seed `0x8a0bad`. |
-| 10× payload | **Synthesized by repetition of the largest real capture** | Size/latency guard only; not a representative 1.45 MiB document. |
-| DOCX reference import | **Converted/synthesized from a file via Mammoth** | Parser-development convenience only. It is stamped `docx-reference`, is not clipboard HTML, and cannot satisfy a captured-source gate. |
+| 10× payload | **Synthesized by repetition of the largest real capture** | Size/latency guard only; not a representative 27.1 MiB clipboard document. |
+| `word-windows-docx-reference` | **Converted/synthesized from a file via Mammoth** | Parser-development convenience only. It is stamped `docx-reference`, stored outside `fixtures/captured`, tested for valid non-destructive parsing, and cannot satisfy a captured-source gate. |
 
-Real-world sources still uncovered: Word Windows (blocking), Word Online, Outlook, Notion, Confluence, Apple Notes, and rich generic web HTML. The first is expected to break list grouping today; the P2 sources may expose new wrapper, list, and style patterns but are not Phase 8a P0.
+Real-world sources still uncovered: native Word Windows clipboard output (blocking), Word Online, Outlook, Notion, Confluence, Apple Notes, and rich generic web HTML. Windows may expose marker, namespace, VML, and list-level variants absent from the Mac capture; the P2 sources may expose new wrapper, list, and style patterns but are not Phase 8a P0.
 
 ## H. Scope leakage
 

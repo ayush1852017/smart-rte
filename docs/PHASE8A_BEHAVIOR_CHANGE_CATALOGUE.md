@@ -6,7 +6,7 @@ All eight captured fixtures differ structurally from the retained legacy engine 
 
 | Captured fixture | Intentional correction |
 |---|---|
-| Word macOS | Office web wrappers are removed and separate lists carrying declared levels are regrouped into canonical nested list structure. |
+| Word macOS | Office metadata, conditional/VML fallbacks, and marker-only spans are removed; real `mso-list` paragraphs are grouped into canonical lists without retaining literal bullet glyphs. |
 | Google Docs | The `docs-internal-guid` wrapper is removed; declared list levels become actual nested lists instead of unrelated sibling lists. |
 | Google Sheets | The source wrapper is removed, unsafe stylesheet content is discarded, and the table is parsed and passed through canonical geometry repair. |
 | Excel | Office metadata and stylesheet blocks are discarded; cell text and table geometry are retained. Formula and display-number semantics are intentionally not imported. |
@@ -17,4 +17,4 @@ All eight captured fixtures differ structurally from the retained legacy engine 
 
 ## Evidence limitation
 
-Word on Windows has not been captured. In particular, this corpus does not yet exercise `mso-list:l0 level1 lfo1`, conditional Office comments, `<o:p>`, or VML fallbacks. Windows Word normalization remains a Phase 8a gate failure until a real payload is added or the owner explicitly accepts that source as residual risk.
+Word on Windows has not been captured. The replacement macOS capture now exercises `mso-list:l0 level1 lfo1`, conditional Office comments, `<o:p>`, and VML fallbacks, but it cannot establish that Windows emits the same variants. The supplied Windows file is a Mammoth-converted DOCX reference, not a clipboard capture. Windows Word remains a Phase 8a gate failure until native clipboard payload is added or the owner explicitly accepts that source as residual risk.

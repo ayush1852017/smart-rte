@@ -29,7 +29,7 @@ const fixtures = [
   ["generic-web-clipboard.clipboard.json", "plain-text"],
 ] as const satisfies readonly (readonly [string, ClipboardSource])[];
 const expectedCanonicalHashes: Record<string, string> = {
-  "word-macos-clipboard.clipboard.json": "45f5f807",
+  "word-macos-clipboard.clipboard.json": "c4346141",
   "google-docs-clipboard.clipboard.json": "53c031ef",
   "google-sheets-clipboard.clipboard.json": "7d90f1a7",
   "excel-clipboard.clipboard.json": "8f56ffb5",
@@ -106,8 +106,9 @@ describe("captured Phase 8a corpus", () => {
       html: representations["text/html"], plainText: representations["text/plain"], types: largest.types, representations,
     };
     const bytes = estimateClipboardPayloadBytes(stress);
+    expect(() => parseClipboardPayload(stress, { ownerDocument: document })).toThrow(ClipboardPayloadTooLargeError);
     const started = performance.now();
-    expect(parseClipboardPayload(stress, { ownerDocument: document }).document.children.length).toBeGreaterThan(0);
+    expect(parseClipboardPayload(stress, { ownerDocument: document, maxBytes: bytes }).document.children.length).toBeGreaterThan(0);
     const elapsedMs = performance.now() - started;
     console.log(`Phase 8a 10x captured-payload parse: ${bytes} bytes in ${elapsedMs.toFixed(2)}ms`);
     expect(() => parseClipboardPayload(stress, { ownerDocument: document, maxBytes: bytes - 1 })).toThrow(ClipboardPayloadTooLargeError);
