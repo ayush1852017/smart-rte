@@ -132,24 +132,29 @@ export const repairTableGeometry = (table: SmartElementNode): { table: SmartElem
     slots[row][col] = cell;
   }
   width = slots.reduce((max, row) => Math.max(max, row.length), width);
+  // Preserve only header cells that already form complete leading rows or
+  // columns. A stray Word header in the middle is demoted; promoting all rows
+  // before it changes document semantics and surprises screen-reader users.
   let headerRows = 0;
+  while (headerRows < sourceRows.length && Array.from(
+    { length: width },
+    (_, col) => slots[headerRows]?.[col]?.attrs?.header === true,
+  ).every(Boolean)) headerRows += 1;
   let headerColumns = 0;
-  placements.filter(({ cell }) => cell.attrs?.header === true).forEach((placement) => {
-    if (placement.column === 0) headerRows = Math.max(headerRows, placement.row + placement.rowspan);
-    if (placement.row === 0) headerColumns = Math.max(headerColumns, placement.column + placement.colspan);
-  });
-  const makeHeader = new Set<string>();
+  while (headerColumns < width && Array.from(
+    { length: sourceRows.length },
+    (_, row) => slots[row]?.[headerColumns]?.attrs?.header === true,
+  ).every(Boolean)) headerColumns += 1;
+  const keepHeader = new Set<string>();
   for (let row = 0; row < sourceRows.length; row += 1) for (let col = 0; col < width; col += 1) {
-    if (row < headerRows || col < headerColumns) {
-      const owner = slots[row]?.[col];
-      if (owner) makeHeader.add(owner.id);
-    }
+    const owner = slots[row]?.[col];
+    if (owner?.attrs?.header === true && (row < headerRows || col < headerColumns)) keepHeader.add(owner.id);
   }
   const rows = sourceRows.map((row, rowIndex) => ({
     ...row,
     children: placements.filter((placement) => placement.row === rowIndex).sort((a, b) => a.column - b.column).map(({ cell, rowspan, colspan }) => ({
       ...cell,
-      attrs: { ...(cell.attrs || {}), rowspan, colspan, header: makeHeader.has(cell.id) || cell.attrs?.header === true },
+      attrs: { ...(cell.attrs || {}), rowspan, colspan, header: keepHeader.has(cell.id) },
     })),
   }));
   return { table: { ...table, children: rows }, repairs };
