@@ -1,0 +1,15 @@
+{
+  "fixtureVersion": 1,
+  "source": "plain-text",
+  "platform": "",
+  "contentDescription": "",
+  "capturedAt": "2026-08-04T15:12:21.158Z",
+  "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
+  "types": [
+    "text/plain"
+  ],
+  "representations": {
+    "text/plain": "Clipboard plain-text fixture\nThis is the first paragraph.\nIt contains two lines but remains part of the first content group.\n\nThis is the second paragraph.\nThe blank line before it must be preserved.\n\nName\tDepartment\tStatus\nMira\tEngineering\tReady\nArun\tQuality Assurance\tIn Progress\nChen\tDocumentation\tBlocked\n\nFinal paragraph after the tab-separated records."
+  },
+  "files": []
+}
