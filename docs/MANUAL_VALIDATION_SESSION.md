@@ -42,7 +42,7 @@ human fills in the results below.
 | Safari Indic IME | Unscheduled | Pending | — |
 | Physical CJK IME | Unscheduled | Pending | — |
 | NVDA + Chrome | Unscheduled | Pending | — |
-| VoiceOver + Safari | Product owner / 2026-08-03 | Pass, version not recorded | Text selection, insertion, deletion, undo/redo, toolbar interaction, and dropdown operation passed. `Control+Option+Space` is assigned to language switching in the test environment; `Control+Option+Shift+Down Arrow` successfully enters the dropdown and arrow-key operation works. |
+| VoiceOver + Safari | Product owner / 2026-08-03 | Operability pass, version not recorded | Text selection, insertion, deletion, undo/redo, toolbar interaction, and dropdown operation passed. `Control+Option+Space` is assigned to language switching in the test environment; `Control+Option+Shift+Down Arrow` successfully enters the dropdown and arrow-key operation works. Concise list-level announcements, checklist checkbox/list-item semantics, and mixed/indeterminate toolbar announcements were not separately recorded and are not claimed as passed. |
 | Canonical 10,000-block smoke | Product owner / 2026-08-03 | Pass | `?canonical=1&blocks=10000` remained usable for selection, insertion, deletion, undo, and redo. This is a functional observation, not a latency measurement. |
 
 ## Phase-entry decision

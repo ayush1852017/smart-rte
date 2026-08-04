@@ -115,6 +115,13 @@ const checklistDocument = (): SmartDocument => ({ type: "doc", id: "canonical-do
   ],
 }] });
 
+const blockSemanticsDocument = (): SmartDocument => ({ type: "doc", id: "canonical-doc", children: [
+  { type: "heading", id: "semantic-heading-1", attrs: { level: 1 }, children: [{ type: "text", text: "Document title" }] },
+  { type: "heading", id: "semantic-heading-2", attrs: { level: 2 }, children: [{ type: "text", text: "Section title" }] },
+  { type: "blockquote", id: "semantic-quote", children: [paragraphNode("semantic-quote-p", "Quoted text")] },
+  { type: "code_block", id: "semantic-code", attrs: { language: "typescript" }, children: [{ type: "text", text: "const value = 1;" }] },
+] });
+
 function paragraphNode(id: string, text: string) {
   return { type: "paragraph", id, children: [{ type: "text" as const, text }] };
 }
@@ -132,14 +139,16 @@ export default function CanonicalSurface() {
     const lists = params.has("lists");
     const listTable = params.has("listTable");
     const checks = params.has("checks");
+    const blockSemantics = params.has("blockSemantics");
     const editor = createFoundationEditor({
-      document: isolation ? isolationDocument() : listTable ? listTableDocument() : checks ? checklistDocument() : atoms ? atomDocument() : lists ? listDocument() : createDocument(count),
+      document: isolation ? isolationDocument() : listTable ? listTableDocument() : checks ? checklistDocument() : blockSemantics ? blockSemanticsDocument() : atoms ? atomDocument() : lists ? listDocument() : createDocument(count),
       schema: isolation ? isolationSchema : listTable ? listTableSchema : undefined,
       selection: isolation
         ? { type: "text", anchor: { path: [0], offset: 2 }, head: { path: [0], offset: 2 } }
         : atoms ? { type: "text", anchor: { path: [0], offset: 3 }, head: { path: [0], offset: 3 } }
         : listTable ? { type: "text", anchor: { path: [0, 0, 0, 0, 1, 0], offset: 0 }, head: { path: [0, 0, 0, 0, 1, 0], offset: 0 } }
         : checks ? { type: "text", anchor: { path: [0, 0, 0], offset: 0 }, head: { path: [0, 0, 0], offset: 0 } }
+        : blockSemantics ? { type: "text", anchor: { path: [0], offset: 0 }, head: { path: [0], offset: 0 } }
         : lists ? { type: "text", anchor: { path: [0, 2, 0], offset: 0 }, head: { path: [0, 2, 0], offset: 0 } }
         : { type: "text", anchor: { path: [0], offset: 5 }, head: { path: [0], offset: 5 } },
     });

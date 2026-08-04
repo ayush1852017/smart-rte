@@ -46,12 +46,19 @@ const orderedList = (node: SmartElementNode) => {
 };
 
 const presetStyles: Record<string, readonly string[]> = {
+  "ordered-decimal-paren": ["decimal", "lower-alpha", "lower-roman"],
+  "ordered-outline": ["decimal", "decimal", "decimal"],
   "ordered-upper-alpha": ["upper-alpha", "lower-alpha", "lower-roman"],
   "ordered-upper-roman": ["upper-roman", "upper-alpha", "decimal"],
+  "ordered-leading-zero": ["decimal-leading-zero", "lower-alpha", "lower-roman"],
   "ordered-decimal": ["decimal", "lower-alpha", "lower-roman"],
   "bullet-disc": ["disc", "circle", "square"],
   "bullet-circle": ["circle", "square", "disc"],
   "bullet-square": ["square", "circle", "disc"],
+  "bullet-diamond": ["disc", "circle", "square"],
+  "bullet-arrow": ["disc", "circle", "square"],
+  "bullet-star": ["disc", "circle", "square"],
+  "bullet-arrow-circle": ["disc", "circle", "square"],
 };
 
 const effectiveStyle = (node: SmartElementNode, depth: number): string | undefined => {
@@ -179,6 +186,14 @@ const elementChildren = (node: HtmlNode) => (node.childNodes || []).filter((chil
 const styleValue = (node: HtmlNode, property: string) => attr(node, "style")?.split(";").map((part) => part.split(":"))
   .find(([name]) => name?.trim().toLowerCase() === property)?.[1]?.trim();
 
+const withoutListMarkerStyle = (style: string | undefined): string | undefined => {
+  if (!style) return undefined;
+  const retained = style.split(";")
+    .map((declaration) => declaration.trim())
+    .filter((declaration) => declaration && !/^list-style(?:-type)?\s*:/i.test(declaration));
+  return retained.length ? retained.join(";") : undefined;
+};
+
 const parsedBlockAttrs = (node: HtmlNode): Record<string, unknown> => {
   const attrs: Record<string, unknown> = {};
   const align = attr(node, "data-smart-align") || styleValue(node, "text-align");
@@ -263,7 +278,8 @@ const parseBlock = (node: HtmlNode): SmartElementNode | null => {
     const checked = attr(node, "data-smart-checked") || attr(node, "data-srte-checked") || attr(node, "data-checked");
     const value = Number(attr(node, "value"));
     if (checked !== undefined) attrs.checked = checked === "true";
-    if (attr(node, "style")) attrs.htmlStyle = attr(node, "style");
+    const htmlStyle = withoutListMarkerStyle(attr(node, "style"));
+    if (htmlStyle) attrs.htmlStyle = htmlStyle;
     if (Number.isInteger(value) && value >= 1) attrs.numberOverride = value;
     const children: SmartElementNode[] = [];
     const blockTags = ["p", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "blockquote", "pre", "div", "table", "figure"];

@@ -27,7 +27,13 @@ const renderNode = (node: SmartNode, ownerDocument: Document): Node => {
   element.setAttribute("data-smart-type", node.type);
   if (node.attrs?.align) element.style.textAlign = String(node.attrs.align);
   if (node.attrs?.indentLevel) element.style.marginInlineStart = `${Number(node.attrs.indentLevel) * 2}em`;
-  if (node.type === "code_block" && typeof node.attrs?.language === "string") element.setAttribute("data-smart-language", node.attrs.language);
+  if (node.type === "code_block") {
+    const language = typeof node.attrs?.language === "string" && node.attrs.language.trim()
+      ? node.attrs.language.trim()
+      : null;
+    if (language) element.setAttribute("data-smart-language", language);
+    element.setAttribute("aria-label", language ? `Code block, ${language}` : "Code block");
+  }
   if (node.type === "list") {
     if (typeof node.attrs?.preset === "string") element.setAttribute("data-smart-list-preset", node.attrs.preset);
     if (typeof node.attrs?.style === "string") {

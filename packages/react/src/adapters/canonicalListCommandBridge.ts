@@ -134,7 +134,7 @@ const replaceOuterList = (root: HTMLElement, outer: HTMLElement, document: Smart
 const runByOuterList = (
   root: HTMLElement,
   selected: readonly HTMLElement[],
-  execute: (document: SmartDocument, scope: ListSelectionScope, ctx: CommandContext) => ReturnType<typeof applyOperations> | null,
+  execute: (document: SmartDocument, scope: ListSelectionScope, ctx: CommandContext, hierarchyRootId: string) => ReturnType<typeof applyOperations> | null,
 ) => {
   if (!selected.length) return false;
   selected.forEach((item) => {
@@ -164,8 +164,10 @@ const runByOuterList = (
       byList.set(list, [...(byList.get(list) || []), item]);
     });
     let groupChanged = false;
-    byList.forEach((directItems, list) => {
-      const result = execute(document, scopeForItems(list, directItems), contextFor(document));
+    const listGroups = [...byList.entries()].sort(([listA], [listB]) => listDepth(listB) - listDepth(listA));
+    listGroups.forEach(([list, directItems]) => {
+      const hierarchyRootId = byList.size > 1 ? nodeId(outer) : nodeId(list);
+      const result = execute(document, scopeForItems(list, directItems), contextFor(document), hierarchyRootId);
       if (result && result !== document) { document = result; changed = true; groupChanged = true; }
     });
     if (groupChanged) replaceOuterList(root, outer, document, selection);
@@ -245,12 +247,23 @@ export const executeCanonicalListStyle = (args: {
   style?: string;
   preset?: string;
   checkable?: boolean;
-}) => runByOuterList(args.root, args.items, (document, selectedScope) => {
+}) => runByOuterList(args.root, args.items, (document, selectedScope, _ctx, hierarchyRootId) => {
+  const stylesForDepth = (rootStyle: string | undefined, depth: number) => {
+    const sequence = rootStyle === "upper-alpha" ? ["upper-alpha", "lower-alpha", "lower-roman"]
+      : rootStyle === "upper-roman" ? ["upper-roman", "upper-alpha", "decimal"]
+      : rootStyle === "lower-alpha" ? ["lower-alpha", "lower-alpha", "lower-roman"]
+      : rootStyle === "lower-roman" ? ["lower-roman", "lower-roman", "lower-alpha"]
+      : rootStyle === "decimal-leading-zero" ? ["decimal-leading-zero", "lower-alpha", "lower-roman"]
+      : rootStyle === "decimal" ? ["decimal", "lower-alpha", "lower-roman"]
+      : rootStyle === "circle" ? ["circle", "square", "disc"]
+      : rootStyle === "square" ? ["square", "circle", "disc"]
+      : rootStyle === "disc" ? ["disc", "circle", "square"]
+      : [rootStyle];
+    return sequence[Math.min(depth, sequence.length - 1)];
+  };
   let next = document;
-  for (const { scope, depth } of scopesFromList(document, selectedScope.listId)) {
-    const style = args.style === "decimal" ? ["decimal", "lower-alpha", "lower-roman"][Math.min(depth, 2)]
-      : args.style === "disc" ? ["disc", "circle", "square"][Math.min(depth, 2)]
-        : args.style;
+  for (const { scope, depth } of scopesFromList(document, hierarchyRootId || selectedScope.listId)) {
+    const style = stylesForDepth(args.style, depth);
     const operations = args.preset !== undefined
       ? setListPreset(next, scope, { preset: args.preset }, contextFor(next))
       : setListStyle(next, scope, { style, checkable: args.checkable }, contextFor(next));

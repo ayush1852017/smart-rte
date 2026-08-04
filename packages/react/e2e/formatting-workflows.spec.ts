@@ -50,7 +50,7 @@ test("applies bold to a mixed selection and updates the toolbar state", async ({
   await setEditorHtml(page, "<p>Plain <strong>Bold</strong> tail</p>");
   await selectTextRange(page, "Plain ", 0, "Bold", "Bold".length);
   const bold = page.getByTitle("Bold", { exact: true });
-  await expect(bold).toHaveAttribute("aria-pressed", "false");
+  await expect(bold).toHaveAttribute("aria-pressed", "mixed");
   await bold.click();
 
   const paragraph = page.locator(`${editorSelector} p`);
