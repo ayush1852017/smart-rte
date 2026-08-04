@@ -3,6 +3,8 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { isTextNode } from "../identity.js";
 import { validate } from "../schema.js";
+import { foundationSchema } from "../schema.js";
+import { normalizedStructureWithoutIds } from "../list/shadow.js";
 import type { SmartNode } from "../types.js";
 import { detectClipboardSource } from "./detection.js";
 import { ClipboardPayloadTooLargeError, estimateClipboardPayloadBytes, parseClipboardPayload } from "./pipeline.js";
@@ -26,6 +28,16 @@ const fixtures = [
   ["plain-text-clipboard.clipboard.json", "plain-text"],
   ["generic-web-clipboard.clipboard.json", "plain-text"],
 ] as const satisfies readonly (readonly [string, ClipboardSource])[];
+const expectedCanonicalHashes: Record<string, string> = {
+  "word-macos-clipboard.clipboard.json": "45f5f807",
+  "google-docs-clipboard.clipboard.json": "53c031ef",
+  "google-sheets-clipboard.clipboard.json": "7d90f1a7",
+  "excel-clipboard.clipboard.json": "8f56ffb5",
+  "markdown-plain-text-clipboard.clipboard.json": "7b1d5a9f",
+  "native-smart-rte-clipboard.clipboard.json": "4e57a651",
+  "plain-text-clipboard.clipboard.json": "338a8736",
+  "generic-web-clipboard.clipboard.json": "0c01e672",
+};
 
 const load = (name: string): CapturedFixture => JSON.parse(readFileSync(`src/foundation/clipboard/fixtures/captured/p0/${name}`, "utf8")) as CapturedFixture;
 const payloadOf = (fixture: CapturedFixture): RawClipboardPayload => ({
@@ -39,6 +51,11 @@ const count = (node: SmartNode, type: string): number => isTextNode(node) ? 0
   : (node.type === type ? 1 : 0) + (node.children || []).reduce((total, child) => total + count(child, type), 0);
 const hasSpan = (node: SmartNode): boolean => isTextNode(node) ? false
   : (Number(node.attrs?.rowspan) > 1 || Number(node.attrs?.colspan) > 1) || (node.children || []).some(hasSpan);
+const hash = (value: string) => {
+  let result = 2166136261;
+  for (let index = 0; index < value.length; index += 1) result = Math.imul(result ^ value.charCodeAt(index), 16777619);
+  return (result >>> 0).toString(16).padStart(8, "0");
+};
 
 describe("captured Phase 8a corpus", () => {
   it.each(fixtures)("detects and parses real capture %s", (name, expectedSource) => {
@@ -52,6 +69,7 @@ describe("captured Phase 8a corpus", () => {
     const firstWord = (payload.plainText || "").match(/[A-Za-z]{4,}/)?.[0];
     if (firstWord) expect(serialized).toContain(firstWord);
     expect(serialized).not.toMatch(/<script|onerror\s*=|javascript:/i);
+    expect(hash(JSON.stringify(normalizedStructureWithoutIds(fragment.document, foundationSchema)))).toBe(expectedCanonicalHashes[name]);
   });
 
   it("preserves the captured list and table structures on detected paths", () => {

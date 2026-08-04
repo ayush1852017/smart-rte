@@ -53,6 +53,27 @@ describe("Phase 8a clipboard security boundary", () => {
     expect(JSON.stringify(result.document)).toContain("customer content");
   });
 
+  it("preserves 1,000 generated unknown elements non-destructively (seed 0x8a0bad)", () => {
+    let seed = 0x8a0bad;
+    const random = () => {
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+      return seed;
+    };
+    for (let run = 0; run < 1_000; run += 1) {
+      const value = random();
+      const type = `x-customer-${value.toString(36)}`;
+      const content = `unknown-content-${run}-${random()}`;
+      const result = parseClipboardPayload({
+        html: `<${type} data-safe="${value}">${content}</${type}>`,
+      }, { ownerDocument: document });
+      expect(result.document.children[0]).toMatchObject({
+        type: "unknown",
+        attrs: { originalType: type, editable: false },
+      });
+      expect(JSON.stringify(result.document)).toContain(content);
+    }
+  });
+
   it("refuses oversized input with a clear diagnostic", () => {
     const html = `<p>${"x".repeat(DEFAULT_MAX_CLIPBOARD_BYTES)}</p>`;
     expect(() => parseClipboardPayload({ html }, { ownerDocument: document })).toThrow(ClipboardPayloadTooLargeError);

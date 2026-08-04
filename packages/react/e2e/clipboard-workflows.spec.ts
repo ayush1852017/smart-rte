@@ -48,4 +48,21 @@ test.describe("Phase 8a canonical clipboard", () => {
     expect(result.copyTypes.sort()).toEqual(["application/x-smart-rte+json", "text/html", "text/plain"].sort());
     expect(result.cleanHtml).not.toMatch(/data-smart-id|data-smart-ui/);
   });
+
+  test("internal block drag moves rather than copies", async ({ page }) => {
+    await page.goto("/?canonical=1");
+    const result = await page.evaluate(() => {
+      const runtime = window.__smartCanonical!;
+      runtime.editor.setSelection({ type: "node", anchor: { path: [], offset: 0 }, head: { path: [], offset: 1 } }, { source: "api" });
+      const transfer = new DataTransfer();
+      (runtime.pipeline as unknown as { handleDragStart(event: DragEvent): void }).handleDragStart(
+        { dataTransfer: transfer } as DragEvent,
+      );
+      runtime.editor.setSelection({ type: "text", anchor: { path: [1], offset: 7 }, head: { path: [1], offset: 7 } }, { source: "api" });
+      runtime.pipeline.handleDrop({ dataTransfer: transfer, clientX: -100, clientY: -100, preventDefault: () => undefined } as DragEvent);
+      return runtime.editor.document.children.map((node) => node.type === "text" ? node.text
+        : (node.children || []).map((child) => child.type === "text" ? child.text : "").join(""));
+    });
+    expect(result).toEqual(["block 1", "start", "block 2"]);
+  });
 });
