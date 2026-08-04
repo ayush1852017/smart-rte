@@ -6,6 +6,8 @@ import { createNodeId, isTextNode } from "../identity.js";
 import { canonicalMarkAttrs, canonicalMarkOrder } from "../marks/canonical.js";
 import type { SmartDocument, SmartElementNode, SmartMark, SmartNode } from "../types.js";
 import { occupancyGridFor } from "../table/grid.js";
+import { atomToHtml } from "../atom/formats.js";
+import { sanitizeAtomSource } from "../atom/security.js";
 
 type HtmlAttribute = { name: string; value: string };
 type HtmlNode = { nodeName: string; tagName?: string; attrs?: HtmlAttribute[]; childNodes?: HtmlNode[]; value?: string };
@@ -19,6 +21,7 @@ const isEditorUiNode = (node: HtmlNode) =>
 const serializeInline = (node: SmartNode): string => {
   if (!isTextNode(node)) {
     if (node.type === "hard_break") return `<br data-smart-id="${escapeHtml(node.id)}" data-smart-type="hard_break">`;
+    if (["image", "formula"].includes(node.type)) return atomToHtml(node);
     const raw = node.attrs?.raw as { html?: unknown } | undefined;
     if (typeof raw?.html === "string") return raw.html;
     return `<span data-smart-id="${escapeHtml(node.id)}" data-smart-atomic="true">￼</span>`;
@@ -88,6 +91,7 @@ const serializeBlock = (node: SmartElementNode, includeIds: boolean, listDepth =
     if (typeof raw?.html === "string") return raw.html;
   }
   const id = includeIds ? ` data-smart-id="${escapeHtml(node.id)}"` : "";
+  if (["block_image", "block_formula", "video", "audio"].includes(node.type)) return atomToHtml(node);
   if (node.type === "paragraph" || node.type === "heading") {
     const tag = node.type === "heading" ? `h${String(node.attrs?.level || 1)}` : "p";
     return `<${tag}${id}${blockAttributes(node)}>${(node.children || []).map(serializeInline).join("")}</${tag}>`;
@@ -183,7 +187,21 @@ const textWithMarks = (node: HtmlNode, inherited: readonly SmartMark[] = []): Sm
   if (tag === "br" || attr(node, "data-smart-type") === "hard_break") return [{
     type: "hard_break", id: generatedId(node, "break"),
   }];
-  if (tag === "img" || attr(node, "data-smart-atomic") === "true") return [{
+  const declaredAtom = attr(node, "data-smart-type");
+  if (tag === "img" || declaredAtom === "image" || declaredAtom === "formula") {
+    if (declaredAtom === "formula") return [{ type: "formula", id: generatedId(node, "formula"), attrs: { source: attr(node, "data-smart-formula") || rawText(node), notation: attr(node, "data-smart-notation") === "mathml" ? "mathml" : "latex" } }];
+    const src = sanitizeAtomSource(attr(node, "src"), { kind: "image", allowBlobPreview: attr(node, "data-smart-status") === "pending" });
+    if (src) {
+      const width = Number(attr(node, "width")); const height = Number(attr(node, "height"));
+      return [{ type: "image", id: generatedId(node, "image"), attrs: {
+        src, alt: attr(node, "alt") || "", status: attr(node, "data-smart-status") || "ready",
+        ...(attr(node, "title") ? { title: attr(node, "title") } : {}),
+        ...(attr(node, "data-smart-align") ? { align: attr(node, "data-smart-align") } : {}),
+        ...(Number.isFinite(width) && width > 0 ? { width } : {}), ...(Number.isFinite(height) && height > 0 ? { height } : {}),
+      } }];
+    }
+  }
+  if (attr(node, "data-smart-atomic") === "true") return [{
     type: "unknown", id: generatedId(node, "atom"),
     attrs: { originalType: attr(node, "data-smart-unknown-type") || tag || "inline-atom", originalGroup: "inline", raw: { html: serializeOuter(node as never) }, editable: false },
   }];
@@ -256,6 +274,16 @@ const rawText = (node: HtmlNode): string => node.nodeName === "#text" ? node.val
 
 const parseBlock = (node: HtmlNode): SmartElementNode | null => {
   const tag = node.tagName || "";
+  const declaredAtom = attr(node, "data-smart-type");
+  if (declaredAtom === "block_image") {
+    const src = sanitizeAtomSource(attr(node, "src"), { kind: "image" });
+    return src ? { type: "block_image", id: generatedId(node, "image"), attrs: { src, alt: attr(node, "alt") || "", status: attr(node, "data-smart-status") || "ready" } } : null;
+  }
+  if (declaredAtom === "block_formula") return { type: "block_formula", id: generatedId(node, "formula"), attrs: { source: attr(node, "data-smart-formula") || rawText(node), notation: attr(node, "data-smart-notation") === "mathml" ? "mathml" : "latex" } };
+  if (tag === "video" || tag === "audio") {
+    const src = sanitizeAtomSource(attr(node, "src"), { kind: tag });
+    return src ? { type: tag, id: generatedId(node, tag), attrs: { src, status: "ready", ...(tag === "video" && attr(node, "poster") ? { poster: attr(node, "poster") } : {}) } } : null;
+  }
   if (tag === "p" || /^h[1-6]$/.test(tag)) return {
     type: tag === "p" ? "paragraph" : "heading",
     id: generatedId(node, tag),

@@ -2,8 +2,9 @@ import { isTextNode } from "../identity.js";
 import { parseCanonicalListHtml, serializeCanonicalListHtml, serializeCanonicalListMarkdown } from "../list/formats.js";
 import type { SmartDocument, SmartElementNode } from "../types.js";
 import { occupancyGridFor } from "./grid.js";
+import { foundationSchema, repair } from "../schema.js";
 
-export const parseCanonicalTableHtml = parseCanonicalListHtml;
+export const parseCanonicalTableHtml = (html: string): SmartDocument => repair(parseCanonicalListHtml(html), foundationSchema).doc;
 export const serializeCanonicalTableHtml = serializeCanonicalListHtml;
 
 /** GFM is intentionally lossy: anchor content survives and covered coordinates are emitted empty. */

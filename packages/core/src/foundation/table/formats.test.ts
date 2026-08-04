@@ -58,4 +58,14 @@ describe("canonical table formats and selection", () => {
     expect(root.querySelector("th")?.getAttribute("scope")).toMatch(/row|col/);
     expect(root.querySelector("td")?.getAttribute("headers")).toBeTruthy();
   });
+
+  it("repairs a Word-like mid-table header row into a leading region without losing or downgrading it", () => {
+    const parsed = parseCanonicalTableHtml('<table><tr><td>Body A</td><td>Body B</td></tr><tr><th>Mid A</th><th>Mid B</th></tr><tr><td>Tail A</td><td>Tail B</td></tr></table>');
+    expect(validate(parsed)).toEqual([]);
+    const table = parsed.children[0] as SmartElementNode;
+    const rows = table.children as SmartElementNode[];
+    expect((rows[1].children as SmartElementNode[]).every((cell) => cell.attrs?.header === true)).toBe(true);
+    expect((rows[0].children as SmartElementNode[]).every((cell) => cell.attrs?.header === true)).toBe(true);
+    expect(JSON.stringify(parsed)).toContain("Tail B");
+  });
 });

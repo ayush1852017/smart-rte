@@ -10,14 +10,17 @@ import {
   deleteAtom,
   foundationSchema,
   insertAtom,
+  invertOperation,
   nodeSelectionForAtom,
   resizeAtom,
+  renderDocumentNaively,
   runAtomUpload,
   sanitizeAtomSource,
   serializePersistedEditorDocument,
   tokenizeCompositionOwner,
   updateAtom,
   validateAtomMime,
+  validate,
   type AtomicNodeScope,
   type SmartDocument,
 } from "../index.js";
@@ -34,6 +37,49 @@ const atomicScope = (document: SmartDocument, id: string): AtomicNodeScope => {
 };
 
 describe("Phase 7 generic atom engine", () => {
+  it("preserves exact documents through randomized atom operation inversion (1,000 cases, seed 0xA70B2027)", () => {
+    let state = 0xA70B2027;
+    const random = () => {
+      state ^= state << 13;
+      state ^= state >>> 17;
+      state ^= state << 5;
+      return (state >>> 0) / 0x1_0000_0000;
+    };
+    const image = atomDeclarations.find((entry) => entry.type === "image")!;
+
+    for (let caseIndex = 0; caseIndex < 1_000; caseIndex += 1) {
+      const before = paragraphDoc();
+      let document = before;
+      const operations = insertAtom(document, emptyScope, {
+        declaration: image,
+        nodeId: `image-${caseIndex}`,
+        attrs: { src: `https://example.test/${caseIndex}.png`, alt: `Image ${caseIndex}`, status: "ready" },
+        ownerId: "p",
+        offset: random() < 0.5 ? 0 : 2,
+      }, context(document));
+      document = applyOperations(document, operations);
+
+      const updates = updateAtom(document, atomicScope(document, `image-${caseIndex}`), {
+        attrs: {
+          width: 16 + Math.floor(random() * 2_000),
+          height: 16 + Math.floor(random() * 2_000),
+          alt: `Updated ${Math.floor(random() * 100)}`,
+        },
+      }, context(document));
+      operations.push(...updates);
+      document = applyOperations(document, updates);
+
+      if (random() < 0.5) {
+        const removals = deleteAtom(document, atomicScope(document, `image-${caseIndex}`), {}, context(document));
+        operations.push(...removals);
+        document = applyOperations(document, removals);
+      }
+
+      const restored = applyOperations(document, operations.toReversed().map(invertOperation));
+      expect(restored).toEqual(before);
+    }
+  });
+
   it("adds a throwaway atom declaration with zero command code", () => {
     const declaration = { type: "mention", kind: "formula" as const, group: "inline" as const, validate: () => true };
     const doc = paragraphDoc();
@@ -88,6 +134,8 @@ describe("Phase 7 generic atom engine", () => {
     expect(editor.history.undo).toHaveLength(1);
     const blob = { schemaVersion: 2, revision: 0, document: { ...document, children: [{ ...document.children[0], attrs: { src: "blob:dead", alt: "" } }] } };
     expect(() => serializePersistedEditorDocument(blob)).toThrow(/blob URL/);
+    const pending = { schemaVersion: 2, revision: 0, document: { ...document, children: [{ ...document.children[0], attrs: { src: "https://preview.test/a.png", alt: "", status: "pending" } }] } };
+    expect(() => serializePersistedEditorDocument(pending)).toThrow(/pending atom/);
   });
 
   it("tokenizes atoms as opaque units and terminates composition at either boundary", () => {
@@ -111,5 +159,30 @@ describe("Phase 7 security boundary", () => {
     expect(validateAtomMime("image", "text/html")).toBe(false);
     expect(validateAtomMime("video", "video/mp4")).toBe(true);
     expect(validateAtomMime("video", "image/svg+xml")).toBe(false);
+  });
+
+  it("rejects hostile source changes at update and async-completion boundaries", () => {
+    const document: SmartDocument = { type: "doc", id: "doc", children: [{ type: "block_image", id: "image", attrs: { src: "https://safe.test/a.png", alt: "A", status: "ready" } }] };
+    const scope = atomicScope(document, "image");
+    expect(updateAtom(document, scope, { attrs: { src: "javascript:alert(1)" } }, context(document))).toEqual([]);
+    const editor = new FoundationEditor({ document, selection: { type: "node", anchor: { path: [], offset: 0 }, head: { path: [], offset: 1 } } });
+    expect(completeAtomUpload(editor, "image", { src: "data:text/html,<script>alert(1)</script>" })).toBe(true);
+    expect(JSON.stringify(editor.document)).not.toContain("data:text/html");
+    expect(JSON.stringify(editor.document)).toContain('"status":"error"');
+  });
+
+  it("renders atoms read-only without inline SVG, evaluation, or user HTML", () => {
+    const root = document.createElement("div");
+    renderDocumentNaively(root, { type: "doc", id: "doc", children: [{ type: "paragraph", id: "p", children: [{ type: "formula", id: "f", attrs: { source: '<svg onload="alert(1)"><script>evil()</script></svg>', notation: "latex" } }] }] });
+    const formula = root.querySelector<HTMLElement>('[data-smart-id="f"]')!;
+    expect(formula.contentEditable).toBe("false");
+    expect(formula.querySelector("svg,script,img,iframe")).toBeNull();
+    expect(formula.textContent).toContain("<svg");
+  });
+
+  it("rejects malformed dimensions while preserving parse-error content", () => {
+    const malformed: SmartDocument = { type: "doc", id: "doc", children: [{ type: "block_image", id: "bad", attrs: { src: "https://x.test/a.png", alt: "A", width: 1e9, status: "error", error: "decode failed" } }] };
+    expect(validate(malformed).map((error) => error.code)).toContain("invalid-attribute");
+    expect(JSON.stringify(malformed)).toContain("decode failed");
   });
 });

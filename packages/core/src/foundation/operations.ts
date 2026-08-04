@@ -323,6 +323,26 @@ export const mapPosThroughOperation = (pos: SmartPos, operation: SmartOperation,
   }
   if (operation.type === "replaceNode") {
     const replaced = [...operation.pos.path, operation.pos.offset];
+    if (samePath(pos.path.slice(0, replaced.length), replaced)
+      && !isTextNode(operation.before) && !isTextNode(operation.after)
+      && operation.before.id === operation.after.id) {
+      const relative = pos.path.slice(replaced.length);
+      let owner: SmartNode | undefined = operation.before;
+      for (const index of relative) owner = !owner || isTextNode(owner) ? undefined : owner.children?.[index];
+      if (owner && !isTextNode(owner)) {
+        const find = (node: SmartNode, id: string, path: number[] = []): number[] | null => {
+          if (!isTextNode(node) && node.id === id) return path;
+          if (isTextNode(node)) return null;
+          for (let index = 0; index < (node.children?.length || 0); index += 1) {
+            const found = find(node.children![index], id, [...path, index]);
+            if (found) return found;
+          }
+          return null;
+        };
+        const nextRelative = find(operation.after, owner.id);
+        if (nextRelative) return { pos: { path: [...replaced, ...nextRelative], offset: pos.offset }, deleted: false };
+      }
+    }
     return samePath(pos.path.slice(0, replaced.length), replaced)
       ? { pos: { path: [...operation.pos.path], offset: operation.pos.offset + (bias > 0 ? 1 : 0) }, deleted: true }
       : { pos, deleted: false };

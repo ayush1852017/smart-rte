@@ -9,7 +9,7 @@ const dimensions = (node: SmartElementNode) => `${attr("width", node.attrs?.widt
 export const atomToHtml = (node: SmartElementNode): string => {
   if (node.type === "image" || node.type === "block_image") {
     const src = sanitizeAtomSource(String(node.attrs?.src || ""), { kind: "image", allowBlobPreview: node.attrs?.status === "pending" }) || "";
-    return `<img data-smart-id="${escape(node.id)}" data-smart-type="${node.type}" src="${escape(src)}" alt="${escape(node.attrs?.alt)}"${dimensions(node)}${attr("data-smart-status", node.attrs?.status || "ready")}>`;
+    return `<img data-smart-id="${escape(node.id)}" data-smart-type="${node.type}" src="${escape(src)}" alt="${escape(node.attrs?.alt)}"${dimensions(node)}${attr("data-smart-status", node.attrs?.status || "ready")}${attr("data-smart-align", node.attrs?.align)}>`;
   }
   if (node.type === "formula" || node.type === "block_formula") {
     const tag = node.type === "formula" ? "span" : "div";
@@ -30,7 +30,7 @@ export const atomFromHtmlElement = (element: Element): SmartElementNode | null =
   if (type === "image" || type === "block_image") {
     const src = sanitizeAtomSource(element.getAttribute("src"), { kind: "image" });
     if (!src) return null;
-    return { type, id, attrs: { src, alt: element.getAttribute("alt") || "", status: element.getAttribute("data-smart-status") || "ready", ...(number("width") ? { width: number("width") } : {}), ...(number("height") ? { height: number("height") } : {}) } };
+    return { type, id, attrs: { src, alt: element.getAttribute("alt") || "", status: element.getAttribute("data-smart-status") || "ready", ...(element.getAttribute("data-smart-align") ? { align: element.getAttribute("data-smart-align")! } : {}), ...(number("width") ? { width: number("width") } : {}), ...(number("height") ? { height: number("height") } : {}) } };
   }
   if (type === "formula" || type === "block_formula") {
     return { type, id, attrs: { source: element.getAttribute("data-smart-formula") || "", notation: element.getAttribute("data-smart-notation") === "mathml" ? "mathml" : "latex" } };

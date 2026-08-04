@@ -8,6 +8,7 @@ const status: AttributeSpec = { default: "ready", validate: (value) => value ===
 const imageAttrs = {
   src: requiredString, alt: requiredString, width: dimension, height: dimension,
   status, uploadId: optionalString, error: optionalString, decorative: { validate: (value: unknown) => typeof value === "boolean" },
+  align: { validate: (value: unknown) => value === "center" || value === "left" || value === "right" },
 };
 const formulaAttrs = {
   source: requiredString,

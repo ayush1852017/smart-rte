@@ -69,6 +69,7 @@ export const sanitizeResourceUrl = (
 ): string | null => {
   const value = input?.trim() || "";
   if (!value || /[\u0000-\u001f\u007f]/.test(value)) return null;
+  if (/^(?:\/[^/]|\.\.?\/)/.test(value)) return value;
   if (options.allowBlob && /^blob:/i.test(value)) return value;
   const data = value.match(/^data:([^;,]+)(?:;[^,]*)?,/i);
   if (data) return options.allowedDataMimeTypes?.has(data[1].toLowerCase()) ? value : null;

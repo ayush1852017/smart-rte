@@ -164,6 +164,9 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
       if (node.attrs?.width) this.setAttribute(element, "width", String(node.attrs.width), node.id); else this.removeAttribute(element, "width", node.id);
       if (node.attrs?.height) this.setAttribute(element, "height", String(node.attrs.height), node.id); else this.removeAttribute(element, "height", node.id);
       this.setAttribute(element, "data-smart-status", String(node.attrs?.status || "ready"), node.id);
+      const imageAlign = node.attrs?.align;
+      if (imageAlign === "center") { element.style.display = "block"; element.style.margin = "0 auto"; element.style.float = "none"; }
+      else if (imageAlign === "left" || imageAlign === "right") { element.style.display = "inline"; element.style.float = imageAlign; element.style.margin = imageAlign === "left" ? "0 8px 8px 0" : "0 0 8px 8px"; }
     } else if (node.type === "formula" || node.type === "block_formula") {
       const source = String(node.attrs?.source || "");
       this.setAttribute(element, "role", "math", node.id);
@@ -273,7 +276,13 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
     for (let index = 0; index < afterChildren.length; index += 1) {
       const next = afterChildren[index];
       const previous = beforeChildren[index];
-      if (next === previous) continue;
+      if (next === previous) {
+        if (!isTextNode(next) && atomTypes.has(next.type)) {
+          const atomElement = this.modelChildren(element)[index];
+          if (atomElement instanceof HTMLElement) this.syncNodeAttributes(atomElement, next);
+        }
+        continue;
+      }
       const domChildren = this.modelChildren(element);
       let dom = domChildren[index] || null;
       let old = previous;

@@ -15,7 +15,7 @@ export const validateAtomMime = (kind: AtomDeclaration["kind"], mime: string): b
 };
 
 export const sanitizeAtomSource = (
-  value: string | undefined,
+  value: string | undefined | null,
   options: { kind: AtomDeclaration["kind"]; allowBlobPreview?: boolean } ,
 ): string | null => sanitizeResourceUrl(value, {
   allowBlob: options.allowBlobPreview === true,

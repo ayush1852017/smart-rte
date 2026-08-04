@@ -2,11 +2,24 @@ import { isTextNode } from "../identity.js";
 import type { Attrs, SmartDocument, SmartElementNode, SmartNode, SmartOperation } from "../types.js";
 import type { ResolvedScope } from "../scope/types.js";
 import type { AtomCommand, AtomCommandContext, InsertAtomParams, ResizeAtomParams, UpdateAtomParams } from "./types.js";
+import { atomDeclarations } from "./declarations.js";
 
 const locate = (document: SmartDocument, id: string, ctx: AtomCommandContext) => {
   const resolved = ctx.positions.positionOf(id);
-  const node = resolved?.parent.children?.[resolved.pos.offset];
-  if (!resolved || !node || isTextNode(node) || node.id !== id) return null;
+  if (!resolved) return null;
+  if (resolved.kind === "inline") {
+    let inlineOffset = 0;
+    for (let index = 0; index < (resolved.parent.children?.length || 0); index += 1) {
+      const child = resolved.parent.children![index];
+      if (!isTextNode(child) && child.id === id && inlineOffset === resolved.pos.offset) {
+        return { node: child, pos: { path: [...resolved.pos.path], offset: index } };
+      }
+      inlineOffset += isTextNode(child) ? child.text.length : 1;
+    }
+    return null;
+  }
+  const node = resolved.parent.children?.[resolved.pos.offset];
+  if (!node || isTextNode(node) || node.id !== id) return null;
   return { node, pos: resolved.pos };
 };
 
@@ -63,7 +76,10 @@ const atomIds = (scope: ResolvedScope): string[] => scope.kind === "atomic-node"
 export const updateAtom: AtomCommand<UpdateAtomParams> = (document, scope, params, ctx) => atomIds(scope).flatMap((id) => {
   const located = locate(document, id, ctx);
   if (!located || ctx.schema.nodes[located.node.type]?.atomic !== true) return [];
-  return [{ type: "setNodeAttributes", pos: { path: [...located.pos.path, located.pos.offset], offset: 0 }, before: located.node.attrs || {}, after: cleanAttrs({ ...(located.node.attrs || {}), ...params.attrs }) }];
+  const after = cleanAttrs({ ...(located.node.attrs || {}), ...params.attrs });
+  const declaration = atomDeclarations.find((entry) => entry.type === located.node.type);
+  if (declaration && !declaration.validate(after)) return [];
+  return [{ type: "setNodeAttributes", pos: { path: [...located.pos.path, located.pos.offset], offset: 0 }, before: located.node.attrs || {}, after }];
 });
 
 export const deleteAtom: AtomCommand<Record<string, never>> = (document, scope, _params, ctx) => atomIds(scope).flatMap((id) => {

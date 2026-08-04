@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { applyOperation, applyOperations, invertOperation } from "../operations.js";
 import { createScopeIndex } from "../scope/index.js";
+import { createTransactionMap } from "../mapping.js";
 import { foundationSchema, repair, validate } from "../schema.js";
 import type { SmartDocument, SmartElementNode, SmartOperation } from "../types.js";
 import type { TableGridScope } from "../scope/types.js";
@@ -67,6 +68,28 @@ describe("shared occupancy grid and table geometry", () => {
 });
 
 describe("pure table commands", () => {
+  it("measures 50x50 whole-table history payload against the 200-entry cap", () => {
+    const size = 50;
+    const large = doc({ type: "table", id: "large", children: Array.from({ length: size }, (_, rowIndex) => row(`large-r-${rowIndex}`, Array.from({ length: size }, (_, columnIndex) => cell(`large-c-${rowIndex}-${columnIndex}`, `${rowIndex}:${columnIndex}`)))) });
+    const selected = { ...scope(currentTable(large)), tableId: "large" };
+    const operations = insertTableRowCommand(large, selected, {
+      rowIndex: 25, rowId: "large-new-row",
+      cellIds: Array.from({ length: size }, (_, index) => `large-new-cell-${index}`),
+      paragraphIds: Array.from({ length: size }, (_, index) => `large-new-p-${index}`),
+    }, ctx(large));
+    const bytes = JSON.stringify({ forward: operations, inverse: operations.map(invertOperation).reverse() }).length;
+    console.log(`Phase 6 carry-forward: 50x50 table history entry=${bytes} bytes; 200-entry upper bound=${bytes * 200} bytes`);
+    expect(bytes).toBeGreaterThan(100_000);
+    expect(bytes * 200).toBeLessThan(1_000_000_000);
+  });
+  it("maps a cursor in an untouched cell through whole-table replacement", () => {
+    const model = doc();
+    const operations = insertTableRowCommand(model, scope(currentTable(model)), { rowIndex: 1, rowId: "mapped-row", cellIds: ["mapped-cell"], paragraphIds: ["mapped-p"] }, ctx(model));
+    const selection = { type: "text" as const, anchor: { path: [0, 1, 0, 0], offset: 1 }, head: { path: [0, 1, 0, 0], offset: 1 } };
+    expect(createTransactionMap(operations).mapSelection(selection)).toEqual({
+      type: "text", anchor: { path: [0, 2, 0, 0], offset: 1 }, head: { path: [0, 2, 0, 0], offset: 1 },
+    });
+  });
   it("handles span-aware row and column insertion/removal and removes the last axis", () => {
     let model = doc();
     let value = currentTable(model);
