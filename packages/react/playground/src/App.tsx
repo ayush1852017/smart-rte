@@ -1,8 +1,10 @@
 import { useState } from "react";
 import { ClassicEditor } from "smartrte-react";
 import CanonicalSurface from "./CanonicalSurface";
+import ClipboardCapture from "./ClipboardCapture";
 
 function App() {
+  if (new URLSearchParams(window.location.search).has("clipboardCapture")) return <ClipboardCapture />;
   if (new URLSearchParams(window.location.search).has("canonical")) return <CanonicalSurface />;
   const [theme, setTheme] = useState<"light" | "dark">("light");
 
