@@ -17,6 +17,9 @@ const tagForNode = (node: SmartNode): string => {
   }
   if (node.type === "list_item") return "li";
   if (node.type === "hard_break") return "br";
+  if (node.type === "table") return "table";
+  if (node.type === "table_row") return "tr";
+  if (node.type === "table_cell") return node.attrs?.header === true ? "th" : "td";
   return "div";
 };
 
@@ -42,6 +45,15 @@ const renderNode = (node: SmartNode, ownerDocument: Document): Node => {
     }
     if (node.attrs?.start !== undefined) element.setAttribute("start", String(node.attrs.start));
     element.setAttribute("data-smart-checkable", node.attrs?.checkable === true ? "true" : "false");
+  }
+  if (node.type === "table_cell") {
+    const rowspan = Math.max(1, Number(node.attrs?.rowspan) || 1);
+    const colspan = Math.max(1, Number(node.attrs?.colspan) || 1);
+    if (rowspan > 1) element.setAttribute("rowspan", String(rowspan));
+    if (colspan > 1) element.setAttribute("colspan", String(colspan));
+    if (node.attrs?.background) element.style.background = String(node.attrs.background);
+    if (node.attrs?.borders) element.style.border = String(node.attrs.borders);
+    if (node.attrs?.verticalAlign) element.style.verticalAlign = String(node.attrs.verticalAlign);
   }
   if (node.type === "hard_break") {
     element.setAttribute("data-smart-atomic", "true");

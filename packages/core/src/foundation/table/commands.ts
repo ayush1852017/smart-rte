@@ -44,15 +44,20 @@ const placementsOf = (table: SmartElementNode): Placement[] => occupancyGridFor(
 
 const tableFromPlacements = (table: SmartElementNode, rowCount: number, placements: readonly Placement[], rowIds?: readonly string[]): SmartElementNode => {
   const oldRows = (table.children || []).filter((node): node is SmartElementNode => !isTextNode(node) && node.type === "table_row");
+  const oldRowsById = new Map(oldRows.map((row) => [row.id, row]));
   return {
     ...table,
-    children: Array.from({ length: rowCount }, (_, row) => ({
-      type: "table_row",
-      id: rowIds?.[row] || oldRows[row]?.id || (() => { throw new Error(`Missing caller-provided row ID for row ${row}.`); })(),
-      ...(oldRows[row]?.attrs ? { attrs: oldRows[row].attrs } : {}),
-      children: placements.filter((placement) => placement.row === row).sort((a, b) => a.column - b.column)
-        .map((placement) => spanAttrs(placement.cell, placement.rowspan, placement.colspan)),
-    })),
+    children: Array.from({ length: rowCount }, (_, row) => {
+      const id = rowIds?.[row] || oldRows[row]?.id || (() => { throw new Error(`Missing caller-provided row ID for row ${row}.`); })();
+      const original = oldRowsById.get(id);
+      return {
+        type: "table_row",
+        id,
+        ...(original?.attrs ? { attrs: original.attrs } : {}),
+        children: placements.filter((placement) => placement.row === row).sort((a, b) => a.column - b.column)
+          .map((placement) => spanAttrs(placement.cell, placement.rowspan, placement.colspan)),
+      };
+    }),
   };
 };
 

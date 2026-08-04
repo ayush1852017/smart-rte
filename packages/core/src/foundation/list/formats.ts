@@ -102,6 +102,28 @@ const serializeBlock = (node: SmartElementNode, includeIds: boolean, listDepth =
     const text = (node.children || []).map((child) => isTextNode(child) ? child.text : child.type === "hard_break" ? "\n" : "").join("");
     return `<pre${id}${blockAttributes(node)}${languageAttrs}>${escapeHtml(text)}</code></pre>`;
   }
+  if (node.type === "table") {
+    const widths = Array.isArray(node.attrs?.columnWidths) ? node.attrs.columnWidths as unknown[] : [];
+    const colgroup = widths.length ? `<colgroup>${widths.map((width) => `<col style="width:${escapeHtml(width)}px">`).join("")}</colgroup>` : "";
+    const caption = typeof node.attrs?.caption === "string" && node.attrs.caption ? `<caption>${escapeHtml(node.attrs.caption)}</caption>` : "";
+    const layout = node.attrs?.layout ? ` data-smart-layout="${escapeHtml(node.attrs.layout)}" style="table-layout:${escapeHtml(node.attrs.layout)}"` : "";
+    return `<table${id}${layout}>${caption}${colgroup}<tbody>${(node.children || []).map((child) => isTextNode(child) ? "" : serializeBlock(child, includeIds, listDepth)).join("")}</tbody></table>`;
+  }
+  if (node.type === "table_row") {
+    const height = Number(node.attrs?.height);
+    return `<tr${id}${Number.isFinite(height) && height > 0 ? ` style="height:${height}px"` : ""}>${(node.children || []).map((child) => isTextNode(child) ? "" : serializeBlock(child, includeIds, listDepth)).join("")}</tr>`;
+  }
+  if (node.type === "table_cell") {
+    const tag = node.attrs?.header === true ? "th" : "td";
+    const rowspan = Math.max(1, Number(node.attrs?.rowspan) || 1);
+    const colspan = Math.max(1, Number(node.attrs?.colspan) || 1);
+    const styles = [
+      node.attrs?.background ? `background:${String(node.attrs.background)}` : "",
+      node.attrs?.borders ? `border:${String(node.attrs.borders)}` : "",
+      node.attrs?.verticalAlign ? `vertical-align:${String(node.attrs.verticalAlign)}` : "",
+    ].filter(Boolean).join(";");
+    return `<${tag}${id}${rowspan > 1 ? ` rowspan="${rowspan}"` : ""}${colspan > 1 ? ` colspan="${colspan}"` : ""}${styles ? ` style="${escapeHtml(styles)}"` : ""}>${(node.children || []).map((child) => isTextNode(child) ? serializeInline(child) : serializeBlock(child, includeIds, listDepth)).join("")}</${tag}>`;
+  }
   if (node.type === "list") {
     const tag = orderedList(node) ? "ol" : "ul";
     const style = effectiveStyle(node, listDepth);
@@ -248,6 +270,50 @@ const parseBlock = (node: HtmlNode): SmartElementNode | null => {
       children: text ? [{ type: "text", text }] : [],
     };
   }
+  if (tag === "table") {
+    const rowNodes = elementChildren(node).flatMap((child) => child.tagName === "tr" ? [child]
+      : ["thead", "tbody", "tfoot"].includes(child.tagName || "") ? elementChildren(child).filter((candidate) => candidate.tagName === "tr") : []);
+    const columns = elementChildren(node).find((child) => child.tagName === "colgroup");
+    const columnWidths = columns ? elementChildren(columns).filter((child) => child.tagName === "col").map((col) => {
+      const width = Number.parseFloat(styleValue(col, "width") || attr(col, "width") || "");
+      return Number.isFinite(width) && width > 0 ? width : 120;
+    }) : [];
+    const captionNode = elementChildren(node).find((child) => child.tagName === "caption");
+    const tableAttrs: Record<string, unknown> = {};
+    if (columnWidths.length) tableAttrs.columnWidths = columnWidths;
+    const caption = captionNode ? rawText(captionNode).trim() : "";
+    if (caption) tableAttrs.caption = caption;
+    const layout = attr(node, "data-smart-layout") || styleValue(node, "table-layout");
+    if (layout) tableAttrs.layout = layout;
+    const rows = rowNodes.map((rowNode) => parseBlock(rowNode)).filter((row): row is SmartElementNode => Boolean(row));
+    return { type: "table", id: generatedId(node, "table"), ...(Object.keys(tableAttrs).length ? { attrs: tableAttrs } : {}), children: rows };
+  }
+  if (tag === "tr") {
+    const height = Number.parseFloat(styleValue(node, "height") || attr(node, "height") || "");
+    const cells = elementChildren(node).filter((child) => child.tagName === "td" || child.tagName === "th")
+      .map((cell) => parseBlock(cell)).filter((cell): cell is SmartElementNode => Boolean(cell));
+    return { type: "table_row", id: generatedId(node, "row"), ...(Number.isFinite(height) && height > 0 ? { attrs: { height } } : {}), children: cells };
+  }
+  if (tag === "td" || tag === "th") {
+    const cellAttrs: Record<string, unknown> = {
+      rowspan: Math.max(1, Number(attr(node, "rowspan")) || 1),
+      colspan: Math.max(1, Number(attr(node, "colspan")) || 1),
+      header: tag === "th",
+    };
+    const background = styleValue(node, "background") || styleValue(node, "background-color");
+    const borders = styleValue(node, "border");
+    const verticalAlign = styleValue(node, "vertical-align");
+    if (background) cellAttrs.background = background;
+    if (borders) cellAttrs.borders = borders;
+    if (verticalAlign) cellAttrs.verticalAlign = verticalAlign;
+    const blockTags = ["p", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "blockquote", "pre", "table"];
+    const children = elementChildren(node).filter((child) => blockTags.includes(child.tagName || ""))
+      .map((child) => parseBlock(child)).filter((child): child is SmartElementNode => Boolean(child));
+    const directInline = (node.childNodes || []).filter((child) => !child.tagName || !blockTags.includes(child.tagName)).flatMap((child) => textWithMarks(child));
+    if (directInline.length) children.unshift({ type: "paragraph", id: createNodeId(), children: directInline });
+    if (!children.length) children.push({ type: "paragraph", id: createNodeId(), children: [] });
+    return { type: "table_cell", id: generatedId(node, "cell"), attrs: cellAttrs, children };
+  }
   if (tag === "ul" || tag === "ol") {
     const listAttrs: Record<string, unknown> = {};
     const preset = attr(node, "data-smart-list-preset") || attr(node, "data-srte-list-preset");
@@ -348,6 +414,16 @@ const markdownBlock = (node: SmartElementNode): string[] => {
     const content = (node.children || []).filter((child): child is SmartElementNode => !isTextNode(child))
       .flatMap(markdownBlock).join("\n");
     return [content.split("\n").map((line) => `> ${line}`).join("\n")];
+  }
+  if (node.type === "table") {
+    const rows = (node.children || []).filter((child): child is SmartElementNode => !isTextNode(child) && child.type === "table_row");
+    const logical = rows.map((row) => (row.children || []).filter((child): child is SmartElementNode => !isTextNode(child) && child.type === "table_cell")
+      .flatMap((cell) => [markdownInlineText((cell.children || []).find((child): child is SmartElementNode => !isTextNode(child)) || cell), ...Array(Math.max(0, Number(cell.attrs?.colspan) || 1) - 1).fill("")]));
+    const width = logical.reduce((max, row) => Math.max(max, row.length), 0);
+    if (!width) return [""];
+    const padded = logical.map((row) => [...row, ...Array(width - row.length).fill("")]);
+    const first = padded[0] || Array(width).fill("");
+    return [[`| ${first.join(" | ")} |`, `| ${Array(width).fill("---").join(" | ")} |`, ...padded.slice(1).map((row) => `| ${row.join(" | ")} |`)].join("\n")];
   }
   return [markdownInlineText(node)];
 };

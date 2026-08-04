@@ -84,12 +84,15 @@ export const validateTableGeometry = (table: SmartElementNode): TableGeometryIss
     for (let col = 0; col < width; col += 1) if (!row[col]) issues.push({ code: "hole", row: rowIndex, column: col, message: "Logical coordinate is unclaimed." });
   });
   const grid = occupancyGridFor(table);
+  let leadingHeaderRows = 0;
+  while (leadingHeaderRows < grid.rows && Array.from({ length: grid.columns }, (_, col) => grid.at(leadingHeaderRows, col)?.node.attrs?.header === true).every(Boolean)) leadingHeaderRows += 1;
+  let leadingHeaderColumns = 0;
+  while (leadingHeaderColumns < grid.columns && Array.from({ length: grid.rows }, (_, row) => grid.at(row, leadingHeaderColumns)?.node.attrs?.header === true).every(Boolean)) leadingHeaderColumns += 1;
   for (let row = 0; row < grid.rows; row += 1) {
-    let bodySeen = false;
     for (let col = 0; col < grid.columns; col += 1) {
       const header = grid.at(row, col)?.node.attrs?.header === true;
-      if (!header) bodySeen = true;
-      else if (bodySeen) issues.push({ code: "noncontiguous-header", row, column: col, cellId: grid.at(row, col)?.cellId, message: "Header cells must form a leading region." });
+      const expected = row < leadingHeaderRows || col < leadingHeaderColumns;
+      if (header !== expected) issues.push({ code: "noncontiguous-header", row, column: col, cellId: grid.at(row, col)?.cellId, message: "Header cells must be the union of contiguous leading rows and columns." });
     }
   }
   return issues;
@@ -129,13 +132,19 @@ export const repairTableGeometry = (table: SmartElementNode): { table: SmartElem
     slots[row][col] = cell;
   }
   width = slots.reduce((max, row) => Math.max(max, row.length), width);
-  const makeHeader = new Set<string>();
+  let headerRows = 0;
+  let headerColumns = 0;
   placements.filter(({ cell }) => cell.attrs?.header === true).forEach((placement) => {
-    for (let col = 0; col <= placement.column; col += 1) {
-      const owner = slots[placement.row]?.[col];
+    if (placement.column === 0) headerRows = Math.max(headerRows, placement.row + placement.rowspan);
+    if (placement.row === 0) headerColumns = Math.max(headerColumns, placement.column + placement.colspan);
+  });
+  const makeHeader = new Set<string>();
+  for (let row = 0; row < sourceRows.length; row += 1) for (let col = 0; col < width; col += 1) {
+    if (row < headerRows || col < headerColumns) {
+      const owner = slots[row]?.[col];
       if (owner) makeHeader.add(owner.id);
     }
-  });
+  }
   const rows = sourceRows.map((row, rowIndex) => ({
     ...row,
     children: placements.filter((placement) => placement.row === rowIndex).sort((a, b) => a.column - b.column).map(({ cell, rowspan, colspan }) => ({

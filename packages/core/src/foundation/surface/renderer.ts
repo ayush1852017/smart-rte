@@ -7,6 +7,7 @@ import {
 import type { SmartDocument, SmartElementNode, SmartNode, SmartSelection } from "../types.js";
 import type { CanonicalSubtreeRenderer } from "./types.js";
 import { renderMarkedText, stableValue } from "../marks/index.js";
+import { occupancyGridFor } from "../table/index.js";
 
 const tagForNode = (node: SmartElementNode): string => {
   if (node.type === "paragraph") return "p";
@@ -19,6 +20,9 @@ const tagForNode = (node: SmartElementNode): string => {
   }
   if (node.type === "list_item") return "li";
   if (node.type === "hard_break") return "br";
+  if (node.type === "table") return "table";
+  if (node.type === "table_row") return "tr";
+  if (node.type === "table_cell") return node.attrs?.header === true ? "th" : "td";
   return "div";
 };
 
@@ -115,7 +119,64 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
         this.removeAttribute(element, "aria-checked", node.id);
         this.removeAttribute(element, "tabindex", node.id);
       }
+    } else if (node.type === "table") {
+      if (node.attrs?.layout) {
+        const layout = String(node.attrs.layout);
+        this.setAttribute(element, "data-smart-layout", layout, node.id);
+        if (element.style.tableLayout !== layout) { element.style.tableLayout = layout; this.recordWrite(node.id); }
+      }
+      const caption = typeof node.attrs?.caption === "string" ? node.attrs.caption : "";
+      let captionElement = element.querySelector<HTMLElement>(`:scope > [${SMART_UI_ATTRIBUTE}="table-caption"]`);
+      if (caption) {
+        if (!captionElement) {
+          captionElement = element.ownerDocument.createElement("caption");
+          captionElement.setAttribute(SMART_UI_ATTRIBUTE, "table-caption");
+          captionElement.contentEditable = "false";
+          element.prepend(captionElement);
+          this.recordWrite(node.id);
+        }
+        if (captionElement.textContent !== caption) { captionElement.textContent = caption; this.recordWrite(node.id); }
+      } else if (captionElement) { captionElement.remove(); this.recordWrite(node.id); }
+    } else if (node.type === "table_row") {
+      const height = Number(node.attrs?.height);
+      if (Number.isFinite(height) && height > 0) element.style.height = `${height}px`;
+      else element.style.removeProperty("height");
+    } else if (node.type === "table_cell") {
+      const rowspan = Math.max(1, Number(node.attrs?.rowspan) || 1);
+      const colspan = Math.max(1, Number(node.attrs?.colspan) || 1);
+      if (rowspan > 1) this.setAttribute(element, "rowspan", String(rowspan), node.id); else this.removeAttribute(element, "rowspan", node.id);
+      if (colspan > 1) this.setAttribute(element, "colspan", String(colspan), node.id); else this.removeAttribute(element, "colspan", node.id);
+      if (node.attrs?.background) element.style.background = String(node.attrs.background); else element.style.removeProperty("background");
+      if (node.attrs?.borders) element.style.border = String(node.attrs.borders); else element.style.removeProperty("border");
+      if (node.attrs?.verticalAlign) element.style.verticalAlign = String(node.attrs.verticalAlign); else element.style.removeProperty("vertical-align");
     }
+  }
+
+  private syncTableAccessibility(): void {
+    this.root.querySelectorAll<HTMLElement>('[data-smart-type="table"]').forEach((tableElement) => {
+      const mapped = this.mapping.domToNode(tableElement)?.node;
+      if (!mapped || isTextNode(mapped) || mapped.type !== "table") return;
+      const grid = occupancyGridFor(mapped);
+      const headerIds = new Map<string, string>();
+      grid.anchors.filter((cell) => cell.node.attrs?.header === true).forEach((cell) => headerIds.set(cell.cellId, `smart-header-${cell.cellId}`));
+      grid.anchors.forEach((cell) => {
+        const element = this.mapping.nodeToDom(cell.cellId);
+        if (!(element instanceof HTMLElement)) return;
+        const id = headerIds.get(cell.cellId);
+        if (id) {
+          element.id = id;
+          const rowHeader = cell.left === 0 && Array.from({ length: grid.rows }, (_, row) => grid.at(row, 0)?.node.attrs?.header === true).every(Boolean);
+          element.setAttribute("scope", rowHeader ? "row" : "col");
+          element.removeAttribute("headers");
+        } else {
+          element.removeAttribute("scope");
+          const related = grid.anchors.filter((header) => header.node.attrs?.header === true
+            && (header.top <= cell.top && header.bottom > cell.top || header.left <= cell.left && header.right > cell.left))
+            .map((header) => headerIds.get(header.cellId)).filter((value): value is string => Boolean(value));
+          if (related.length) element.setAttribute("headers", related.join(" ")); else element.removeAttribute("headers");
+        }
+      });
+    });
   }
 
   private createNode(node: SmartNode, path: readonly number[]): Node {
@@ -303,6 +364,7 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
         const model = this.mapping.domToNode(element)?.node;
         if (model && !isTextNode(model)) this.syncNodeAttributes(element, model);
       });
+      this.syncTableAccessibility();
       this.modelById.set(document.id, document);
       this.restoreSelection(selection);
       return;
@@ -321,6 +383,7 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
       const model = this.mapping.domToNode(element)?.node;
       if (model && !isTextNode(model)) this.syncNodeAttributes(element, model);
     });
+    this.syncTableAccessibility();
     this.restoreSelection(selection);
     this.announceSelectedLevel(before, document, selection);
   }
