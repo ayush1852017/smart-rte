@@ -4,7 +4,7 @@ The parse → command → render adapters are migration scaffolding, not reusabl
 editor architecture. ClassicEditor remains DOM-authoritative between commands
 until the end of Phase 8.
 
-**Active adapter count: 3 (peak reached in Phase 5)**
+**Active adapter count: 3** (peak reached in Phase 5)
 
 | Marker | Introduced | Deletion owner | Purpose |
 |---|---|---|---|

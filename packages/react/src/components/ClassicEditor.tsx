@@ -2076,6 +2076,7 @@ export function ClassicEditor({
 
     template.content.querySelectorAll('meta, link, style, script').forEach((node) => node.remove());
 
+    // LEGACY_LIST_TOUCHPOINT: imported-list-normalization owner=Phase8
     const allowedStyleNames = new Set([
       'font-weight',
       'font-style',
@@ -4995,6 +4996,17 @@ export function ClassicEditor({
                 const rows = Array.from(tbody.children) as HTMLTableRowElement[];
                 const rIdx = rows.indexOf(row);
                 const cIdx = cells.indexOf(cell);
+                if (e.shiftKey) {
+                  const current = selectionRef.current?.tbody === tbody ? selectionRef.current : { tbody, sr: rIdx, sc: cIdx, er: rIdx, ec: cIdx };
+                  const next = { sr: current.sr, sc: current.sc, er: current.er, ec: current.ec };
+                  if (e.key === "ArrowLeft") next.sc = Math.max(0, next.sc - 1);
+                  else if (e.key === "ArrowRight") next.ec = Math.min((getTableGrid(tbody).grid[0]?.length || 1) - 1, next.ec + 1);
+                  else if (e.key === "ArrowUp") next.sr = Math.max(0, next.sr - 1);
+                  else next.er = Math.min(rows.length - 1, next.er + 1);
+                  e.preventDefault();
+                  updateSelectionDecor(tbody, next.sr, next.sc, next.er, next.ec);
+                  return;
+                }
                 const atStart = (sel?.anchorOffset || 0) === 0;
                 const cellTextLen = (cell.textContent || "").length;
                 const atEnd = (sel?.anchorOffset || 0) >= cellTextLen;

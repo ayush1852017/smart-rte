@@ -89,3 +89,65 @@ test("undoes and redoes a cell merge as one history step", async ({ page }) => {
   await expect(table.locator("tr").first().locator("td,th")).toHaveCount(2);
   await expect(table.locator("tr").first().locator("td,th").first()).toHaveAttribute("colspan", "2");
 });
+
+test("routes row and column changes through the canonical table commands", async ({ page }) => {
+  const table = await insertDefaultTable(page);
+  const first = table.locator("td,th").first();
+  await openCellMenu(first);
+  await page.getByRole("button", { name: "Row below" }).click();
+  await expect(table.locator("tr")).toHaveCount(4);
+  await openCellMenu(table.locator("td,th").first());
+  await page.getByRole("button", { name: "Column right" }).click();
+  await expect(table.locator("tr").first().locator("td,th")).toHaveCount(4);
+  await openCellMenu(table.locator("td,th").first());
+  await page.getByRole("button", { name: "Delete row" }).click();
+  await expect(table.locator("tr")).toHaveCount(3);
+});
+
+test("snaps cell selection to spans and keeps the overlay out of editor content", async ({ page }) => {
+  const table = await insertDefaultTable(page);
+  const first = table.locator("tr").first().locator("td,th").nth(0);
+  const second = table.locator("tr").first().locator("td,th").nth(1);
+  await selectCellRange(page, first, second);
+  await openCellMenu(first);
+  await page.getByRole("button", { name: "Merge cells" }).click();
+  const merged = table.locator("tr").first().locator("td,th").first();
+  const below = table.locator("tr").nth(1).locator("td,th").first();
+  await selectCellRange(page, merged, below);
+  await expect(page.locator('[data-smart-ui="table-cell-selection"]')).toHaveCount(1);
+  await expect(page.locator(`${editorSelector} [data-smart-ui="table-cell-selection"]`)).toHaveCount(0);
+});
+
+test("expands a rectangular cell selection with Shift+Arrow", async ({ page }) => {
+  const table = await insertDefaultTable(page);
+  const first = table.locator("tr").first().locator("td,th").first();
+  await first.evaluate((cell) => {
+    const range = document.createRange(); range.selectNodeContents(cell); range.collapse(false);
+    const selection = window.getSelection(); selection?.removeAllRanges(); selection?.addRange(range);
+    (cell.closest('[contenteditable="true"]') as HTMLElement | null)?.focus();
+  });
+  await page.keyboard.press("Shift+ArrowRight");
+  await expect(page.locator('[data-smart-ui="table-cell-selection"]')).toHaveAttribute("aria-label", "2 table cells selected");
+});
+
+test("gives table navigation Tab precedence and appends a row at the final cell", async ({ page }) => {
+  const table = await insertDefaultTable(page);
+  const finalCell = table.locator("tr").last().locator("td,th").last();
+  await finalCell.evaluate((cell) => {
+    const range = document.createRange();
+    range.selectNodeContents(cell); range.collapse(false);
+    const selection = window.getSelection(); selection?.removeAllRanges(); selection?.addRange(range);
+    (cell.closest('[contenteditable="true"]') as HTMLElement | null)?.focus();
+  });
+  await page.keyboard.press("Tab");
+  await expect(table.locator("tr")).toHaveCount(4);
+});
+
+test("renders leading headers with scope and body associations", async ({ page }) => {
+  const table = await insertDefaultTable(page);
+  await openCellMenu(table.locator("td,th").first());
+  await page.getByRole("button", { name: "Make this row header" }).click();
+  await expect(table.locator("th")).toHaveCount(3);
+  await expect(table.locator("th").first()).toHaveAttribute("scope", "col");
+  await expect(table.locator("tr").nth(1).locator("td").first()).toHaveAttribute("headers", /smart-header-/);
+});

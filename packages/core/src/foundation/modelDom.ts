@@ -4,6 +4,7 @@ import type { ModelDomMapping, SmartDocument, SmartElementNode, SmartNode, Smart
 import { renderMarkedText } from "./marks/dom.js";
 
 export const SMART_UI_ATTRIBUTE = "data-smart-ui";
+export const SMART_PROJECTION_ATTRIBUTE = "data-smart-projection";
 export const SMART_NODE_ID_ATTRIBUTE = "data-smart-id";
 
 const tagForNode = (node: SmartNode): string => {
@@ -148,7 +149,8 @@ export class FoundationModelDomMapping implements ModelDomMapping {
   }
 
   private modelDomChildren(element: HTMLElement): Node[] {
-    return [...element.childNodes].filter((child) => !this.isEditorUiNode(child));
+    return [...element.childNodes].filter((child) => !this.isEditorUiNode(child)
+      && !(child instanceof Element && child.hasAttribute(SMART_PROJECTION_ATTRIBUTE)));
   }
 
   private isInlineOwner(node: SmartElementNode): boolean {

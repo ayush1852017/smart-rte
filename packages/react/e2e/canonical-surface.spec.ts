@@ -283,6 +283,35 @@ for (const blocks of [2_000, 10_000] as const) test(`continuous typing at ${bloc
   expect(samples).toHaveLength(5);
 });
 
+test("typing in a 50×50 canonical table reports five input-to-paint samples", async ({ page }, testInfo) => {
+  await page.goto("/?canonical=1&table=50");
+  const editor = page.locator(surface);
+  await expect(editor).toBeVisible();
+  await page.locator('[data-smart-id="benchmark-p-1-0"]').click();
+  const samples: number[] = [];
+  for (const character of "abcde") {
+    await page.evaluate(() => { window.__smartCanonical!.lastInputPaintMs = null; });
+    await page.keyboard.type(character);
+    await page.waitForFunction(() => window.__smartCanonical?.lastInputPaintMs !== null);
+    samples.push(await page.evaluate(() => window.__smartCanonical!.lastInputPaintMs!));
+  }
+  const sorted = [...samples].sort((a, b) => a - b);
+  const summary = { samples, median: sorted[2]!, p95: sorted[4]!, worst: sorted[4]! };
+  testInfo.annotations.push({ type: "table-input-to-paint-ms", description: JSON.stringify(summary) });
+  console.log(`[phase6][${testInfo.project.name}][table=50x50] input-to-paint=${JSON.stringify(summary)}`);
+  await expect(page.locator('[data-smart-id="benchmark-p-1-0"]')).toContainText("1:0abcde");
+});
+
+test("canonical table exposes caption, scoped headers, associations, and no axe violations", async ({ page }) => {
+  await page.goto("/?canonical=1&table=3");
+  await expect(page.locator(`${surface} table`)).toHaveCount(1);
+  await expect(page.locator(`${surface} th`)).toHaveCount(3);
+  await expect(page.locator(`${surface} th`).first()).toHaveAttribute("scope", "col");
+  await expect(page.locator(`${surface} td`).first()).toHaveAttribute("headers", /smart-header-/);
+  const results = await new AxeBuilder({ page }).include(surface).analyze();
+  expect(results.violations).toEqual([]);
+});
+
 test.describe("Phase 5 block accessibility", () => {
   test("exposes heading, quote, and labelled code-block semantics without axe violations", async ({ page }) => {
     await page.goto("/?canonical=1&blockSemantics=1");

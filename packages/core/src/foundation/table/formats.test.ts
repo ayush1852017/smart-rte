@@ -6,7 +6,7 @@ import { FoundationSubtreeRenderer } from "../surface/renderer.js";
 import type { SmartDocument, SmartElementNode } from "../types.js";
 import {
   canonicalTablesToDocx, parseCanonicalTableHtml, serializeCanonicalTableHtml,
-  serializeCanonicalTableMarkdown, snapTableCellRect,
+  cellSelectionFromIds, serializeCanonicalTableMarkdown, snapTableCellRect,
 } from "./index.js";
 
 const documentFixture = (): SmartDocument => ({ type: "doc", id: "doc", children: [{
@@ -47,6 +47,7 @@ describe("canonical table formats and selection", () => {
     });
     const positions = createScopeIndex().positions(documentFixture(), foundationSchema);
     expect(positions.exists("h")).toBe(true);
+    expect(cellSelectionFromIds("h", "b", positions)).toMatchObject({ type: "cell" });
   });
 
   it("renders semantic table elements and stable header associations", () => {

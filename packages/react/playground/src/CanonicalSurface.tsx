@@ -122,6 +122,16 @@ const blockSemanticsDocument = (): SmartDocument => ({ type: "doc", id: "canonic
   { type: "code_block", id: "semantic-code", attrs: { language: "typescript" }, children: [{ type: "text", text: "const value = 1;" }] },
 ] });
 
+const tableDocument = (size: number): SmartDocument => ({ type: "doc", id: "canonical-doc", children: [{
+  type: "table", id: "benchmark-table", attrs: { columnWidths: Array(size).fill(80), layout: "fixed" },
+  children: Array.from({ length: size }, (_, row) => ({
+    type: "table_row", id: `benchmark-row-${row}`, children: Array.from({ length: size }, (_, column) => ({
+      type: "table_cell", id: `benchmark-cell-${row}-${column}`, attrs: { rowspan: 1, colspan: 1, header: row === 0 },
+      children: [paragraphNode(`benchmark-p-${row}-${column}`, row === 0 ? `H${column}` : `${row}:${column}`)],
+    })),
+  })),
+}] });
+
 function paragraphNode(id: string, text: string) {
   return { type: "paragraph", id, children: [{ type: "text" as const, text }] };
 }
@@ -140,10 +150,13 @@ export default function CanonicalSurface() {
     const listTable = params.has("listTable");
     const checks = params.has("checks");
     const blockSemantics = params.has("blockSemantics");
+    const requestedTable = Number(params.get("table") || 0);
+    const tableSize = Number.isFinite(requestedTable) ? Math.max(0, Math.min(50, Math.floor(requestedTable))) : 0;
     const editor = createFoundationEditor({
-      document: isolation ? isolationDocument() : listTable ? listTableDocument() : checks ? checklistDocument() : blockSemantics ? blockSemanticsDocument() : atoms ? atomDocument() : lists ? listDocument() : createDocument(count),
+      document: tableSize ? tableDocument(tableSize) : isolation ? isolationDocument() : listTable ? listTableDocument() : checks ? checklistDocument() : blockSemantics ? blockSemanticsDocument() : atoms ? atomDocument() : lists ? listDocument() : createDocument(count),
       schema: isolation ? isolationSchema : listTable ? listTableSchema : undefined,
-      selection: isolation
+      selection: tableSize ? { type: "text", anchor: { path: [0, 1, 0, 0], offset: 3 }, head: { path: [0, 1, 0, 0], offset: 3 } }
+        : isolation
         ? { type: "text", anchor: { path: [0], offset: 2 }, head: { path: [0], offset: 2 } }
         : atoms ? { type: "text", anchor: { path: [0], offset: 3 }, head: { path: [0], offset: 3 } }
         : listTable ? { type: "text", anchor: { path: [0, 0, 0, 0, 1, 0], offset: 0 }, head: { path: [0, 0, 0, 0, 1, 0], offset: 0 } }

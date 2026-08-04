@@ -5,6 +5,7 @@ import remarkParse from "remark-parse";
 import { createNodeId, isTextNode } from "../identity.js";
 import { canonicalMarkAttrs, canonicalMarkOrder } from "../marks/canonical.js";
 import type { SmartDocument, SmartElementNode, SmartMark, SmartNode } from "../types.js";
+import { occupancyGridFor } from "../table/grid.js";
 
 type HtmlAttribute = { name: string; value: string };
 type HtmlNode = { nodeName: string; tagName?: string; attrs?: HtmlAttribute[]; childNodes?: HtmlNode[]; value?: string };
@@ -81,7 +82,7 @@ const blockAttributes = (node: SmartElementNode): string => {
   ].join("");
 };
 
-const serializeBlock = (node: SmartElementNode, includeIds: boolean, listDepth = 0): string => {
+const serializeBlock = (node: SmartElementNode, includeIds: boolean, listDepth = 0, tableCellA11y?: { id?: string; scope?: "row" | "col"; headers?: string }): string => {
   if (node.type === "unknown") {
     const raw = node.attrs?.raw as { html?: unknown } | undefined;
     if (typeof raw?.html === "string") return raw.html;
@@ -103,11 +104,28 @@ const serializeBlock = (node: SmartElementNode, includeIds: boolean, listDepth =
     return `<pre${id}${blockAttributes(node)}${languageAttrs}>${escapeHtml(text)}</code></pre>`;
   }
   if (node.type === "table") {
+    const grid = occupancyGridFor(node);
+    let headerRows = 0;
+    while (headerRows < grid.rows && Array.from({ length: grid.columns }, (_, column) => grid.at(headerRows, column)?.node.attrs?.header === true).every(Boolean)) headerRows += 1;
+    let headerColumns = 0;
+    while (headerColumns < grid.columns && Array.from({ length: grid.rows }, (_, row) => grid.at(row, headerColumns)?.node.attrs?.header === true).every(Boolean)) headerColumns += 1;
+    const headerIds = new Map(grid.anchors.filter((cell) => cell.node.attrs?.header === true).map((cell) => [cell.cellId, `smart-header-${node.id}-${cell.cellId}`]));
+    const cellA11y = (cell: SmartElementNode) => {
+      const anchor = grid.anchors.find((candidate) => candidate.cellId === cell.id);
+      if (!anchor) return {};
+      if (cell.attrs?.header === true) return { id: headerIds.get(cell.id), scope: anchor.left < headerColumns && anchor.top >= headerRows ? "row" as const : "col" as const };
+      const headers = grid.anchors.filter((header) => header.node.attrs?.header === true && (
+        header.top < headerRows && header.left <= anchor.left && header.right > anchor.left
+        || header.left < headerColumns && header.top <= anchor.top && header.bottom > anchor.top
+      )).map((header) => headerIds.get(header.cellId)).filter((value): value is string => Boolean(value));
+      return headers.length ? { headers: headers.join(" ") } : {};
+    };
     const widths = Array.isArray(node.attrs?.columnWidths) ? node.attrs.columnWidths as unknown[] : [];
     const colgroup = widths.length ? `<colgroup>${widths.map((width) => `<col style="width:${escapeHtml(width)}px">`).join("")}</colgroup>` : "";
     const caption = typeof node.attrs?.caption === "string" && node.attrs.caption ? `<caption>${escapeHtml(node.attrs.caption)}</caption>` : "";
     const layout = node.attrs?.layout ? ` data-smart-layout="${escapeHtml(node.attrs.layout)}" style="table-layout:${escapeHtml(node.attrs.layout)}"` : "";
-    return `<table${id}${layout}>${caption}${colgroup}<tbody>${(node.children || []).map((child) => isTextNode(child) ? "" : serializeBlock(child, includeIds, listDepth)).join("")}</tbody></table>`;
+    const rows = (node.children || []).map((row) => isTextNode(row) ? "" : `<tr${includeIds ? ` data-smart-id="${escapeHtml(row.id)}"` : ""}${Number(row.attrs?.height) > 0 ? ` style="height:${Number(row.attrs?.height)}px"` : ""}>${(row.children || []).map((cell) => isTextNode(cell) ? "" : serializeBlock(cell, includeIds, listDepth, cellA11y(cell))).join("")}</tr>`).join("");
+    return `<table${id}${layout}>${caption}${colgroup}<tbody>${rows}</tbody></table>`;
   }
   if (node.type === "table_row") {
     const height = Number(node.attrs?.height);
@@ -123,7 +141,7 @@ const serializeBlock = (node: SmartElementNode, includeIds: boolean, listDepth =
       node.attrs?.borders ? `border:${String(node.attrs.borders)}` : "",
       node.attrs?.verticalAlign ? `vertical-align:${String(node.attrs.verticalAlign)}` : "",
     ].filter(Boolean).join(";");
-    return `<${tag}${id}${rowspan > 1 ? ` rowspan="${rowspan}"` : ""}${colspan > 1 ? ` colspan="${colspan}"` : ""}${styles ? ` style="${escapeHtml(styles)}"` : ""}>${(node.children || []).map((child) => isTextNode(child) ? serializeInline(child) : serializeBlock(child, includeIds, listDepth)).join("")}</${tag}>`;
+    return `<${tag}${id}${tableCellA11y?.id ? ` id="${escapeHtml(tableCellA11y.id)}"` : ""}${tableCellA11y?.scope ? ` scope="${tableCellA11y.scope}"` : ""}${tableCellA11y?.headers ? ` headers="${escapeHtml(tableCellA11y.headers)}"` : ""}${rowspan > 1 ? ` rowspan="${rowspan}"` : ""}${colspan > 1 ? ` colspan="${colspan}"` : ""}${styles ? ` style="${escapeHtml(styles)}"` : ""}>${(node.children || []).map((child) => isTextNode(child) ? serializeInline(child) : serializeBlock(child, includeIds, listDepth)).join("")}</${tag}>`;
   }
   if (node.type === "list") {
     const tag = orderedList(node) ? "ol" : "ul";

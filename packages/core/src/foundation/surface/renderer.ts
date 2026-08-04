@@ -2,6 +2,7 @@ import { isTextNode } from "../identity.js";
 import {
   FoundationModelDomMapping,
   SMART_NODE_ID_ATTRIBUTE,
+  SMART_PROJECTION_ATTRIBUTE,
   SMART_UI_ATTRIBUTE,
 } from "../modelDom.js";
 import type { SmartDocument, SmartElementNode, SmartNode, SmartSelection } from "../types.js";
@@ -126,11 +127,11 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
         if (element.style.tableLayout !== layout) { element.style.tableLayout = layout; this.recordWrite(node.id); }
       }
       const caption = typeof node.attrs?.caption === "string" ? node.attrs.caption : "";
-      let captionElement = element.querySelector<HTMLElement>(`:scope > [${SMART_UI_ATTRIBUTE}="table-caption"]`);
+      let captionElement = element.querySelector<HTMLElement>(`:scope > [${SMART_PROJECTION_ATTRIBUTE}="table-caption"]`);
       if (caption) {
         if (!captionElement) {
           captionElement = element.ownerDocument.createElement("caption");
-          captionElement.setAttribute(SMART_UI_ATTRIBUTE, "table-caption");
+          captionElement.setAttribute(SMART_PROJECTION_ATTRIBUTE, "table-caption");
           captionElement.contentEditable = "false";
           element.prepend(captionElement);
           this.recordWrite(node.id);
@@ -157,6 +158,10 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
       const mapped = this.mapping.domToNode(tableElement)?.node;
       if (!mapped || isTextNode(mapped) || mapped.type !== "table") return;
       const grid = occupancyGridFor(mapped);
+      let headerRows = 0;
+      while (headerRows < grid.rows && Array.from({ length: grid.columns }, (_, column) => grid.at(headerRows, column)?.node.attrs?.header === true).every(Boolean)) headerRows += 1;
+      let headerColumns = 0;
+      while (headerColumns < grid.columns && Array.from({ length: grid.rows }, (_, row) => grid.at(row, headerColumns)?.node.attrs?.header === true).every(Boolean)) headerColumns += 1;
       const headerIds = new Map<string, string>();
       grid.anchors.filter((cell) => cell.node.attrs?.header === true).forEach((cell) => headerIds.set(cell.cellId, `smart-header-${cell.cellId}`));
       grid.anchors.forEach((cell) => {
@@ -165,13 +170,14 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
         const id = headerIds.get(cell.cellId);
         if (id) {
           element.id = id;
-          const rowHeader = cell.left === 0 && Array.from({ length: grid.rows }, (_, row) => grid.at(row, 0)?.node.attrs?.header === true).every(Boolean);
-          element.setAttribute("scope", rowHeader ? "row" : "col");
+          element.setAttribute("scope", cell.left < headerColumns && cell.top >= headerRows ? "row" : "col");
           element.removeAttribute("headers");
         } else {
           element.removeAttribute("scope");
-          const related = grid.anchors.filter((header) => header.node.attrs?.header === true
-            && (header.top <= cell.top && header.bottom > cell.top || header.left <= cell.left && header.right > cell.left))
+          const related = grid.anchors.filter((header) => header.node.attrs?.header === true && (
+            header.top < headerRows && header.left <= cell.left && header.right > cell.left
+            || header.left < headerColumns && header.top <= cell.top && header.bottom > cell.top
+          ))
             .map((header) => headerIds.get(header.cellId)).filter((value): value is string => Boolean(value));
           if (related.length) element.setAttribute("headers", related.join(" ")); else element.removeAttribute("headers");
         }
@@ -221,7 +227,7 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
   private modelChildren(element: HTMLElement): Node[] {
     return [...element.childNodes].filter((node) => {
       const candidate = node.nodeType === node.ELEMENT_NODE ? node as Element : node.parentElement;
-      return !candidate?.closest(`[${SMART_UI_ATTRIBUTE}]`);
+      return !candidate?.closest(`[${SMART_UI_ATTRIBUTE}]`) && !candidate?.closest(`[${SMART_PROJECTION_ATTRIBUTE}]`);
     });
   }
 
@@ -234,7 +240,8 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
     this.syncNodeAttributes(element, after);
     const beforeChildren = before.children || [];
     const afterChildren = after.children || [];
-    let structural = beforeChildren.length !== afterChildren.length;
+    let structural = beforeChildren.length !== afterChildren.length
+      || after.type === "table_cell" && ["rowspan", "colspan", "header"].some((attribute) => before.attrs?.[attribute] !== after.attrs?.[attribute]);
 
     for (let index = 0; index < afterChildren.length; index += 1) {
       const next = afterChildren[index];
@@ -383,7 +390,7 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
       const model = this.mapping.domToNode(element)?.node;
       if (model && !isTextNode(model)) this.syncNodeAttributes(element, model);
     });
-    this.syncTableAccessibility();
+    if (structural) this.syncTableAccessibility();
     this.restoreSelection(selection);
     this.announceSelectedLevel(before, document, selection);
   }

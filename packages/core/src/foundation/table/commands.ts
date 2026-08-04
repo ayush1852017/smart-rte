@@ -267,6 +267,10 @@ export const moveTableRowCommand: TableCommand<MoveTableAxisParams> = (_document
   if (!target || !["up", "down"].includes(params.direction)) return [];
   const rows = (target.table.children || []).filter((row): row is SmartElementNode => !isTextNode(row) && row.type === "table_row");
   const index = params.index ?? target.scope.rect.top;
+  const to = index + (params.direction === "up" ? -1 : 1);
+  const grid = occupancyGridFor(target.table);
+  if (to < 0 || to >= grid.rows || grid.anchors.some((cell) =>
+    cell.top <= index && cell.bottom > index + 1 || cell.top <= to && cell.bottom > to + 1)) return [];
   const row = rows[index];
   return row ? moveContiguousSiblings([row.id], params.direction as "up" | "down", ctx) : [];
 };

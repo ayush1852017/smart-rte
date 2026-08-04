@@ -293,9 +293,10 @@ export class DomEditorController {
   insertTable(rows: number, columns: number, headerRow = false): HTMLTableElement | null {
     if (!this.root || this.readOnly) return null;
     const snapshot = this.snapshot();
-    if (!snapshot?.selection || snapshot.selection.type !== "text") return null;
-    const topLevelIndex = snapshot.selection.anchor.path[0];
-    if (!Number.isInteger(topLevelIndex)) return null;
+    const selectedIndex = snapshot?.selection?.type === "text" ? snapshot.selection.anchor.path[0]
+      : snapshot?.selection?.type === "node" ? snapshot.selection.path[0]
+        : snapshot?.selection?.type === "cell" ? snapshot.selection.tablePath[0] : undefined;
+    const topLevelIndex = Number.isInteger(selectedIndex) ? selectedIndex! : Math.max(0, this.root.children.length - 1);
     const inserted = executeDomTableInsert(this.root, topLevelIndex, rows, columns, headerRow);
     if (inserted) this.emitLocalizedChange("table.insert");
     return inserted;

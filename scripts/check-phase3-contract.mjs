@@ -42,9 +42,6 @@ if (!/normalized document structure with IDs stripped/.test(source[shadow[0]]) |
   violations.push("shadow equivalence/privacy policy is not frozen in code");
 }
 const expectedTouchpoints = new Map([
-  ["blockquote-list-shell-split", "Phase5"],
-  ["code-block-list-item-restructure", "Phase5"],
-  ["table-extraction-from-list", "Phase6"],
   ["imported-list-normalization", "Phase8"],
 ]);
 const actualTouchpoints = [...source[classic[0]].matchAll(/LEGACY_LIST_TOUCHPOINT:\s+(\S+)\s+owner=(Phase\d+)/g)];
