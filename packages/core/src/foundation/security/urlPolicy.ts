@@ -70,6 +70,10 @@ export const sanitizeResourceUrl = (
   const value = input?.trim() || "";
   if (!value || /[\u0000-\u001f\u007f]/.test(value)) return null;
   if (/^(?:\/[^/]|\.\.?\/)/.test(value)) return value;
+  // A path-relative resource such as `images/photo.png` is valid persisted
+  // content. Reject anything that looks like a scheme so executable protocols
+  // cannot disguise themselves as relative paths.
+  if (!/^[A-Za-z][A-Za-z0-9+.-]*:/.test(value) && !value.startsWith("//") && !/\s/.test(value)) return value;
   if (options.allowBlob && /^blob:/i.test(value)) return value;
   const data = value.match(/^data:([^;,]+)(?:;[^,]*)?,/i);
   if (data) return options.allowedDataMimeTypes?.has(data[1].toLowerCase()) ? value : null;

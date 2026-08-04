@@ -161,6 +161,8 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
       const source = sanitizeAtomSource(String(node.attrs?.src || ""), { kind: "image", allowBlobPreview: node.attrs?.status === "pending" });
       if (source) this.setAttribute(element, "src", source, node.id); else this.removeAttribute(element, "src", node.id);
       this.setAttribute(element, "alt", typeof node.attrs?.alt === "string" ? node.attrs.alt : "", node.id);
+      if (node.attrs?.decorative === true) this.setAttribute(element, "data-smart-decorative", "true", node.id);
+      else this.removeAttribute(element, "data-smart-decorative", node.id);
       if (node.attrs?.width) this.setAttribute(element, "width", String(node.attrs.width), node.id); else this.removeAttribute(element, "width", node.id);
       if (node.attrs?.height) this.setAttribute(element, "height", String(node.attrs.height), node.id); else this.removeAttribute(element, "height", node.id);
       this.setAttribute(element, "data-smart-status", String(node.attrs?.status || "ready"), node.id);

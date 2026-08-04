@@ -145,6 +145,12 @@ test.describe("Phase 2.5 canonical editing surface", () => {
     expect(result).toEqual({ text: "aनx界yमb", beforeWrites: 0, afterWrites: 0, betweenWrites: 0, atoms: [true, true] });
   });
 
+  test("keeps upload completion outside history and drops stale completion", async ({ page }) => {
+    await page.goto("/?canonical=1&atoms=1");
+    const result = await page.evaluate(() => window.__smartCanonical!.runAtomLifecycle());
+    expect(result).toEqual({ completed: true, removedByUndo: true, staleDropped: true, historyDepth: 1 });
+  });
+
   test("reconciles composition without renderer writes to the composing paragraph", async ({ page }) => {
     const result = await page.evaluate(() => {
       const harness = window.__smartCanonical!;

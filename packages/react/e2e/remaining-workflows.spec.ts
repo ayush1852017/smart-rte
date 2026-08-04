@@ -67,3 +67,20 @@ test("inserts a formula through the real formula dialog", async ({ page }) => {
   await page.getByRole("button", { name: "Insert", exact: true }).click();
   await expect(page.locator(`${editorSelector} [data-formula]`)).toHaveAttribute("data-formula", "\\frac{a}{b}");
 });
+
+test("coalesces an image resize drag into one undo step", async ({ page }) => {
+  await setEditorHtml(page, '<p><img src="/inline.png" alt="Diagram" width="120"></p>');
+  const image = page.locator(`${editorSelector} img`);
+  await image.click();
+  const handle = page.locator('[data-smart-ui="atom-resize-handle"]').last();
+  await expect(handle).toBeVisible();
+  const box = await handle.boundingBox();
+  if (!box) throw new Error("Resize handle has no layout box");
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 + 40, box.y + box.height / 2);
+  await page.mouse.up();
+  await expect(image).not.toHaveAttribute("width", "120");
+  await page.getByTitle("Undo", { exact: true }).click();
+  await expect(page.locator(`${editorSelector} img`)).toHaveAttribute("width", "120");
+});

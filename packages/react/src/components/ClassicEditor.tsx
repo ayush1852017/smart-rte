@@ -1786,6 +1786,7 @@ export function ClassicEditor({
       const coreImage = editorControllerRef.current!.bindRoot(host).insertInlineImage({
         src,
         alt,
+        decorative: alt === "",
         ...("status" in Object(srcOrItem) && (srcOrItem as { status?: string }).status ? { status: (srcOrItem as { status: "pending" | "ready" | "error" }).status } : {}),
         ...("uploadId" in Object(srcOrItem) && (srcOrItem as { uploadId?: string }).uploadId ? { uploadId: (srcOrItem as { uploadId: string }).uploadId } : {}),
         ...("error" in Object(srcOrItem) && (srcOrItem as { error?: string }).error ? { error: (srcOrItem as { error: string }).error } : {}),
@@ -5194,6 +5195,7 @@ export function ClassicEditor({
               onKeyDown={(event) => {
                 if (!selectedImage || !editableRef.current || !["ArrowLeft", "ArrowRight"].includes(event.key)) return;
                 event.preventDefault();
+                pushEditorHistory();
                 const width = Math.max(80, Math.round(selectedImage.getBoundingClientRect().width + (event.key === "ArrowRight" ? 10 : -10)));
                 editorControllerRef.current!.bindRoot(editableRef.current).updateInlineImage(selectedImage, { width });
                 scheduleImageOverlay(); handleInput();
@@ -5201,6 +5203,7 @@ export function ClassicEditor({
               onMouseDown={(e) => {
                 e.preventDefault();
                 if (!selectedImage) return;
+                pushEditorHistory();
                 resizingRef.current = {
                   side: "left",
                   startX: e.clientX,
@@ -5251,6 +5254,7 @@ export function ClassicEditor({
               onKeyDown={(event) => {
                 if (!selectedImage || !editableRef.current || !["ArrowLeft", "ArrowRight"].includes(event.key)) return;
                 event.preventDefault();
+                pushEditorHistory();
                 const width = Math.max(80, Math.round(selectedImage.getBoundingClientRect().width + (event.key === "ArrowRight" ? 10 : -10)));
                 editorControllerRef.current!.bindRoot(editableRef.current).updateInlineImage(selectedImage, { width });
                 scheduleImageOverlay(); handleInput();
@@ -5258,6 +5262,7 @@ export function ClassicEditor({
               onMouseDown={(e) => {
                 e.preventDefault();
                 if (!selectedImage) return;
+                pushEditorHistory();
                 resizingRef.current = {
                   side: "right",
                   startX: e.clientX,

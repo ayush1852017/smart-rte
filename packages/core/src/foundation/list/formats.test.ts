@@ -44,12 +44,12 @@ describe("Phase 3 list format fidelity", () => {
     ] }] });
   });
 
-  it("canonicalizes migrated blockquotes while preserving unsupported inline atoms byte-for-byte", () => {
+  it("canonicalizes migrated blockquotes and supported inline atoms without losing content", () => {
     const source = '<ul data-smart-id="l"><li data-smart-id="i"><blockquote data-client="x"><p>quoted</p></blockquote><p>before<img src="atom.png" alt="atom">after</p></li></ul>';
     const parsed = parseCanonicalListHtml(source);
     const html = serializeCanonicalListHtml(parsed, { fragment: true });
     expect(html).toMatch(/<blockquote data-smart-id="[^"]+"><p data-smart-id="[^"]+">quoted<\/p><\/blockquote>/);
-    expect(html).toContain('<img src="atom.png" alt="atom">');
+    expect(html).toMatch(/<img data-smart-id="[^"]+" data-smart-type="image" src="atom\.png" alt="atom" data-smart-status="ready">/);
     expect(normalizedStructureWithoutIds(parseCanonicalListHtml(html), foundationSchema))
       .toEqual(normalizedStructureWithoutIds(parsed, foundationSchema));
     expect(serializeCanonicalListHtml(parsed, { clean: true })).not.toContain("data-smart-id");

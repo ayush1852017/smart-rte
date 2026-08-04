@@ -46,7 +46,7 @@ describe("DOM inline image command bridge", () => {
   });
 
   it("updates image dimensions through core without replacing the image", () => {
-    document.body.innerHTML = '<div id="editor"><p>A<img src="/x.png">B</p></div>';
+    document.body.innerHTML = '<div id="editor"><p>A<img src="/x.png" alt="Existing image">B</p></div>';
     const root = document.getElementById("editor") as HTMLElement;
     const image = root.querySelector("img") as HTMLImageElement;
     expect(executeDomInlineImageUpdate(root, image, { width: 240, height: 120 })).toBe(true);

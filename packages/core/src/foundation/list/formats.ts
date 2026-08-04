@@ -195,6 +195,7 @@ const textWithMarks = (node: HtmlNode, inherited: readonly SmartMark[] = []): Sm
       const width = Number(attr(node, "width")); const height = Number(attr(node, "height"));
       return [{ type: "image", id: generatedId(node, "image"), attrs: {
         src, alt: attr(node, "alt") || "", status: attr(node, "data-smart-status") || "ready",
+        ...(attr(node, "data-smart-decorative") === "true" ? { decorative: true } : {}),
         ...(attr(node, "title") ? { title: attr(node, "title") } : {}),
         ...(attr(node, "data-smart-align") ? { align: attr(node, "data-smart-align") } : {}),
         ...(Number.isFinite(width) && width > 0 ? { width } : {}), ...(Number.isFinite(height) && height > 0 ? { height } : {}),
@@ -277,7 +278,7 @@ const parseBlock = (node: HtmlNode): SmartElementNode | null => {
   const declaredAtom = attr(node, "data-smart-type");
   if (declaredAtom === "block_image") {
     const src = sanitizeAtomSource(attr(node, "src"), { kind: "image" });
-    return src ? { type: "block_image", id: generatedId(node, "image"), attrs: { src, alt: attr(node, "alt") || "", status: attr(node, "data-smart-status") || "ready" } } : null;
+    return src ? { type: "block_image", id: generatedId(node, "image"), attrs: { src, alt: attr(node, "alt") || "", status: attr(node, "data-smart-status") || "ready", ...(attr(node, "data-smart-decorative") === "true" ? { decorative: true } : {}) } } : null;
   }
   if (declaredAtom === "block_formula") return { type: "block_formula", id: generatedId(node, "formula"), attrs: { source: attr(node, "data-smart-formula") || rawText(node), notation: attr(node, "data-smart-notation") === "mathml" ? "mathml" : "latex" } };
   if (tag === "video" || tag === "audio") {

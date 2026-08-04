@@ -12,6 +12,7 @@ phases rather than reporting one favorable run.
 | 5 | median 24.0 ms; p95/worst 41.9 ms | median 11.0 ms; p95/worst 14.0 ms | median 19.0 ms; p95/worst 25.0 ms | Five samples per browser. Chromium crossed both investigation thresholds for the first phase; Phase 6 must repeat the measurement before the two-successive-phase trigger fires. |
 | 6 pre-work (10k) | median 21.7 ms; p95/worst 36.5 ms | median 11.0 ms; p95/worst 13.0 ms | median 17.0 ms; p95/worst 23.0 ms | Standalone five-sample baseline before table work. Chromium crosses the median threshold for the second phase, so the Phase 11 `content-visibility` investigation is now pulled forward for scheduling; the model/table work must not be blamed without a headed trace. |
 | 6 final (10k) | median 22.3 ms; p95/worst 39.6 ms | median 23.0 ms; p95/worst 38.0 ms | median 21.0 ms; p95/worst 38.0 ms | Five samples from the final full-suite run. All engines show contention/noise; Chromium remains over the two-phase trigger and requires a headed trace rather than attribution to model work. |
+| 7 isolated (10k) | median 24.6 ms; p95/worst 40.7 ms | median 13.0 ms; p95/worst 25.0 ms | median 27.0 ms; p95/worst 32.0 ms | Five samples per browser with only the nine performance cases running. The 10k mounted-DOM tail remains over the investigation threshold; Phase 7 model/atom work does not explain the cold-start-dominated spread. |
 
 ## Phase 6 pre-work: 2,000 blocks
 
@@ -55,3 +56,23 @@ headless development-build measurements and include timer/rAF quantization.
 | 50×50 table | WebKit | 17, 9, 10, 11, 9 | 10 | 17 | 17 |
 
 The first 50×50 implementation measured roughly 84–169 ms median because the renderer recomputed all header associations after every text edit. Restricting that synchronization to structural/span/header changes reduced the final medians to 10–13.4 ms. Chromium's first sample remains a cold-start outlier; the steady samples are 12.7–13.7 ms.
+
+## Phase 7 isolated series
+
+| Fixture | Browser | Raw samples (ms) | Median | p95 | Worst |
+|---|---|---|---:|---:|---:|
+| 2,000 blocks | Chromium | 28.6, 5.2, 14.5, 5.0, 14.7 | 14.5 | 28.6 | 28.6 |
+| 2,000 blocks | Firefox | 12, 6, 5, 5, 5 | 5 | 12 | 12 |
+| 2,000 blocks | WebKit | 33, 7, 7, 6, 6 | 7 | 33 | 33 |
+| 10,000 blocks | Chromium | 40.7, 23.6, 31.0, 24.6, 22.8 | 24.6 | 40.7 | 40.7 |
+| 10,000 blocks | Firefox | 25, 13, 14, 13, 13 | 13 | 25 | 25 |
+| 10,000 blocks | WebKit | 32, 30, 27, 23, 23 | 27 | 32 | 32 |
+| 50×50 table | Chromium | 50.4, 13.9, 18.2, 13.3, 13.1 | 13.9 | 50.4 | 50.4 |
+| 50×50 table | Firefox | 7, 6, 7, 5, 4 | 6 | 7 | 7 |
+| 50×50 table | WebKit | 37, 7, 7, 8, 12 | 8 | 37 | 37 |
+
+The 2,000-block medians remain materially below the 10,000-block tail, though
+Chromium's 14.5 ms median is higher than Phase 6's 9.6 ms run. Cold first samples
+dominate p95 for Chromium and WebKit. The already-triggered headed
+`content-visibility` trace remains the correct next diagnostic; these headless
+development measurements do not justify attributing the cost to atom commands.

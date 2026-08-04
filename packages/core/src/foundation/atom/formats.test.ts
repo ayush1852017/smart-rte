@@ -17,6 +17,13 @@ describe("Phase 7 atom formats", () => {
     expect(atomFromHtmlElement(parse(html))).toEqual(formula);
   });
 
+  it("preserves an explicit decorative image choice in full HTML", () => {
+    const decorative = { type: "image", id: "decorative", attrs: { src: "images/rule.png", alt: "", decorative: true, status: "ready" } };
+    const html = atomToHtml(decorative);
+    expect(html).toContain('data-smart-decorative="true"');
+    expect(atomFromHtmlElement(parse(html))).toEqual(decorative);
+  });
+
   it("declares Markdown media unsupported but preserves source text", () => {
     const media = { type: "video", id: "v", attrs: { src: "https://x.test/v.mp4", status: "ready" } };
     expect(atomToMarkdown(media)).toContain("https://x.test/v.mp4");

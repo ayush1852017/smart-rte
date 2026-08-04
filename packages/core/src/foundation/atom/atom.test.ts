@@ -104,6 +104,26 @@ describe("Phase 7 generic atom engine", () => {
     expect(JSON.stringify(deleted)).not.toContain('"id":"img"');
   });
 
+  it("requires either meaningful image alt text or an explicit decorative choice", () => {
+    const image = atomDeclarations.find((entry) => entry.type === "image")!;
+    const document = paragraphDoc();
+    expect(insertAtom(document, emptyScope, { declaration: image, nodeId: "missing-alt", attrs: { src: "/image.png", alt: "" }, ownerId: "p", offset: 0 }, context(document))).toEqual([]);
+    expect(insertAtom(document, emptyScope, { declaration: image, nodeId: "decorative", attrs: { src: "/image.png", alt: "", decorative: true }, ownerId: "p", offset: 0 }, context(document))).toHaveLength(1);
+  });
+
+  it("uses the same generic insertion path in list items, table cells, and marked text", () => {
+    const formula = atomDeclarations.find((entry) => entry.type === "formula")!;
+    const document: SmartDocument = { type: "doc", id: "doc", children: [
+      { type: "list", id: "list", children: [{ type: "list_item", id: "item", children: [{ type: "paragraph", id: "list-owner", children: [{ type: "text", text: "ab", marks: [{ type: "strong" }] }] }] }] },
+      { type: "table", id: "table", children: [{ type: "table_row", id: "row", children: [{ type: "table_cell", id: "cell", children: [{ type: "paragraph", id: "cell-owner", children: [{ type: "text", text: "cd" }] }] }] }] },
+    ] };
+    const inList = applyOperations(document, insertAtom(document, emptyScope, { declaration: formula, nodeId: "list-formula", attrs: { source: "x", notation: "latex" }, ownerId: "list-owner", offset: 1 }, context(document)));
+    const inTable = applyOperations(inList, insertAtom(inList, emptyScope, { declaration: formula, nodeId: "cell-formula", attrs: { source: "y", notation: "latex" }, ownerId: "cell-owner", offset: 1 }, context(inList)));
+    expect(context(inTable).positions.exists("list-formula")).toBe(true);
+    expect(context(inTable).positions.exists("cell-formula")).toBe(true);
+    expect(JSON.stringify(inTable)).toContain('"marks":[{"type":"strong"}]');
+  });
+
   it("treats upload completion as non-history state and drops stale completion", async () => {
     const editor = new FoundationEditor({ document: paragraphDoc(), selection: { type: "text", anchor: { path: [0], offset: 0 }, head: { path: [0], offset: 0 } } });
     const image = atomDeclarations.find((entry) => entry.type === "image")!;
@@ -155,6 +175,7 @@ describe("Phase 7 security boundary", () => {
 
   it("allows only explicit raster image data and validates MIME allowlists", () => {
     expect(sanitizeAtomSource("data:image/png;base64,AA==", { kind: "image" })).toContain("data:image/png");
+    expect(sanitizeAtomSource("images/atom.png", { kind: "image" })).toBe("images/atom.png");
     expect(validateAtomMime("image", "image/png")).toBe(true);
     expect(validateAtomMime("image", "text/html")).toBe(false);
     expect(validateAtomMime("video", "video/mp4")).toBe(true);

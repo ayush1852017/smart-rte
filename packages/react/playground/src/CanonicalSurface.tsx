@@ -2,7 +2,10 @@ import { useEffect, useRef } from "react";
 import {
   createFoundationEditor,
   createInputPipeline,
+  completeAtomUpload,
   createSchema,
+  atomDeclarations,
+  insertAtom,
   createSubtreeRenderer,
   type CanonicalInputPipeline,
   type CanonicalSubtreeRenderer,
@@ -27,6 +30,7 @@ declare global {
       runInlineShadowCorpus: (scenarios?: number) => ReturnType<typeof runInlineShadowCorpus>;
       runBlockShadowCorpus: (scenarios?: number) => ReturnType<typeof runBlockShadowCorpus>;
       runAtomShadowCorpus: (scenarios?: number) => ReturnType<typeof runAtomShadowCorpus>;
+      runAtomLifecycle: () => { completed: boolean; removedByUndo: boolean; staleDropped: boolean; historyDepth: number };
     };
   }
 }
@@ -175,6 +179,21 @@ export default function CanonicalSurface() {
       runInlineShadowCorpus: (scenarios = 1_000) => runInlineShadowCorpus(scenarios),
       runBlockShadowCorpus: (scenarios = 1_000) => runBlockShadowCorpus(scenarios),
       runAtomShadowCorpus: (scenarios = 700) => runAtomShadowCorpus(scenarios),
+      runAtomLifecycle: () => {
+        const declaration = atomDeclarations.find((entry) => entry.type === "image")!;
+        const scope = { kind: "empty", range: { from: { path: [0], offset: 0 }, to: { path: [0], offset: 0 } }, isolatingAncestorId: null, clamped: false } as const;
+        const operations = insertAtom(editor.document, scope, {
+          declaration, nodeId: "browser-upload", ownerId: "atom-owner", offset: 0,
+          attrs: { src: "blob:browser-preview", alt: "Upload preview", status: "pending", uploadId: "browser-upload" },
+        }, { schema: editor.schema, positions: editor.positions });
+        editor.transact((transaction) => transaction.operations.push(...operations), { source: "drop", addToHistory: true });
+        const completed = completeAtomUpload(editor, "browser-upload", { src: "https://cdn.test/browser.png" });
+        const historyDepth = editor.history.undo.length;
+        editor.undo();
+        const removedByUndo = !editor.positions.exists("browser-upload");
+        const staleDropped = completeAtomUpload(editor, "browser-upload", { src: "https://cdn.test/late.png" }) === false;
+        return { completed, removedByUndo, staleDropped, historyDepth };
+      },
     };
     const measurePaint = () => {
       const started = performance.now();
