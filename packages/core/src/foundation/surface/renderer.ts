@@ -1,6 +1,7 @@
 import { isTextNode } from "../identity.js";
 import {
   FoundationModelDomMapping,
+  SMART_EMPTY_LINE_ATTRIBUTE,
   SMART_NODE_ID_ATTRIBUTE,
   SMART_PROJECTION_ATTRIBUTE,
   SMART_UI_ATTRIBUTE,
@@ -12,6 +13,7 @@ import { occupancyGridFor } from "../table/index.js";
 import { sanitizeAtomSource } from "../atom/security.js";
 
 const atomTypes = new Set(["image", "block_image", "formula", "block_formula", "video", "audio"]);
+const emptyLineOwnerTypes = new Set(["paragraph", "heading", "code_block"]);
 
 const tagForNode = (node: SmartElementNode): string => {
   if (node.type === "paragraph") return "p";
@@ -243,6 +245,7 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
           if (childElement instanceof HTMLElement) this.syncNodeAttributes(childElement, child);
         }
       });
+      this.syncEmptyLineProjection(element, node);
     }
     this.modelById.set(node.id, node);
     this.mapping.track(node, path, element);
@@ -263,6 +266,25 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
     });
   }
 
+  /**
+   * Empty inline owners need a browser line box for an immediately visible
+   * caret. This <br> is renderer UI, not canonical document content.
+   */
+  private syncEmptyLineProjection(element: HTMLElement, node: SmartElementNode): void {
+    const existing = element.querySelector<HTMLElement>(`:scope > [${SMART_EMPTY_LINE_ATTRIBUTE}]`);
+    const needsProjection = emptyLineOwnerTypes.has(node.type) && (node.children?.length || 0) === 0;
+    if (needsProjection && !existing) {
+      const line = element.ownerDocument.createElement("br");
+      line.setAttribute(SMART_EMPTY_LINE_ATTRIBUTE, "true");
+      line.setAttribute(SMART_UI_ATTRIBUTE, "empty-line");
+      element.appendChild(line);
+      this.recordWrite(node.id);
+    } else if (!needsProjection && existing) {
+      existing.remove();
+      this.recordWrite(node.id);
+    }
+  }
+
   private diffElement(element: HTMLElement, before: SmartElementNode, after: SmartElementNode, path: readonly number[]): boolean {
     this.modelById.set(after.id, after);
     this.mapping.track(after, path, element);
@@ -272,6 +294,8 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
     this.syncNodeAttributes(element, after);
     const beforeChildren = before.children || [];
     const afterChildren = after.children || [];
+    // Remove the visual-only empty line before inserting real model children.
+    if (afterChildren.length) this.syncEmptyLineProjection(element, after);
     let structural = beforeChildren.length !== afterChildren.length
       || after.type === "table_cell" && ["rowspan", "colspan", "header"].some((attribute) => before.attrs?.[attribute] !== after.attrs?.[attribute]);
 
@@ -338,6 +362,7 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
       if (removed) this.forget(removed);
       structural = true;
     }
+    this.syncEmptyLineProjection(element, after);
     return structural;
   }
 
@@ -355,15 +380,31 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
     }
     const anchor = this.mapping.posToDom(model.anchor);
     const head = this.mapping.posToDom(model.head);
-    if (!anchor || !head || this.selectionMatches(selection, anchor, head)) return;
-    if (typeof selection.setBaseAndExtent === "function") {
-      selection.setBaseAndExtent(anchor.node, anchor.offset, head.node, head.offset);
-    } else {
-      const range = this.root.ownerDocument.createRange();
-      range.setStart(anchor.node, anchor.offset);
-      range.setEnd(head.node, head.offset);
-      selection.removeAllRanges();
-      selection.addRange(range);
+    if (!anchor || !head) return;
+    if (!this.selectionMatches(selection, anchor, head)) {
+      if (typeof selection.setBaseAndExtent === "function") {
+        selection.setBaseAndExtent(anchor.node, anchor.offset, head.node, head.offset);
+      } else {
+        const range = this.root.ownerDocument.createRange();
+        range.setStart(anchor.node, anchor.offset);
+        range.setEnd(head.node, head.offset);
+        selection.removeAllRanges();
+        selection.addRange(range);
+      }
+    }
+    this.revealSelectionHead(head.node);
+  }
+
+  /** Keep the active line visible without scrolling the surrounding page. */
+  private revealSelectionHead(node: Node): void {
+    const target = node.nodeType === node.ELEMENT_NODE ? node as HTMLElement : node.parentElement;
+    if (!target || target === this.root || !this.root.contains(target)) return;
+    const rootRect = this.root.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect();
+    if (targetRect.bottom > rootRect.bottom) {
+      this.root.scrollTop += targetRect.bottom - rootRect.bottom + 8;
+    } else if (targetRect.top < rootRect.top) {
+      this.root.scrollTop -= rootRect.top - targetRect.top + 8;
     }
   }
 

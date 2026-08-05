@@ -92,6 +92,51 @@ test.describe("Phase 8b canonical product authority", () => {
     await context.close();
   });
 
+  test("Enter immediately displays the caret on a new empty line", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1");
+    await placeCaretAtEnd(page);
+    await page.keyboard.press("Enter");
+
+    const state = await page.evaluate(() => {
+      const root = document.querySelector<HTMLElement>('[data-smart-authority="canonical"] [contenteditable="true"]')!;
+      const paragraph = root.lastElementChild as HTMLElement;
+      const selection = window.getSelection();
+      return {
+        paragraphType: paragraph?.dataset.smartType,
+        hasEmptyLine: Boolean(paragraph?.querySelector('[data-smart-empty-line][data-smart-ui="empty-line"]')),
+        caretOwnerId: selection?.focusNode instanceof HTMLElement
+          ? selection.focusNode.dataset.smartId
+          : selection?.focusNode?.parentElement?.dataset.smartId,
+        paragraphId: paragraph?.dataset.smartId,
+        focusOffset: selection?.focusOffset,
+      };
+    });
+    expect(state).toMatchObject({ paragraphType: "paragraph", hasEmptyLine: true, focusOffset: 0 });
+    expect(state.caretOwnerId).toBe(state.paragraphId);
+  });
+
+  test("Enter at the bottom scrolls the new line into the editor viewport", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=100");
+    await placeCaretAtEnd(page);
+    await page.evaluate(() => {
+      const root = document.querySelector<HTMLElement>('[data-smart-authority="canonical"] [contenteditable="true"]')!;
+      root.scrollTop = 0;
+    });
+    await page.keyboard.press("Enter");
+
+    await expect.poll(() => page.evaluate(() => {
+      const root = document.querySelector<HTMLElement>('[data-smart-authority="canonical"] [contenteditable="true"]')!;
+      const last = root.lastElementChild as HTMLElement;
+      const rootRect = root.getBoundingClientRect();
+      const lastRect = last.getBoundingClientRect();
+      return {
+        scrolled: root.scrollTop > 0,
+        visible: lastRect.top >= rootRect.top && lastRect.bottom <= rootRect.bottom + 1,
+        hasEmptyLine: Boolean(last.querySelector("[data-smart-empty-line]")),
+      };
+    })).toEqual({ scrolled: true, visible: true, hasEmptyLine: true });
+  });
+
   for (const blocks of [2_000, 10_000]) test(`records 20 product input samples at ${blocks} blocks`, async ({ page }, testInfo) => {
     await page.goto(`/?canonicalAuthority=1&blocks=${blocks}`);
     const samples = await page.evaluate(async () => {

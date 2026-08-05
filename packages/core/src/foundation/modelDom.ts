@@ -9,6 +9,7 @@ const atomTypes = new Set(["image", "block_image", "formula", "block_formula", "
 export const SMART_UI_ATTRIBUTE = "data-smart-ui";
 export const SMART_PROJECTION_ATTRIBUTE = "data-smart-projection";
 export const SMART_NODE_ID_ATTRIBUTE = "data-smart-id";
+export const SMART_EMPTY_LINE_ATTRIBUTE = "data-smart-empty-line";
 
 const tagForNode = (node: SmartNode): string => {
   if (node.type === "paragraph") return "p";
@@ -223,7 +224,15 @@ export class FoundationModelDomMapping implements ModelDomMapping {
         remaining -= 1;
       }
     }
-    return remaining === 0 ? { node: element, offset: element.childNodes.length } : null;
+    if (remaining !== 0) return null;
+    const lastModelChild = domChildren[domChildren.length - 1];
+    return {
+      node: element,
+      // Renderer-owned UI projections do not consume model offsets. An empty
+      // inline owner therefore maps to offset zero even when it has a visual
+      // caret-line projection.
+      offset: lastModelChild ? ([...element.childNodes] as Node[]).indexOf(lastModelChild) + 1 : 0,
+    };
   }
 
   domToPos(node: Node, offset: number): SmartPos | null {

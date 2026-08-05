@@ -139,6 +139,33 @@ describe("Phase 2.5 scope cache and PositionLookup", () => {
 });
 
 describe("Phase 2.5 renderer and input pipeline", () => {
+  it("projects a visible caret line for an empty paragraph without adding model content", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const before = documentOf("one");
+    const renderer = createSubtreeRenderer(root);
+    renderer.render(before, caret(3));
+    const emptyNode = paragraph("empty", "");
+    const emptyDocument = applyOperation(before, {
+      type: "insertNode",
+      pos: { path: [], offset: 1 },
+      node: emptyNode,
+    });
+    renderer.render(emptyDocument, caret(0, [1]));
+
+    const emptyElement = renderer.mapping.nodeToDom("empty")!;
+    const projection = emptyElement.querySelector('[data-smart-empty-line][data-smart-ui="empty-line"]')!;
+    expect(projection.tagName).toBe("BR");
+    expect(renderer.mapping.domToNode(projection)).toBeNull();
+    expect(renderer.mapping.posToDom({ path: [1], offset: 0 })).toEqual({ node: emptyElement, offset: 0 });
+    expect(emptyDocument.children[1]).toEqual(emptyNode);
+
+    const withText = applyOperation(emptyDocument, { type: "insertText", pos: { path: [1], offset: 0 }, text: "x" });
+    renderer.render(withText, caret(1, [1]));
+    expect(emptyElement.querySelector("[data-smart-empty-line]")).toBeNull();
+    expect(emptyElement.textContent).toBe("x");
+  });
+
   it("retains unchanged DOM identity and reverse selection direction", () => {
     const root = document.createElement("div");
     const ui = document.createElement("button");
