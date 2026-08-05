@@ -96,6 +96,13 @@ describe("canonical authority lifecycle", () => {
     act(() => canonicalAuthorityFlag.setGlobal(false));
     expect(host.querySelector('[data-smart-authority="canonical"]')).toBeNull();
     expect(host.querySelector('[contenteditable="true"]')?.textContent).toContain("!safe");
+    const rollbackRoot = host.querySelector('[contenteditable="true"]') as HTMLElement;
+    act(() => {
+      rollbackRoot.innerHTML = "<p>rollback edit</p>";
+      rollbackRoot.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "t" }));
+    });
+    act(() => canonicalAuthorityFlag.setGlobal(true));
+    expect(host.querySelector('[data-smart-authority="canonical"] [contenteditable="true"]')?.textContent).toContain("rollback edit");
     act(() => reactRoot.unmount());
   });
 });

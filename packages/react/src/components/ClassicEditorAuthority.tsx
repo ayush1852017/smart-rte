@@ -37,6 +37,9 @@ export const ClassicEditor = forwardRef<SmartEditorHandle, ClassicEditorProps>(f
       ? serializeCanonicalListHtml(latestEnvelope.current.document, { clean: true })
       : latestHtml.current ?? (typeof props.value === "string" ? props.value : typeof defaultValue === "string" ? defaultValue : undefined);
     return <LegacyClassicEditor {...legacy as LegacyClassicEditorProps} value={value} onChange={(html) => {
+      // A rollback edit becomes the next canonical initial value. IDs are
+      // reminted by the legacy HTML boundary, but user content is never stale.
+      latestEnvelope.current = undefined;
       latestHtml.current = html;
       onHtmlChange?.(html);
       const callback = props.onChange as ((html: string) => void) | undefined;
@@ -50,7 +53,7 @@ export const ClassicEditor = forwardRef<SmartEditorHandle, ClassicEditorProps>(f
   return <CanonicalAuthorityEditor
     {...canonical}
     ref={ref}
-    defaultValue={latestEnvelope.current ?? props.defaultValue ?? value}
+    defaultValue={latestEnvelope.current ?? latestHtml.current ?? props.defaultValue ?? value}
     onChange={(change) => {
       latestEnvelope.current = runtime.current?.getValue() ?? latestEnvelope.current;
       (props.onChange as ((change: SmartEditorChange) => void) | undefined)?.(change);
