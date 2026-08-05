@@ -1,5 +1,6 @@
 import type { FoundationEditor } from "../editor.js";
 import type { ModelDomMapping, SmartDocument, SmartSelection } from "../types.js";
+import type { ClipboardDiagnosticReport } from "../clipboard/diagnostics.js";
 
 export interface CanonicalSubtreeRenderer {
   readonly mapping: ModelDomMapping;
@@ -32,4 +33,6 @@ export interface CanonicalInputPipeline {
 
 export interface CanonicalInputPipelineOptions {
   onFiles?: (files: readonly File[], position: SmartSelection) => void;
+  /** Privacy-safe clipboard telemetry; reports hashes and structure, never text. */
+  onClipboardDiagnostic?: (report: ClipboardDiagnosticReport) => void;
 }

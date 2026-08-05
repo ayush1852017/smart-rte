@@ -36,6 +36,8 @@ import {
   deleteClipboardSelection,
   insertClipboardFragment,
   parseClipboardPayload,
+  reportParsedClipboard,
+  reportRejectedClipboard,
   remintClipboardFragmentIds,
   serializeClipboardRepresentations,
   sliceClipboardSelection,
@@ -272,12 +274,19 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
       this.unhandled.push("paste-without-clipboard-data");
       return;
     }
-    const parsed = parseClipboardPayload(this.payloadFromTransfer(event.clipboardData), { ownerDocument: this.ownerDocument });
-    const fragment = remintClipboardFragmentIds(parsed.document, createNodeId);
-    const result = insertClipboardFragment(this.editor.document, this.editor.selection, fragment, {
-      schema: this.editor.schema, positions: this.editor.positions, idFactory: createNodeId,
-    });
-    this.commitClipboard(result, "paste");
+    const payload = this.payloadFromTransfer(event.clipboardData);
+    try {
+      const parsed = parseClipboardPayload(payload, { ownerDocument: this.ownerDocument });
+      this.options.onClipboardDiagnostic?.(reportParsedClipboard(payload, parsed));
+      const fragment = remintClipboardFragmentIds(parsed.document, createNodeId);
+      const result = insertClipboardFragment(this.editor.document, this.editor.selection, fragment, {
+        schema: this.editor.schema, positions: this.editor.positions, idFactory: createNodeId,
+      });
+      this.commitClipboard(result, "paste");
+    } catch (error) {
+      this.options.onClipboardDiagnostic?.(reportRejectedClipboard(payload, error));
+      this.unhandled.push("paste-rejected");
+    }
   }
 
   private handleDragStart(event: DragEvent): void {
