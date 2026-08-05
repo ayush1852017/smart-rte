@@ -98,6 +98,8 @@ export class CanonicalEditorRuntime implements SmartEditorHandle {
   private onChange?: (change: SmartEditorChange) => void;
   private onHtmlChange?: (html: string) => void;
   private readonly onClipboardDiagnostic?: (report: ClipboardDiagnosticReport) => void;
+  private htmlChangeTimer: number | null = null;
+  private pendingHtmlDocument: PersistedEditorDocument["document"] | null = null;
 
   constructor(options: CanonicalEditorRuntimeOptions = {}) {
     const envelope = envelopeFrom(options.initialValue);
@@ -117,6 +119,29 @@ export class CanonicalEditorRuntime implements SmartEditorHandle {
     this.onHtmlChange = onHtmlChange;
   }
 
+  private scheduleHtmlChange(document: PersistedEditorDocument["document"]): void {
+    if (!this.onHtmlChange) return;
+    this.pendingHtmlDocument = document;
+    const view = this.root?.ownerDocument.defaultView;
+    if (this.htmlChangeTimer !== null) {
+      if (view) view.clearTimeout(this.htmlChangeTimer);
+      else globalThis.clearTimeout(this.htmlChangeTimer);
+    }
+    const flush = () => {
+      this.htmlChangeTimer = null;
+      const pending = this.pendingHtmlDocument;
+      this.pendingHtmlDocument = null;
+      if (pending && this.onHtmlChange) this.onHtmlChange(serializeCanonicalListHtml(pending, { clean: true }));
+    };
+    if (view) {
+      // Transitional HTML serialization is intentionally debounced outside the
+      // typing frame. The canonical onChange contract remains per transaction.
+      this.htmlChangeTimer = view.setTimeout(flush, 250);
+    } else {
+      this.htmlChangeTimer = setTimeout(flush, 250) as unknown as number;
+    }
+  }
+
   mount(root: HTMLElement): void {
     if (this.root === root && this.pipeline && this.renderer) return;
     this.unmount();
@@ -126,7 +151,7 @@ export class CanonicalEditorRuntime implements SmartEditorHandle {
     this.unsubscribe = this.editor.subscribe((transaction, state) => {
       this.renderer?.render(this.editor.document, this.editor.selection);
       this.onChange?.({ revision: state.revision, documentChanged: sameOperations(transaction), transaction });
-      if (sameOperations(transaction)) this.onHtmlChange?.(serializeCanonicalListHtml(state.document, { clean: true }));
+      if (sameOperations(transaction)) this.scheduleHtmlChange(state.document);
     });
   }
 
@@ -137,6 +162,13 @@ export class CanonicalEditorRuntime implements SmartEditorHandle {
     this.pipeline = null;
     this.renderer?.destroy();
     this.renderer = null;
+    const view = this.root?.ownerDocument.defaultView;
+    if (this.htmlChangeTimer !== null) {
+      if (view) view.clearTimeout(this.htmlChangeTimer);
+      else globalThis.clearTimeout(this.htmlChangeTimer);
+    }
+    this.htmlChangeTimer = null;
+    this.pendingHtmlDocument = null;
     this.root?.replaceChildren();
     this.root = null;
   }

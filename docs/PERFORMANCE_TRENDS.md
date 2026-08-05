@@ -5,6 +5,12 @@ headless development-build measurements are trend indicators, not production
 budgets. Record browser, sample count, median, p95, and worst sample in future
 phases rather than reporting one favorable run.
 
+Phase 8b's same-browser production/standalone flame-chart investigation is
+recorded in `PHASE8B_PERFORMANCE_PROFILE.md`. It found synchronous full-state
+cloning and clean-HTML serialization in the product wrapper, not renderer or CSS
+work. After correction the 10,000-block Chromium surfaces converged to roughly
+18–20 ms standalone versus 19–21 ms production in the isolated profile.
+
 | Phase | Chromium | Firefox | WebKit | Notes |
 |---|---:|---:|---:|---|
 | 2.5 | 18.1 ms | within frame in the recorded run | within frame in the recorded run | First end-to-end measurement. |

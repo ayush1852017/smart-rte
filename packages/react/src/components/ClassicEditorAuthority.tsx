@@ -32,6 +32,13 @@ export const ClassicEditor = forwardRef<SmartEditorHandle, ClassicEditorProps>(f
   const latestHtml = useRef<string | undefined>(typeof props.defaultValue === "string" ? props.defaultValue : props.value);
   const runtime = useRef<CanonicalEditorRuntime | null>(null);
   if (!enabled) {
+    if (runtime.current) {
+      // Capture once at the authority boundary, not once per keystroke. This is
+      // the ID-preserving rollback envelope; clean HTML remains the legacy view.
+      latestEnvelope.current = runtime.current.getValue();
+      latestHtml.current = serializeCanonicalListHtml(latestEnvelope.current.document, { clean: true });
+      runtime.current = null;
+    }
     const { defaultValue, onHtmlChange, canonicalAuthority: _canonical, authorityContext: _context, onRuntime: _runtime, ...legacy } = props;
     const value = latestEnvelope.current
       ? serializeCanonicalListHtml(latestEnvelope.current.document, { clean: true })
@@ -55,7 +62,6 @@ export const ClassicEditor = forwardRef<SmartEditorHandle, ClassicEditorProps>(f
     ref={ref}
     defaultValue={latestEnvelope.current ?? latestHtml.current ?? props.defaultValue ?? value}
     onChange={(change) => {
-      latestEnvelope.current = runtime.current?.getValue() ?? latestEnvelope.current;
       (props.onChange as ((change: SmartEditorChange) => void) | undefined)?.(change);
     }}
     onHtmlChange={(html) => { latestHtml.current = html; props.onHtmlChange?.(html); }}

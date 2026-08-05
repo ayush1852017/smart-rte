@@ -181,6 +181,23 @@ export class FoundationEditor {
   get storedMarks(): readonly SmartMark[] | undefined { return this.current.storedMarks; }
 
   /**
+   * Commit listeners receive the canonical readonly document reference. This
+   * preserves the structural-sharing memoization contract and avoids cloning
+   * the complete document once per listener on every keystroke.
+   */
+  private notify(transaction: SmartTransaction): void {
+    if (!this.listeners.size) return;
+    const state: FoundationEditorState = {
+      schemaVersion: this.current.schemaVersion,
+      revision: this.current.revision,
+      document: this.current.document,
+      selection: structuredClone(this.current.selection),
+      ...(this.current.storedMarks ? { storedMarks: structuredClone(this.current.storedMarks) } : {}),
+    };
+    this.listeners.forEach((listener) => listener(structuredClone(transaction), state));
+  }
+
+  /**
    * Replaces the canonical envelope without recreating the editor instance.
    * This is an explicit host revision boundary, never a response to a prop diff.
    */
@@ -216,7 +233,7 @@ export class FoundationEditor {
       ...(options.storedMarks?.length ? { storedMarksAfter: canonicalMarkOrder(options.storedMarks) } : {}),
       metadata: { source: "api", timestamp: Date.now(), addToHistory: false },
     };
-    this.listeners.forEach((listener) => listener(structuredClone(replacement), this.state));
+    this.notify(replacement);
     return replacement;
   }
 
@@ -300,7 +317,7 @@ export class FoundationEditor {
     historyAttributeUpdates.forEach((update) => {
       this.currentHistory = rebaseHistoryNodeAttributes(this.currentHistory, update.nodeId, update.before, update.after);
     });
-    this.listeners.forEach((listener) => listener(structuredClone(transaction), this.state));
+    this.notify(transaction);
   }
 
   typeText(text: string, options: Omit<TransactOptions, "source"> = {}): SmartTransaction | null {
@@ -333,7 +350,7 @@ export class FoundationEditor {
     const envelope = applyTransactionAtomic(this.current, inverse, this.schema);
     this.current = { ...envelope, selection: structuredClone(inverse.selectionAfter), storedMarks: structuredClone(inverse.storedMarksAfter) };
     this.currentHistory = popped.history;
-    this.listeners.forEach((listener) => listener(structuredClone(inverse), this.state));
+    this.notify(inverse);
     return true;
   }
 
@@ -344,7 +361,7 @@ export class FoundationEditor {
     const envelope = applyTransactionAtomic(this.current, forward, this.schema);
     this.current = { ...envelope, selection: structuredClone(forward.selectionAfter), storedMarks: structuredClone(forward.storedMarksAfter) };
     this.currentHistory = popped.history;
-    this.listeners.forEach((listener) => listener(structuredClone(forward), this.state));
+    this.notify(forward);
     return true;
   }
 

@@ -599,4 +599,13 @@ describe("Phase 1 transactions, maps, normalization, and history", () => {
     expect(listener.mock.calls.map((call) => call[1].document.children[0].children?.[0]?.text || ""))
       .toEqual(["x", "", "x"]);
   });
+
+  it("notifies subscribers with the canonical readonly document reference", () => {
+    const editor = new FoundationEditor({ document: doc(""), selection: caret(0) });
+    let notified: SmartDocument | undefined;
+    editor.subscribe((_transaction, state) => { notified = state.document; });
+    editor.typeText("x", { timestamp: 1 });
+    expect(notified).toBe(editor.document);
+    expect(editor.state.document).not.toBe(editor.document);
+  });
 });
