@@ -1,4 +1,4 @@
-import { toggleCodeBlock } from "../commands/code.js";
+import { toggleCodeBlock } from "../legacyCommands/code.js";
 import type { SmartRtePlugin } from "../plugin.js";
 
 export const createCodeBlockPlugin = (): SmartRtePlugin => ({

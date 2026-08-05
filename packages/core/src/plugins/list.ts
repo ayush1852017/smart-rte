@@ -1,4 +1,4 @@
-import { indentListItems, outdentListItems, toggleList } from "../commands/list.js";
+import { indentListItems, outdentListItems, toggleList } from "../legacyCommands/list.js";
 import type { SmartRtePlugin } from "../plugin.js";
 
 export const createListPlugin = (): SmartRtePlugin => ({

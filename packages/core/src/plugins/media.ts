@@ -4,7 +4,7 @@ import {
   insertInlineImage,
   insertMedia,
   updateInlineImage,
-} from "../commands/media.js";
+} from "../legacyCommands/media.js";
 import type { SmartRtePlugin } from "../plugin.js";
 
 export const createMediaPlugin = (): SmartRtePlugin => ({

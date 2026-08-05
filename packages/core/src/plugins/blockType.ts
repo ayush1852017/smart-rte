@@ -1,4 +1,4 @@
-import { setBlockType } from "../commands/blocks.js";
+import { setBlockType } from "../legacyCommands/blocks.js";
 import type { SmartRtePlugin } from "../plugin.js";
 
 export const createBlockTypePlugin = (): SmartRtePlugin => ({

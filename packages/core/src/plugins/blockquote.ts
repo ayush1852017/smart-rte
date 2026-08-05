@@ -1,4 +1,4 @@
-import { toggleBlockquote } from "../commands/blocks.js";
+import { toggleBlockquote } from "../legacyCommands/blocks.js";
 import type { SmartRtePlugin } from "../plugin.js";
 
 export const createBlockquotePlugin = (): SmartRtePlugin => ({

@@ -1,4 +1,4 @@
-import { deleteFormula, insertFormula } from "../commands/formula.js";
+import { deleteFormula, insertFormula } from "../legacyCommands/formula.js";
 import type { SmartRtePlugin } from "../plugin.js";
 
 export const createFormulaPlugin = (): SmartRtePlugin => ({

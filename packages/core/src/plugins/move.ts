@@ -1,4 +1,4 @@
-import { indentBlocks, moveBlocks } from "../commands/move.js";
+import { indentBlocks, moveBlocks } from "../legacyCommands/move.js";
 import type { SmartRtePlugin } from "../plugin.js";
 
 export const createMovePlugin = (): SmartRtePlugin => ({

@@ -10,7 +10,7 @@ import {
   toggleSubscript,
   toggleSuperscript,
   toggleUnderline,
-} from "../commands/marks.js";
+} from "../legacyCommands/marks.js";
 import type { SmartRtePlugin } from "../plugin.js";
 
 /**

@@ -1,4 +1,4 @@
-import { setAlignment } from "../commands/alignment.js";
+import { setAlignment } from "../legacyCommands/alignment.js";
 import type { SmartRtePlugin } from "../plugin.js";
 
 export const createAlignmentPlugin = (): SmartRtePlugin => ({

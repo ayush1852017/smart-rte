@@ -14,7 +14,7 @@ import {
   toggleTableHeaderColumn,
   toggleTableHeaderRow,
   toggleTableCellBorder,
-} from "../commands/table.js";
+} from "../legacyCommands/table.js";
 import type { SmartRtePlugin } from "../plugin.js";
 
 export const createTablePlugin = (): SmartRtePlugin => ({

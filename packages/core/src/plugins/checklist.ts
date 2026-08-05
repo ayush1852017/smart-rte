@@ -1,4 +1,4 @@
-import { setChecklistItemChecked, toggleChecklist } from "../commands/checklist.js";
+import { setChecklistItemChecked, toggleChecklist } from "../legacyCommands/checklist.js";
 import type { SmartRtePlugin } from "../plugin.js";
 
 export const createChecklistPlugin = (): SmartRtePlugin => ({
