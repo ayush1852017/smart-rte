@@ -93,16 +93,19 @@ describe("canonical authority lifecycle", () => {
     act(() => reactRoot.render(<ClassicEditor defaultValue="<p>safe</p>" onRuntime={(value) => { runtime = value; }} />));
     expect(host.querySelector('[data-smart-authority="canonical"]')).not.toBeNull();
     act(() => runtime!.editor.typeText("!", { timestamp: 1 }));
+    const stableBlock = runtime!.editor.document.children[0];
+    const stableBlockId = "id" in stableBlock ? stableBlock.id : null;
     act(() => canonicalAuthorityFlag.setGlobal(false));
     expect(host.querySelector('[data-smart-authority="canonical"]')).toBeNull();
     expect(host.querySelector('[contenteditable="true"]')?.textContent).toContain("!safe");
     const rollbackRoot = host.querySelector('[contenteditable="true"]') as HTMLElement;
     act(() => {
-      rollbackRoot.innerHTML = "<p>rollback edit</p>";
+      rollbackRoot.querySelector("p")!.textContent = "rollback edit";
       rollbackRoot.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "t" }));
     });
     act(() => canonicalAuthorityFlag.setGlobal(true));
     expect(host.querySelector('[data-smart-authority="canonical"] [contenteditable="true"]')?.textContent).toContain("rollback edit");
+    expect(runtime!.editor.document.children[0]).toMatchObject({ id: stableBlockId });
     act(() => reactRoot.unmount());
   });
 });

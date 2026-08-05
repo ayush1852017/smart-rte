@@ -25,9 +25,10 @@ then global. Development default is off. Promotion requires the Phase 8b replay,
 composition, browser regression, and performance gates. Operations may flip the
 flag globally, per tenant, or per document without a redeploy.
 
-The persisted envelope is identical on both paths. A canonical document is
-accepted by the rollback parser/serializer gate; stable IDs may be absent after
-a legacy edit, which is why the rollback path is temporary.
+The persisted canonical envelope is retained beside the clean-HTML legacy view.
+Internal rollback HTML carries `data-smart-id`, so legacy text edits preserve
+stable IDs when the flag is re-enabled; external callbacks receive clean HTML.
+New legacy-created nodes receive new IDs when parsed, as expected.
 
 ## Rollback exception
 
@@ -37,3 +38,6 @@ when the flag is off. Repository-wide single authority is therefore qualified
 until rollout promotion deletes that implementation. This is recorded openly in
 `MIGRATION_ADAPTER_INVENTORY.md`.
 
+Gate 12 is evaluated as: unreachable from the canonical path, with deletion
+triggered post-promotion. Deleting the rollback implementation before promotion
+would violate Gate 1.

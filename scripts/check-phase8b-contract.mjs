@@ -3,6 +3,15 @@ import { execFileSync } from "node:child_process";
 
 const read = (path) => readFileSync(path, "utf8");
 const failures = [];
+let repositoryExecCommand = "";
+try {
+  repositoryExecCommand = execFileSync("rg", [
+    "-n", "document\\.execCommand|\\.execCommand\\(", ".",
+    "--glob", "!docs/**",
+    "--glob", "!scripts/check-phase8b-contract.mjs",
+  ], { encoding: "utf8" });
+} catch (error) { if (error.status !== 1) throw error; }
+if (repositoryExecCommand.trim()) failures.push(`Executable repository paths still contain execCommand:\n${repositoryExecCommand}`);
 const product = [
   "packages/core/src",
   "packages/react/src/canonicalEditorRuntime.ts",
@@ -25,4 +34,3 @@ if (failures.length) {
   process.exit(1);
 }
 console.log("Phase 8b canonical-product authority contract: pass");
-

@@ -19,3 +19,8 @@ count is therefore four and the active-product count is zero. Every bridge that
 becomes reachable from canonical authority must carry a `MIGRATION_ADAPTER`
 marker and fail the Phase 8b contract gate.
 
+**Phase 8b Gate 12 tracker wording:** the four adapters are unreachable from the
+canonical path; deletion is triggered after flag promotion. Their retained
+existence is the rollback mechanism required by Gate 1, not a pre-promotion
+failure. Post-promotion deletion remains mandatory and is the event that closes
+the repository-wide exception.

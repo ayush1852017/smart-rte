@@ -1,5 +1,5 @@
 import React, { forwardRef, useRef, useSyncExternalStore } from "react";
-import { serializeCanonicalListHtml, type PersistedEditorDocument } from "smartrte-core/foundation";
+import { foundationSchema, parseCanonicalListHtml, serializeCanonicalListHtml, type PersistedEditorDocument } from "smartrte-core/foundation";
 import { canonicalAuthorityFlag, type CanonicalAuthorityContext } from "../canonicalAuthorityFlag.js";
 import type { CanonicalEditorRuntime, SmartEditorChange, SmartEditorHandle } from "../canonicalEditorRuntime.js";
 import { CanonicalAuthorityEditor, type CanonicalAuthorityEditorProps } from "./CanonicalAuthorityEditor.js";
@@ -41,16 +41,22 @@ export const ClassicEditor = forwardRef<SmartEditorHandle, ClassicEditorProps>(f
     }
     const { defaultValue, onHtmlChange, canonicalAuthority: _canonical, authorityContext: _context, onRuntime: _runtime, ...legacy } = props;
     const value = latestEnvelope.current
-      ? serializeCanonicalListHtml(latestEnvelope.current.document, { clean: true })
+      // Internal rollback HTML retains stable IDs. External callbacks receive
+      // the clean representation below.
+      ? serializeCanonicalListHtml(latestEnvelope.current.document, { clean: false })
       : latestHtml.current ?? (typeof props.value === "string" ? props.value : typeof defaultValue === "string" ? defaultValue : undefined);
     return <LegacyClassicEditor {...legacy as LegacyClassicEditorProps} value={value} onChange={(html) => {
-      // A rollback edit becomes the next canonical initial value. IDs are
-      // reminted by the legacy HTML boundary, but user content is never stale.
-      latestEnvelope.current = undefined;
-      latestHtml.current = html;
-      onHtmlChange?.(html);
+      const document = parseCanonicalListHtml(html);
+      latestEnvelope.current = {
+        schemaVersion: foundationSchema.version,
+        revision: (latestEnvelope.current?.revision || 0) + 1,
+        document,
+      };
+      const cleanHtml = serializeCanonicalListHtml(document, { clean: true });
+      latestHtml.current = cleanHtml;
+      onHtmlChange?.(cleanHtml);
       const callback = props.onChange as ((html: string) => void) | undefined;
-      callback?.(html);
+      callback?.(cleanHtml);
     }} />;
   }
   const { value, canonicalAuthority: _canonical, authorityContext: _context, table: _table, media: _media, formula: _formula,
