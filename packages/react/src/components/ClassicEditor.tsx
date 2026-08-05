@@ -185,7 +185,7 @@ export type ClassicEditorProps = {
   className?: string;
 };
 
-export function ClassicEditor({
+export function LegacyClassicEditor({
   value,
   onChange,
   placeholder = "Type here…",
@@ -529,6 +529,14 @@ export function ClassicEditor({
     } catch {}
   };
 
+  const scheduleActiveState = () => {
+    if ((globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT) {
+      updateActiveState();
+      return;
+    }
+    requestAnimationFrame(updateActiveState);
+  };
+
   // Save selection whenever it changes
   useEffect(() => {
     const saveSelection = () => {
@@ -584,13 +592,13 @@ export function ClassicEditor({
       if (command === "createLink" && editor) {
         const result = executeCanonicalInlineTool(editor, "link", "apply", { href: valueArg || "" });
         if (result.changed) handleInput();
-        requestAnimationFrame(updateActiveState);
+        scheduleActiveState();
         return;
       }
       if (command === "unlink" && editor) {
         const result = executeCanonicalInlineTool(editor, "link", "remove");
         if (result.changed) handleInput();
-        requestAnimationFrame(updateActiveState);
+        scheduleActiveState();
         return;
       }
       editorControllerRef.current?.discardLastHistorySnapshot();
@@ -648,7 +656,7 @@ export function ClassicEditor({
       focusElementEnd(replacements[replacements.length - 1]);
       setCurrentBlockType(tag as "p" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6");
       handleInput();
-      requestAnimationFrame(updateActiveState);
+      scheduleActiveState();
     } catch {}
   };
 
@@ -710,7 +718,7 @@ export function ClassicEditor({
     setTableMenu(null);
     inputHistoryGroupRef.current = null;
     focusElementEnd(editor);
-    requestAnimationFrame(updateActiveState);
+    scheduleActiveState();
     if (html !== lastEmittedRef.current) {
       lastEmittedRef.current = html;
       onChange?.(html);
@@ -1047,7 +1055,7 @@ export function ClassicEditor({
       safeSelectRange(range);
       savedRangeRef.current = range.cloneRange();
       handleInput();
-      requestAnimationFrame(updateActiveState);
+      scheduleActiveState();
     } catch {}
   };
 
@@ -1135,7 +1143,7 @@ export function ClassicEditor({
     if (canonicalChanged) {
       syncChecklistControls(canonicalRoot);
       handleInput();
-      requestAnimationFrame(updateActiveState);
+      scheduleActiveState();
     } else editorControllerRef.current!.discardLastHistorySnapshot();
     return canonicalChanged;
   };
@@ -1152,7 +1160,7 @@ export function ClassicEditor({
     }
     syncChecklistControls(canonicalRoot);
     handleInput();
-    requestAnimationFrame(updateActiveState);
+    scheduleActiveState();
     return true;
   };
 
@@ -1260,7 +1268,7 @@ export function ClassicEditor({
     }
     if (canonicalChanged) {
       handleInput();
-      requestAnimationFrame(updateActiveState);
+      scheduleActiveState();
     } else editorControllerRef.current!.discardLastHistorySnapshot();
     return;
   };
@@ -1300,7 +1308,7 @@ export function ClassicEditor({
       });
       syncChecklistControls(canonicalRoot);
       handleInput();
-      requestAnimationFrame(updateActiveState);
+      scheduleActiveState();
     } else editorControllerRef.current!.discardLastHistorySnapshot();
     return;
   };
@@ -1318,7 +1326,7 @@ export function ClassicEditor({
     const canonicalChanged = executeCanonicalListToggle({ root: editor, items: canonicalItems, blocks: canonicalBlocks, listTag, range: canonicalRange });
     if (canonicalChanged) {
       handleInput();
-      requestAnimationFrame(updateActiveState);
+      scheduleActiveState();
     } else editorControllerRef.current!.discardLastHistorySnapshot();
     return;
   };
@@ -1379,7 +1387,7 @@ export function ClassicEditor({
       }
       focusElementEnd(replacements[replacements.length - 1]);
       handleInput();
-      requestAnimationFrame(updateActiveState);
+      scheduleActiveState();
     } catch {}
   };
 
@@ -1417,7 +1425,7 @@ export function ClassicEditor({
       }
       focusElementEnd(replacements[replacements.length - 1]);
       handleInput();
-      requestAnimationFrame(updateActiveState);
+      scheduleActiveState();
     } catch {}
   };
 
@@ -1434,7 +1442,7 @@ export function ClassicEditor({
       if (!range.collapsed) pushEditorHistory();
       const result = executeCanonicalInlineTool(editor, "fontSize", "apply", { valuePx });
       if (result.changed) handleInput();
-      requestAnimationFrame(updateActiveState);
+      scheduleActiveState();
     } catch (error) {
       console.error('Error applying font size:', error);
     }
@@ -1451,7 +1459,7 @@ export function ClassicEditor({
       if (!range.collapsed) pushEditorHistory();
       const result = executeCanonicalInlineTool(editor, "fontFamily", "apply", { value: font });
       if (result.changed) handleInput();
-      requestAnimationFrame(updateActiveState);
+      scheduleActiveState();
     } catch (error) {
       console.error('Error applying font family:', error);
     }
@@ -1576,7 +1584,7 @@ export function ClassicEditor({
         { value: color },
       );
       if (result.changed) handleInput();
-      requestAnimationFrame(updateActiveState);
+      scheduleActiveState();
     } catch {}
   };
 
@@ -2173,7 +2181,15 @@ export function ClassicEditor({
     sel?.addRange(range);
 
     const separator = el.textContent?.trim() ? '<p><br></p>' : '';
-    document.execCommand('insertHTML', false, `${separator}${html}`);
+    const fragment = range.createContextualFragment(`${separator}${html}`);
+    const last = fragment.lastChild;
+    range.insertNode(fragment);
+    if (last) {
+      range.setStartAfter(last);
+      range.collapse(true);
+      sel?.removeAllRanges();
+      sel?.addRange(range);
+    }
   };
 
   const replaceEditorHtml = (html: string) => {
@@ -3284,7 +3300,7 @@ export function ClassicEditor({
     safeSelectRange(movedRange);
     savedRangeRef.current = movedRange.cloneRange();
     handleInput();
-    requestAnimationFrame(updateActiveState);
+    scheduleActiveState();
     return true;
   };
 
@@ -3329,7 +3345,7 @@ export function ClassicEditor({
       }
       focusElementEnd(result[result.length - 1]);
       handleInput();
-      requestAnimationFrame(updateActiveState);
+      scheduleActiveState();
       return;
     }
     if (target.tagName.toLowerCase() !== "li") {
@@ -3343,7 +3359,7 @@ export function ClassicEditor({
         setSelectedImage(target.tagName === "IMG" ? target as HTMLImageElement : target.querySelector("img"));
         scheduleImageOverlay();
         handleInput();
-        requestAnimationFrame(updateActiveState);
+        scheduleActiveState();
         return;
       }
     }
@@ -3413,7 +3429,7 @@ export function ClassicEditor({
       return false;
     }
     handleInput();
-    requestAnimationFrame(updateActiveState);
+    scheduleActiveState();
     return true;
   };
 
@@ -4901,7 +4917,7 @@ export function ClassicEditor({
                 e.key === "Tab" ? "tab" : (e.metaKey || e.ctrlKey) ? "exit" : "newline");
               if (changed) {
                 handleInput();
-                requestAnimationFrame(updateActiveState);
+                scheduleActiveState();
               } else editorControllerRef.current!.discardLastHistorySnapshot();
               return;
             }
@@ -4920,7 +4936,7 @@ export function ClassicEditor({
                 if (changed) {
                   e.preventDefault();
                   handleInput();
-                  requestAnimationFrame(updateActiveState);
+                  scheduleActiveState();
                   return;
                 }
                 editorControllerRef.current!.discardLastHistorySnapshot();
@@ -4941,7 +4957,17 @@ export function ClassicEditor({
               const currentBlock = getCurrentBlock();
               if (!currentBlock?.closest("li")) {
                 captureInputHistory("insertText");
-                document.execCommand("insertText", false, "  ");
+                const selected = window.getSelection();
+                if (selected?.rangeCount) {
+                  const range = selected.getRangeAt(0);
+                  range.deleteContents();
+                  const text = document.createTextNode("  ");
+                  range.insertNode(text);
+                  range.setStartAfter(text);
+                  range.collapse(true);
+                  selected.removeAllRanges();
+                  selected.addRange(range);
+                }
               }
               return;
             }
@@ -6038,3 +6064,6 @@ export function ClassicEditor({
     </div>
   );
 }
+
+/** Test-only/rollback compatibility alias. Product exports route through ClassicEditorAuthority. */
+export { LegacyClassicEditor as ClassicEditor };

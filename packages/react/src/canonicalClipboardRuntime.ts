@@ -17,8 +17,7 @@ const payloadFromTransfer = (transfer: DataTransfer): RawClipboardPayload => {
   };
 };
 
-// MIGRATION_ADAPTER: canonical-clipboard-dom-insert owner=Phase8b
-/** Phase 8a product bridge; Phase 8b replaces the final DOM insertion step. */
+/** Legacy rollback-only DOM insertion. The canonical product path never imports this module. */
 export const insertCanonicalClipboardData = (
   transfer: DataTransfer,
   ownerDocument: Document,
@@ -31,7 +30,20 @@ export const insertCanonicalClipboardData = (
     onDiagnostic?.(reportParsedClipboard(payload, fragment));
     const cleanHtml = serializeCanonicalListHtml(fragment.document, { clean: true });
     if (!cleanHtml) return false;
-    return ownerDocument.execCommand("insertHTML", false, cleanHtml);
+    const selection = ownerDocument.getSelection();
+    if (!selection?.rangeCount) return false;
+    const range = selection.getRangeAt(0);
+    range.deleteContents();
+    const fragmentNode = range.createContextualFragment(cleanHtml);
+    const last = fragmentNode.lastChild;
+    range.insertNode(fragmentNode);
+    if (last) {
+      range.setStartAfter(last);
+      range.collapse(true);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
+    return true;
   } catch (error) {
     onDiagnostic?.(reportRejectedClipboard(payload, error));
     return false;

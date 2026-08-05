@@ -40,7 +40,7 @@ describe("ClassicEditor lists", () => {
     const selection = window.getSelection()!;
     selection.removeAllRanges();
     selection.addRange(range);
-    document.dispatchEvent(new Event("selectionchange"));
+    act(() => document.dispatchEvent(new Event("selectionchange")));
 
     const button = host.querySelector('button[title="Bulleted list"]') as HTMLButtonElement;
     act(() => button.click());
@@ -65,7 +65,7 @@ describe("ClassicEditor lists", () => {
     const selection = window.getSelection()!;
     selection.removeAllRanges();
     selection.addRange(range);
-    document.dispatchEvent(new Event("selectionchange"));
+    act(() => document.dispatchEvent(new Event("selectionchange")));
 
     const button = host.querySelector('button[title="Bulleted list"]') as HTMLButtonElement;
     act(() => button.click());
@@ -92,7 +92,7 @@ describe("ClassicEditor lists", () => {
     const selection = window.getSelection()!;
     selection.removeAllRanges();
     selection.addRange(range);
-    document.dispatchEvent(new Event("selectionchange"));
+    act(() => document.dispatchEvent(new Event("selectionchange")));
 
     act(() => (host!.querySelector('button[title="Numbered list"]') as HTMLButtonElement).click());
 
@@ -121,7 +121,7 @@ describe("ClassicEditor lists", () => {
     const selection = window.getSelection()!;
     selection.removeAllRanges();
     selection.addRange(range);
-    document.dispatchEvent(new Event("selectionchange"));
+    act(() => document.dispatchEvent(new Event("selectionchange")));
 
     const styles = host.querySelector('select[aria-label="Numbered list styles"]') as HTMLSelectElement;
     act(() => {
@@ -150,7 +150,7 @@ describe("ClassicEditor lists", () => {
     const selection = window.getSelection()!;
     selection.removeAllRanges();
     selection.addRange(range);
-    document.dispatchEvent(new Event("selectionchange"));
+    act(() => document.dispatchEvent(new Event("selectionchange")));
 
     act(() => (host!.querySelector('button[title="Numbered list"]') as HTMLButtonElement).click());
 
@@ -179,7 +179,7 @@ describe("ClassicEditor lists", () => {
     const selection = window.getSelection()!;
     selection.removeAllRanges();
     selection.addRange(range);
-    document.dispatchEvent(new Event("selectionchange"));
+    act(() => document.dispatchEvent(new Event("selectionchange")));
 
     const styles = host.querySelector('select[aria-label="Numbered list styles"]') as HTMLSelectElement;
     act(() => {
@@ -224,7 +224,7 @@ describe("ClassicEditor lists", () => {
     const selection = window.getSelection()!;
     selection.removeAllRanges();
     selection.addRange(range);
-    document.dispatchEvent(new Event("selectionchange"));
+    act(() => document.dispatchEvent(new Event("selectionchange")));
 
     act(() => (host!.querySelector('button[title="Numbered list"]') as HTMLButtonElement).click());
 
@@ -261,7 +261,7 @@ describe("ClassicEditor lists", () => {
     const selection = window.getSelection()!;
     selection.removeAllRanges();
     selection.addRange(range);
-    document.dispatchEvent(new Event("selectionchange"));
+    act(() => document.dispatchEvent(new Event("selectionchange")));
 
     act(() => (host!.querySelector('button[title="Numbered list"]') as HTMLButtonElement).click());
 
@@ -293,7 +293,7 @@ describe("ClassicEditor lists", () => {
     const selection = window.getSelection()!;
     selection.removeAllRanges();
     selection.addRange(range);
-    document.dispatchEvent(new Event("selectionchange"));
+    act(() => document.dispatchEvent(new Event("selectionchange")));
 
     act(() => (host!.querySelector('button[title="Numbered list"]') as HTMLButtonElement).click());
 
@@ -320,7 +320,7 @@ describe("ClassicEditor lists", () => {
     const selection = window.getSelection()!;
     selection.removeAllRanges();
     selection.addRange(range);
-    document.dispatchEvent(new Event("selectionchange"));
+    act(() => document.dispatchEvent(new Event("selectionchange")));
     act(() => (host!.querySelector('button[title="Numbered list"]') as HTMLButtonElement).click());
 
     expect(editor.querySelector(":scope > ol > li > ol")).not.toBeNull();
@@ -349,7 +349,7 @@ describe("ClassicEditor lists", () => {
     const selection = window.getSelection()!;
     selection.removeAllRanges();
     selection.addRange(range);
-    document.dispatchEvent(new Event("selectionchange"));
+    act(() => document.dispatchEvent(new Event("selectionchange")));
 
     act(() => (host!.querySelector('button[title="Numbered list"]') as HTMLButtonElement).click());
 
@@ -388,7 +388,7 @@ describe("ClassicEditor lists", () => {
       const selection = window.getSelection()!;
       selection.removeAllRanges();
       selection.addRange(range);
-      document.dispatchEvent(new Event("selectionchange"));
+      act(() => document.dispatchEvent(new Event("selectionchange")));
       act(() => {
         styleSelect.value = "ordered:lower-alpha";
         styleSelect.dispatchEvent(new Event("change", { bubbles: true }));
@@ -417,7 +417,7 @@ describe("ClassicEditor lists", () => {
     const selection = window.getSelection()!;
     selection.removeAllRanges();
     selection.addRange(range);
-    document.dispatchEvent(new Event("selectionchange"));
+    act(() => document.dispatchEvent(new Event("selectionchange")));
 
     const styles = host.querySelector('select[aria-label="Numbered list styles"]') as HTMLSelectElement;
     act(() => {
@@ -449,7 +449,7 @@ describe("ClassicEditor lists", () => {
     const selection = window.getSelection()!;
     selection.removeAllRanges();
     selection.addRange(range);
-    document.dispatchEvent(new Event("selectionchange"));
+    act(() => document.dispatchEvent(new Event("selectionchange")));
 
     const styles = host.querySelector('select[aria-label="Checklist styles"]') as HTMLSelectElement;
     act(() => {
@@ -504,7 +504,7 @@ describe("ClassicEditor lists", () => {
     const selection = window.getSelection()!;
     selection.removeAllRanges();
     selection.addRange(range);
-    document.dispatchEvent(new Event("selectionchange"));
+    act(() => document.dispatchEvent(new Event("selectionchange")));
 
     const styles = host.querySelector('select[aria-label="Numbered list styles"]') as HTMLSelectElement;
     act(() => {
@@ -531,7 +531,7 @@ describe("ClassicEditor lists", () => {
     const selection = window.getSelection()!;
     selection.removeAllRanges();
     selection.addRange(range);
-    document.dispatchEvent(new Event("selectionchange"));
+    act(() => document.dispatchEvent(new Event("selectionchange")));
 
     const styles = host.querySelector('select[aria-label="Numbered list styles"]') as HTMLSelectElement;
     act(() => {
@@ -563,7 +563,7 @@ describe("ClassicEditor lists", () => {
     const selection = window.getSelection()!;
     selection.removeAllRanges();
     selection.addRange(range);
-    document.dispatchEvent(new Event("selectionchange"));
+    act(() => document.dispatchEvent(new Event("selectionchange")));
     const checklist = host.querySelector('button[title="Checklist"]') as HTMLButtonElement;
 
     act(() => checklist.click());
@@ -576,7 +576,7 @@ describe("ClassicEditor lists", () => {
     listRange.setEnd(items[1].querySelector("h3")!.firstChild!, 3);
     selection.removeAllRanges();
     selection.addRange(listRange);
-    document.dispatchEvent(new Event("selectionchange"));
+    act(() => document.dispatchEvent(new Event("selectionchange")));
     act(() => checklist.click());
 
     expect(Array.from(editor.children, (child) => child.tagName)).toEqual(["H2", "H3"]);
@@ -598,7 +598,7 @@ describe("ClassicEditor lists", () => {
     const selection = window.getSelection()!;
     selection.removeAllRanges();
     selection.addRange(range);
-    document.dispatchEvent(new Event("selectionchange"));
+    act(() => document.dispatchEvent(new Event("selectionchange")));
 
     const styles = host.querySelector('select[aria-label="Numbered list styles"]') as HTMLSelectElement;
     act(() => {
@@ -629,7 +629,7 @@ describe("ClassicEditor lists", () => {
     const selection = window.getSelection()!;
     selection.removeAllRanges();
     selection.addRange(range);
-    document.dispatchEvent(new Event("selectionchange"));
+    act(() => document.dispatchEvent(new Event("selectionchange")));
 
     act(() => (host!.querySelector('button[title="Bulleted list"]') as HTMLButtonElement).click());
 
@@ -654,7 +654,7 @@ describe("ClassicEditor lists", () => {
     const selection = window.getSelection()!;
     selection.removeAllRanges();
     selection.addRange(range);
-    document.dispatchEvent(new Event("selectionchange"));
+    act(() => document.dispatchEvent(new Event("selectionchange")));
 
     act(() => editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true })));
     expect(editor.querySelector("ol > li:first-child > ol > li > p")?.textContent).toBe("two");
@@ -683,7 +683,7 @@ describe("ClassicEditor lists", () => {
     const selection = window.getSelection()!;
     selection.removeAllRanges();
     selection.addRange(range);
-    document.dispatchEvent(new Event("selectionchange"));
+    act(() => document.dispatchEvent(new Event("selectionchange")));
 
     act(() => editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true })));
 
@@ -708,7 +708,7 @@ describe("ClassicEditor lists", () => {
     const selection = window.getSelection()!;
     selection.removeAllRanges();
     selection.addRange(range);
-    document.dispatchEvent(new Event("selectionchange"));
+    act(() => document.dispatchEvent(new Event("selectionchange")));
     const styles = host.querySelector('select[aria-label="Numbered list styles"]') as HTMLSelectElement;
 
     act(() => {
@@ -740,7 +740,7 @@ describe("ClassicEditor lists", () => {
     const selection = window.getSelection()!;
     selection.removeAllRanges();
     selection.addRange(range);
-    document.dispatchEvent(new Event("selectionchange"));
+    act(() => document.dispatchEvent(new Event("selectionchange")));
 
     act(() => editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true })));
 
@@ -765,7 +765,7 @@ describe("ClassicEditor lists", () => {
     const selection = window.getSelection()!;
     selection.removeAllRanges();
     selection.addRange(range);
-    document.dispatchEvent(new Event("selectionchange"));
+    act(() => document.dispatchEvent(new Event("selectionchange")));
 
     act(() => editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true })));
     expect(editor.querySelector("ul > li > ul > li")?.textContent).toBe("two");
@@ -789,7 +789,7 @@ describe("ClassicEditor lists", () => {
     const selection = window.getSelection()!;
     selection.removeAllRanges();
     selection.addRange(range);
-    document.dispatchEvent(new Event("selectionchange"));
+    act(() => document.dispatchEvent(new Event("selectionchange")));
 
     act(() => editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true, cancelable: true })));
 
@@ -815,7 +815,7 @@ describe("ClassicEditor lists", () => {
     const selection = window.getSelection()!;
     selection.removeAllRanges();
     selection.addRange(range);
-    document.dispatchEvent(new Event("selectionchange"));
+    act(() => document.dispatchEvent(new Event("selectionchange")));
 
     const tab = new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true });
     act(() => editor.dispatchEvent(tab));
@@ -844,7 +844,7 @@ describe("ClassicEditor lists", () => {
       range.collapse(true);
       selection.removeAllRanges();
       selection.addRange(range);
-      document.dispatchEvent(new Event("selectionchange"));
+      act(() => document.dispatchEvent(new Event("selectionchange")));
     };
 
     selectText(texts()[1]);
@@ -877,7 +877,7 @@ describe("ClassicEditor lists", () => {
     const selection = window.getSelection()!;
     selection.removeAllRanges();
     selection.addRange(range);
-    document.dispatchEvent(new Event("selectionchange"));
+    act(() => document.dispatchEvent(new Event("selectionchange")));
 
     const moveTrigger = host!.querySelector('summary[aria-label="Move and indent"]') as HTMLElement;
     act(() => moveTrigger.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true })));
@@ -903,7 +903,7 @@ describe("ClassicEditor lists", () => {
       const selection = window.getSelection()!;
       selection.removeAllRanges();
       selection.addRange(range);
-      document.dispatchEvent(new Event("selectionchange"));
+      act(() => document.dispatchEvent(new Event("selectionchange")));
     };
     const order = () => Array.from(editor.querySelectorAll(":scope > ul > li"), (item) => item.textContent);
     const openMoveMenu = () => {
@@ -938,7 +938,7 @@ describe("ClassicEditor lists", () => {
     const selection = window.getSelection()!;
     selection.removeAllRanges();
     selection.addRange(range);
-    document.dispatchEvent(new Event("selectionchange"));
+    act(() => document.dispatchEvent(new Event("selectionchange")));
 
     act(() => (host!.querySelector('button[title="Code block"]') as HTMLButtonElement).click());
     expect(editor.querySelector("ul ul > li > pre > code")?.textContent).toBe("child");
@@ -961,7 +961,7 @@ describe("ClassicEditor lists", () => {
     const selection = window.getSelection()!;
     selection.removeAllRanges();
     selection.addRange(range);
-    document.dispatchEvent(new Event("selectionchange"));
+    act(() => document.dispatchEvent(new Event("selectionchange")));
 
     const styles = host.querySelector('select[aria-label="Numbered list styles"]') as HTMLSelectElement;
     act(() => {
@@ -988,7 +988,7 @@ describe("ClassicEditor lists", () => {
     const selection = window.getSelection()!;
     selection.removeAllRanges();
     selection.addRange(range);
-    document.dispatchEvent(new Event("selectionchange"));
+    act(() => document.dispatchEvent(new Event("selectionchange")));
 
     const styles = host.querySelector('select[aria-label="Numbered list styles"]') as HTMLSelectElement;
     act(() => {
@@ -1020,7 +1020,7 @@ describe("ClassicEditor lists", () => {
     const selection = window.getSelection()!;
     selection.removeAllRanges();
     selection.addRange(range);
-    document.dispatchEvent(new Event("selectionchange"));
+    act(() => document.dispatchEvent(new Event("selectionchange")));
 
     const styles = host.querySelector('select[aria-label="Numbered list styles"]') as HTMLSelectElement;
     act(() => {
@@ -1053,7 +1053,7 @@ describe("ClassicEditor lists", () => {
     const selection = window.getSelection()!;
     selection.removeAllRanges();
     selection.addRange(range);
-    document.dispatchEvent(new Event("selectionchange"));
+    act(() => document.dispatchEvent(new Event("selectionchange")));
 
     act(() => (host!.querySelector('button[title="Blockquote"]') as HTMLButtonElement).click());
 
@@ -1076,7 +1076,7 @@ describe("ClassicEditor lists", () => {
     const selection = window.getSelection()!;
     selection.removeAllRanges();
     selection.addRange(range);
-    document.dispatchEvent(new Event("selectionchange"));
+    act(() => document.dispatchEvent(new Event("selectionchange")));
 
     act(() => (host!.querySelector('button[title="Blockquote"]') as HTMLButtonElement).click());
 
@@ -1099,7 +1099,7 @@ describe("ClassicEditor lists", () => {
     const selection = window.getSelection()!;
     selection.removeAllRanges();
     selection.addRange(range);
-    document.dispatchEvent(new Event("selectionchange"));
+    act(() => document.dispatchEvent(new Event("selectionchange")));
 
     act(() => (host!.querySelector('button[title="Blockquote"]') as HTMLButtonElement).click());
 
@@ -1124,7 +1124,7 @@ describe("ClassicEditor lists", () => {
       const selection = window.getSelection()!;
       selection.removeAllRanges();
       selection.addRange(range);
-      document.dispatchEvent(new Event("selectionchange"));
+      act(() => document.dispatchEvent(new Event("selectionchange")));
     };
     selectItems();
     const button = host.querySelector('button[title="Code block"]') as HTMLButtonElement;

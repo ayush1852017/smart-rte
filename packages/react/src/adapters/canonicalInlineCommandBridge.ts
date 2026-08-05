@@ -23,7 +23,7 @@ import {
   type SmartSelection,
 } from "smartrte-core";
 
-// MIGRATION_ADAPTER: canonical-inline-dom-roundtrip owner=Phase8
+// ROLLBACK_ADAPTER: canonical-inline-dom-roundtrip; unreachable from canonical authority.
 // ClassicEditor remains DOM-authoritative during staged migration. This adapter
 // is scaffolding for deletion, not the final editor-state architecture.
 

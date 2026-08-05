@@ -24,7 +24,7 @@ import {
   isTextNode,
 } from "smartrte-core";
 
-// MIGRATION_ADAPTER: canonical-list-dom-roundtrip owner=Phase8
+// ROLLBACK_ADAPTER: canonical-list-dom-roundtrip; unreachable from canonical authority.
 // Temporary parse -> pure command -> render scaffolding. This is not the final
 // editor architecture and must disappear when ClassicEditor becomes canonical-authoritative.
 

@@ -21,7 +21,7 @@ import {
 } from "smartrte-core";
 import type { SetBlockTypeInput, TextAlignment } from "smartrte-core/legacy";
 
-// MIGRATION_ADAPTER: canonical-block-dom-roundtrip owner=Phase8
+// ROLLBACK_ADAPTER: canonical-block-dom-roundtrip; unreachable from canonical authority.
 // ClassicEditor remains DOM-authoritative during staged migration. This is
 // deletion scaffolding, not the final canonical editor-state architecture.
 
