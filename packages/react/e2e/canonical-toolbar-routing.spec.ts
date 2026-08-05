@@ -11,6 +11,19 @@ const selectFirstText = async (page: Page) => page.evaluate(() => {
   document.dispatchEvent(new Event("selectionchange"));
 });
 
+const placeCaret = async (page: Page, selector: string, last = false) => page.evaluate(({ selector, last }) => {
+  const matches = Array.from(document.querySelectorAll<HTMLElement>(selector));
+  const target = last ? matches.at(-1) : matches[0];
+  if (!target) throw new Error(`Cannot place caret: no element matches ${selector}`);
+  const range = document.createRange();
+  range.selectNodeContents(target);
+  range.collapse(false);
+  const selection = window.getSelection()!;
+  selection.removeAllRanges();
+  selection.addRange(range);
+  document.dispatchEvent(new Event("selectionchange"));
+}, { selector, last });
+
 test.describe("canonical toolbar routing", () => {
   test("routes lists, links, tables, atoms, resize, import, and export through retained state", async ({ page }) => {
     page.on("dialog", (dialog) => {
@@ -31,14 +44,14 @@ test.describe("canonical toolbar routing", () => {
     await page.getByRole("button", { name: "Bulleted list" }).click();
     await expect(surface.locator("ul > li")).toHaveCount(1);
 
-    await surface.locator("p").last().click();
+    await placeCaret(page, '[data-smart-authority="canonical"] [contenteditable="true"] p', true);
     await page.getByRole("button", { name: "Insert table" }).click();
     await expect(surface.locator("table tr")).toHaveCount(2);
-    await surface.locator("td p, th p").first().click();
+    await placeCaret(page, '[data-smart-authority="canonical"] [contenteditable="true"] :is(td, th) p');
     await page.getByRole("button", { name: "Add row" }).click();
     await expect(surface.locator("table tr")).toHaveCount(3);
 
-    await surface.locator("p").last().click();
+    await placeCaret(page, '[data-smart-authority="canonical"] [contenteditable="true"] p', true);
     await page.getByRole("button", { name: "Insert formula" }).click();
     await expect(surface.locator('[data-smart-type="formula"]')).toHaveAttribute("data-smart-formula", "E=mc^2");
 
