@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   FoundationEditor,
   FoundationTransactionMap,
@@ -570,5 +570,33 @@ describe("Phase 1 transactions, maps, normalization, and history", () => {
     const editor = new FoundationEditor({ document: doc(""), selection: caret(0) });
     for (let index = 0; index < 205; index += 1) editor.typeText("x", { timestamp: index * 1000 });
     expect(editor.history.undo).toHaveLength(200);
+  });
+
+  it("replaces the external envelope without recreating the editor and starts a new history epoch", () => {
+    const editor = new FoundationEditor({ document: doc("before"), selection: caret(6) });
+    editor.typeText("!", { timestamp: 1 });
+    const listener = vi.fn();
+    editor.subscribe(listener);
+    const identity = editor;
+    const replacement = doc("after");
+    editor.replaceState({ schemaVersion: foundationSchema.version, revision: 42, document: replacement }, {
+      selection: caret(5),
+    });
+    expect(editor).toBe(identity);
+    expect(editor.state).toMatchObject({ revision: 42, document: replacement, selection: caret(5) });
+    expect(editor.history.undo).toHaveLength(0);
+    expect(listener).toHaveBeenCalledWith(expect.objectContaining({ operations: [], metadata: expect.objectContaining({ source: "api" }) }), expect.objectContaining({ revision: 42 }));
+  });
+
+  it("notifies retained renderers on undo and redo", () => {
+    const editor = new FoundationEditor({ document: doc(""), selection: caret(0) });
+    const listener = vi.fn();
+    editor.subscribe(listener);
+    editor.typeText("x", { timestamp: 1 });
+    editor.undo();
+    editor.redo();
+    expect(listener).toHaveBeenCalledTimes(3);
+    expect(listener.mock.calls.map((call) => call[1].document.children[0].children?.[0]?.text || ""))
+      .toEqual(["x", "", "x"]);
   });
 });

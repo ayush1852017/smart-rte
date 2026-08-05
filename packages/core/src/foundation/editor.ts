@@ -124,6 +124,13 @@ export interface FoundationEditorOptions {
   storedMarks?: readonly SmartMark[];
 }
 
+export interface ReplaceFoundationStateOptions {
+  selection: SmartSelection;
+  storedMarks?: readonly SmartMark[];
+  /** External replacement starts a new history epoch by default. */
+  resetHistory?: boolean;
+}
+
 export class FoundationEditor {
   readonly schema: SmartSchema;
   private current: FoundationEditorState;
@@ -132,6 +139,7 @@ export class FoundationEditor {
   private activeBuilder: TransactionBuilder | null = null;
   private listeners = new Set<(transaction: SmartTransaction, state: FoundationEditorState) => void>();
   private readonly semanticIndex = new FoundationScopeIndex();
+  private readonly historyOptions: Pick<FoundationEditorOptions, "historyLimit" | "historyByteLimit" | "coalescenceWindowMs">;
   lastNormalization: NormalizationRun | null = null;
 
   constructor(options: FoundationEditorOptions) {
@@ -153,6 +161,11 @@ export class FoundationEditor {
       ...(options.storedMarks?.length ? { storedMarks: canonicalMarkOrder(options.storedMarks) } : {}),
     };
     this.normalizers = [createMarkNormalizer(), ...(options.normalizers || [])];
+    this.historyOptions = {
+      historyLimit: options.historyLimit,
+      historyByteLimit: options.historyByteLimit,
+      coalescenceWindowMs: options.coalescenceWindowMs,
+    };
     this.currentHistory = createHistory({
       limit: options.historyLimit,
       byteLimit: options.historyByteLimit,
@@ -166,6 +179,46 @@ export class FoundationEditor {
   get document(): FoundationEditorState["document"] { return this.current.document; }
   get selection(): SmartSelection { return structuredClone(this.current.selection); }
   get storedMarks(): readonly SmartMark[] | undefined { return this.current.storedMarks; }
+
+  /**
+   * Replaces the canonical envelope without recreating the editor instance.
+   * This is an explicit host revision boundary, never a response to a prop diff.
+   */
+  replaceState(envelope: PersistedEditorDocument, options: ReplaceFoundationStateOptions): SmartTransaction {
+    const migrated = migrateNewlineTextToHardBreaks(envelope.document);
+    const repaired = repair(migrated.document, this.schema);
+    const errors = validate(repaired.doc, this.schema);
+    if (errors.length) throw new Error(`Replacement document is invalid: ${errors[0].message}`);
+    resolvePos(repaired.doc, options.selection.anchor);
+    resolvePos(repaired.doc, options.selection.head);
+    const before = this.current;
+    this.current = {
+      schemaVersion: this.schema.version,
+      revision: envelope.revision,
+      document: repaired.doc,
+      selection: structuredClone(options.selection),
+      ...(options.storedMarks?.length ? { storedMarks: canonicalMarkOrder(options.storedMarks) } : {}),
+    };
+    if (options.resetHistory !== false) {
+      this.currentHistory = createHistory({
+        limit: this.historyOptions.historyLimit,
+        byteLimit: this.historyOptions.historyByteLimit,
+        coalescenceWindowMs: this.historyOptions.coalescenceWindowMs,
+      });
+    }
+    const replacement: SmartTransaction = {
+      id: createNodeId(),
+      baseRevision: before.revision,
+      operations: [],
+      selectionBefore: structuredClone(before.selection),
+      selectionAfter: structuredClone(options.selection),
+      ...(before.storedMarks ? { storedMarksBefore: structuredClone(before.storedMarks) } : {}),
+      ...(options.storedMarks?.length ? { storedMarksAfter: canonicalMarkOrder(options.storedMarks) } : {}),
+      metadata: { source: "api", timestamp: Date.now(), addToHistory: false },
+    };
+    this.listeners.forEach((listener) => listener(structuredClone(replacement), this.state));
+    return replacement;
+  }
 
   resolveScope(request: ScopeRequest, selection: SmartSelection = this.current.selection): ScopeResult {
     return this.semanticIndex.resolve(this.current.document, selection, request, this.schema);
@@ -280,6 +333,7 @@ export class FoundationEditor {
     const envelope = applyTransactionAtomic(this.current, inverse, this.schema);
     this.current = { ...envelope, selection: structuredClone(inverse.selectionAfter), storedMarks: structuredClone(inverse.storedMarksAfter) };
     this.currentHistory = popped.history;
+    this.listeners.forEach((listener) => listener(structuredClone(inverse), this.state));
     return true;
   }
 
@@ -290,6 +344,7 @@ export class FoundationEditor {
     const envelope = applyTransactionAtomic(this.current, forward, this.schema);
     this.current = { ...envelope, selection: structuredClone(forward.selectionAfter), storedMarks: structuredClone(forward.storedMarksAfter) };
     this.currentHistory = popped.history;
+    this.listeners.forEach((listener) => listener(structuredClone(forward), this.state));
     return true;
   }
 
