@@ -196,10 +196,24 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
 
   const insertTable = () => {
     const paragraphIds = ids(4);
-    runtime.executeOperations(insertTableCommand(runtime.editor.document, blockScope(), {
+    const selected = blockScope();
+    const firstId = selected.kind === "block-range" ? selected.blockIds[0] : undefined;
+    const target = firstId ? runtime.editor.positions.positionOf(firstId) : null;
+    const operations = insertTableCommand(runtime.editor.document, selected, {
       rows: 2, columns: 2, placement: "after",
       ids: { tableId: createNodeId(), rowIds: ids(2), cellIds: ids(4), paragraphIds },
-    }, blockContext()), { selectionOwnerId: paragraphIds[0] });
+    }, blockContext());
+    // Keep an editable block after a table inserted at the end of its
+    // container. Without this, the browser has no legal caret position below
+    // the table and clicking/arrowing past it appears to do nothing.
+    if (target && target.parent.children && target.pos.offset === target.parent.children.length - 1) {
+      operations.push({
+        type: "insertNode",
+        pos: { path: [...target.pos.path], offset: target.pos.offset + 2 },
+        node: { type: "paragraph", id: createNodeId(), children: [] },
+      });
+    }
+    runtime.executeOperations(operations, { selectionOwnerId: paragraphIds[0] });
   };
 
   const runTable = (action: string) => {
@@ -238,7 +252,12 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
     let parentId: string | undefined;
     let index: number | undefined;
     const resolved = runtime.editor.resolve({ pos: selection.head });
-    if (resolved.kind === "structural" && resolved.pos.path.length === selection.anchor.path.length
+    if (selection.type === "cell") {
+      // A cell range resolves at the active cell's content boundary. Block
+      // atoms belong inside that cell, never as invalid siblings of the row.
+      parentId = resolved.nodeId;
+      index = resolved.pos.offset;
+    } else if (resolved.kind === "structural" && resolved.pos.path.length === selection.anchor.path.length
       && resolved.pos.path.every((part, pathIndex) => part === selection.anchor.path[pathIndex])) {
       // A browser may expose a clicked block atom as a structural text range
       // (the atom occupies one unit). Keep insertion in that same parent.

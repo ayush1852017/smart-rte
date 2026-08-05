@@ -104,6 +104,16 @@ describe("Phase 7 generic atom engine", () => {
     expect(JSON.stringify(deleted)).not.toContain('"id":"img"');
   });
 
+  it("inserts block atoms directly into the document root", () => {
+    const image = atomDeclarations.find((entry) => entry.type === "block_image")!;
+    const document = paragraphDoc();
+    const inserted = applyOperations(document, insertAtom(document, emptyScope, {
+      declaration: image, nodeId: "root-image", parentId: "doc", index: 1,
+      attrs: { src: "https://example.test/root.png", alt: "Root image", status: "ready" },
+    }, context(document)));
+    expect(inserted.children.map((node) => node.type)).toEqual(["paragraph", "block_image"]);
+  });
+
   it("requires either meaningful image alt text or an explicit decorative choice", () => {
     const image = atomDeclarations.find((entry) => entry.type === "image")!;
     const document = paragraphDoc();

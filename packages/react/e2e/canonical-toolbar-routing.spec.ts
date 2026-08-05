@@ -81,13 +81,18 @@ test.describe("canonical toolbar routing", () => {
     await page.getByRole("button", { name: "Insert image" }).click();
     const image = surface.locator('[data-smart-type="block_image"]');
     await expect(image).toHaveAttribute("src", "https://example.test/image.png");
+    await expect(image).toBeVisible();
     await image.click();
     await page.getByRole("button", { name: "Grow selected atom" }).click();
     await expect(image).toHaveAttribute("width", "180");
     await page.getByRole("button", { name: "Insert video" }).click();
-    await expect(surface.locator('[data-smart-type="video"]')).toHaveAttribute("src", "https://example.test/video.mp4");
+    const video = surface.locator('[data-smart-type="video"]');
+    await expect(video).toHaveAttribute("src", "https://example.test/video.mp4");
+    await expect(video).toBeVisible();
     await page.getByRole("button", { name: "Insert audio" }).click();
-    await expect(surface.locator('[data-smart-type="audio"]')).toHaveAttribute("src", "https://example.test/audio.mp3");
+    const audio = surface.locator('[data-smart-type="audio"]');
+    await expect(audio).toHaveAttribute("src", "https://example.test/audio.mp3");
+    await expect(audio).toBeVisible();
 
     const download = page.waitForEvent("download");
     await page.getByRole("button", { name: "Export native document" }).click();
@@ -100,6 +105,7 @@ test.describe("canonical toolbar routing", () => {
   });
 
   test("selects canonical cells individually and supports merge/split", async ({ page }) => {
+    page.on("dialog", (dialog) => void dialog.accept(dialog.message().includes("Image URL") ? "https://example.test/cell.png" : "Cell image"));
     await page.goto("/?canonicalAuthority=1&blocks=2");
     const surface = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
     await placeCaret(page, '[data-smart-authority="canonical"] [contenteditable="true"] p');
@@ -117,6 +123,20 @@ test.describe("canonical toolbar routing", () => {
     await expect(page.getByRole("button", { name: "Split cell" })).toBeEnabled();
     await page.getByRole("button", { name: "Split cell" }).click();
     await expect(table.locator("tr").first().locator("td,th")).toHaveCount(2);
+    await page.getByRole("button", { name: "Insert image" }).click();
+    await expect(surface.locator('[data-smart-type="block_image"]')).toHaveAttribute("src", "https://example.test/cell.png");
+  });
+
+  test("keeps a caret and new text available after a table", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    const surface = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
+    await placeCaret(page, '[data-smart-authority="canonical"] [contenteditable="true"] > p');
+    await page.getByRole("button", { name: "Insert table" }).click();
+    const after = surface.locator(":scope > p").last();
+    await expect(after).toHaveCount(1);
+    await placeCaret(page, '[data-smart-authority="canonical"] [contenteditable="true"] > p', true);
+    await page.keyboard.type(" after table");
+    await expect(after).toContainText("after table");
   });
 
   test("shows an empty-line caret, applies content styling, and keeps structural tools contextual", async ({ page }) => {

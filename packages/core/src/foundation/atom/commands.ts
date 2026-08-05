@@ -65,7 +65,9 @@ export const insertAtom: AtomCommand<InsertAtomParams> = (document, _scope, para
   if (!params.parentId || params.index === undefined) return [];
   const range = ctx.positions.contentRangeOf(params.parentId);
   const parentPosition = ctx.positions.positionOf(params.parentId);
-  const parent = parentPosition?.parent.children?.[parentPosition.pos.offset];
+  const parent = parentPosition && parentPosition.parent.id === params.parentId
+    ? parentPosition.parent
+    : parentPosition?.parent.children?.[parentPosition.pos.offset];
   if (!range || !parent || isTextNode(parent) || params.index < 0 || params.index > (parent.children?.length || 0)) return [];
   return [{ type: "insertNode", pos: { path: [...range.from.path], offset: params.index }, node }];
 };
