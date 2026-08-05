@@ -234,11 +234,27 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
     const src = window.prompt(type === "block_image" ? "Image URL" : `${type} URL`);
     if (!src) return;
     const declaration = atomDeclarations.find((entry) => entry.type === type)!;
-    const owner = runtime.editor.resolve({ pos: runtime.editor.selection.head });
-    const location = runtime.editor.positions.positionOf(owner.nodeId);
-    if (!location) return;
+    const selection = runtime.editor.selection;
+    let parentId: string | undefined;
+    let index: number | undefined;
+    const resolved = runtime.editor.resolve({ pos: selection.head });
+    if (resolved.kind === "structural" && resolved.pos.path.length === selection.anchor.path.length
+      && resolved.pos.path.every((part, pathIndex) => part === selection.anchor.path[pathIndex])) {
+      // A browser may expose a clicked block atom as a structural text range
+      // (the atom occupies one unit). Keep insertion in that same parent.
+      parentId = resolved.parent.id;
+      index = Math.max(selection.anchor.offset, selection.head.offset);
+    } else if (selection.type === "node") {
+      parentId = resolved.parent.id;
+      index = resolved.pos.offset;
+    } else {
+      const location = runtime.editor.positions.positionOf(resolved.nodeId);
+      parentId = location?.parent.id;
+      index = location ? location.pos.offset + 1 : undefined;
+    }
+    if (!parentId || index === undefined) return;
     runtime.executeOperations(insertAtom(runtime.editor.document, atomScope(), {
-      declaration, nodeId: createNodeId(), parentId: location.parent.id, index: location.pos.offset + 1,
+      declaration, nodeId: createNodeId(), parentId, index,
       attrs: type === "block_image" ? { src, alt: window.prompt("Alt text") || "", decorative: false, status: "ready" } : { src, status: "ready" },
     }, blockContext()));
   };

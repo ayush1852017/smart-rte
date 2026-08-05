@@ -402,6 +402,23 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
     this.revealSelectionHead(head.node);
   }
 
+  /** Cell selections are projected as a DOM-only highlight; cells remain model nodes. */
+  private syncCellSelectionProjection(selection: SmartSelection): void {
+    this.root.querySelectorAll<HTMLElement>("[data-smart-cell-selected]").forEach((cell) => cell.removeAttribute("data-smart-cell-selected"));
+    if (selection.type !== "cell") return;
+    const anchor = this.mapping.posToDom(selection.anchor)?.node;
+    const head = this.mapping.posToDom(selection.head)?.node;
+    const anchorCell = anchor instanceof Element ? anchor.closest<HTMLElement>('[data-smart-type="table_cell"]') : anchor?.parentElement?.closest<HTMLElement>('[data-smart-type="table_cell"]');
+    const headCell = head instanceof Element ? head.closest<HTMLElement>('[data-smart-type="table_cell"]') : head?.parentElement?.closest<HTMLElement>('[data-smart-type="table_cell"]');
+    if (!anchorCell || !headCell) return;
+    const cells = [...this.root.querySelectorAll<HTMLElement>('[data-smart-type="table_cell"]')];
+    const anchorIndex = cells.indexOf(anchorCell);
+    const headIndex = cells.indexOf(headCell);
+    if (anchorIndex < 0 || headIndex < 0) return;
+    cells.slice(Math.min(anchorIndex, headIndex), Math.max(anchorIndex, headIndex) + 1)
+      .forEach((cell) => cell.setAttribute("data-smart-cell-selected", "true"));
+  }
+
   /** Keep the active line visible without scrolling the surrounding page. */
   private revealSelectionHead(node: Node): void {
     const target = node.nodeType === node.ELEMENT_NODE ? node as HTMLElement : node.parentElement;
@@ -460,10 +477,12 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
       this.syncTableAccessibility();
       this.modelById.set(document.id, document);
       this.restoreSelection(selection);
+      this.syncCellSelectionProjection(selection);
       return;
     }
     if (this.current === document) {
       this.restoreSelection(selection);
+      this.syncCellSelectionProjection(selection);
       return;
     }
     const before = this.current;
@@ -478,6 +497,7 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
     });
     if (structural) this.syncTableAccessibility();
     this.restoreSelection(selection);
+    this.syncCellSelectionProjection(selection);
     this.announceSelectedLevel(before, document, selection);
   }
 

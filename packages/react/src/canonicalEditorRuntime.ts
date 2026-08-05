@@ -111,6 +111,26 @@ const envelopeFrom = (value?: string | PersistedEditorDocument): PersistedEditor
 
 const sameOperations = (transaction: SmartTransaction) => transaction.operations.length > 0;
 
+const cellIdAt = (document: SmartNode, position: SmartPos): string | null => {
+  const node = nodeAtPath(document, position.path);
+  return node && !isTextNode(node) && node.type === "table_cell" ? node.id : null;
+};
+
+const cellSelectionIn = (document: SmartNode, anchorId: string, headId: string): SmartSelection | null => {
+  const anchorPath = pathOfNode(document, anchorId) || pathOfNode(document, headId);
+  const headPath = pathOfNode(document, headId) || anchorPath;
+  if (!anchorPath || !headPath) return null;
+  const anchor = nodeAtPath(document, anchorPath);
+  const head = nodeAtPath(document, headPath);
+  if (!anchor || isTextNode(anchor) || anchor.type !== "table_cell"
+    || !head || isTextNode(head) || head.type !== "table_cell") return null;
+  return {
+    type: "cell",
+    anchor: { path: anchorPath, offset: 0 },
+    head: { path: headPath, offset: head.children?.length || 0 },
+  };
+};
+
 /** Persistent, React-independent owner for one product editor instance. */
 export class CanonicalEditorRuntime implements SmartEditorHandle {
   readonly editor: FoundationEditor;
@@ -243,6 +263,19 @@ export class CanonicalEditorRuntime implements SmartEditorHandle {
     if (opts.selectionOwnerId || opts.preserveSelectionById) {
       const beforeDocument = this.editor.document;
       const preview = applyOperations(beforeDocument, operations);
+      const beforeCellAnchor = beforeSelection.type === "cell" ? cellIdAt(beforeDocument, beforeSelection.anchor) : null;
+      const beforeCellHead = beforeSelection.type === "cell" ? cellIdAt(beforeDocument, beforeSelection.head) : null;
+      let preservedCellSelection = false;
+      if (opts.preserveSelectionById && beforeCellAnchor && beforeCellHead) {
+        // Structural table commands may retire the head cell (merge) while
+        // preserving the anchor. Keep the selection on the surviving cell so
+        // the next table command still has an unambiguous scope.
+        const mappedCells = cellSelectionIn(preview, beforeCellAnchor, beforeCellHead);
+        if (mappedCells) {
+          selection = mappedCells;
+          preservedCellSelection = true;
+        }
+      }
       const point = (pos: SmartPos, forcedId?: string): SmartPos | null => {
         const beforeOwner = nodeAtPath(beforeDocument, pos.path);
         const ownerId = forcedId || (!beforeOwner || isTextNode(beforeOwner) ? undefined : beforeOwner.id);
@@ -253,7 +286,10 @@ export class CanonicalEditorRuntime implements SmartEditorHandle {
         if (!owner) return null;
         return { path, offset: Math.min(forcedId ? opts.selectionOffset ?? 0 : pos.offset, inlineWidth(owner)) };
       };
-      if (opts.selectionOwnerId) {
+      if (preservedCellSelection) {
+        // The cell selection was mapped above; do not reinterpret its
+        // structural endpoints as a text selection.
+      } else if (opts.selectionOwnerId) {
         const caret = point(beforeSelection.head, opts.selectionOwnerId);
         if (caret) selection = { type: "text", anchor: caret, head: caret };
       } else {

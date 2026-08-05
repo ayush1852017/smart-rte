@@ -44,6 +44,7 @@ import {
   type ClipboardInsertionResult,
   type RawClipboardPayload,
 } from "../clipboard/index.js";
+import { cellSelectionFromIds } from "../table/selection.js";
 import { FoundationTransactionMap } from "../mapping.js";
 import type { CanonicalInputPipelineOptions } from "./types.js";
 
@@ -163,6 +164,7 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
   private readonly ownerDocument: Document;
   private destroyed = false;
   private internalDrag: InternalDragState | null = null;
+  private tableDragAnchor: { id: string; tableId: string } | null = null;
 
   constructor(
     readonly editor: FoundationEditor,
@@ -177,6 +179,8 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
     root.addEventListener("compositionupdate", this.compositionUpdateListener);
     root.addEventListener("compositionend", this.compositionEndListener);
     root.addEventListener("click", this.clickListener);
+    root.addEventListener("mousedown", this.tableMouseDownListener);
+    root.addEventListener("mouseup", this.tableMouseUpListener);
     this.ownerDocument.addEventListener("selectionchange", this.selectionChangeListener);
     root.addEventListener("paste", this.pasteListener);
     root.addEventListener("copy", this.copyListener);
@@ -194,6 +198,23 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
   private compositionStartListener = (event: Event) => this.handleCompositionStart(event as CompositionEvent);
   private compositionUpdateListener = (event: Event) => this.handleCompositionUpdate(event as CompositionEvent);
   private compositionEndListener = (event: Event) => this.handleCompositionEnd(event as CompositionEvent);
+  private tableMouseDownListener = (event: Event) => {
+    if (this.composition) return;
+    const cell = this.cellFromNode(event.target);
+    this.tableDragAnchor = cell;
+  };
+  private tableMouseUpListener = (event: Event) => {
+    const anchor = this.tableDragAnchor;
+    this.tableDragAnchor = null;
+    if (!anchor || this.composition) return;
+    const head = this.cellFromNode(event.target);
+    if (!head || head.tableId !== anchor.tableId || head.id === anchor.id) return;
+    const selection = cellSelectionFromIds(anchor.id, head.id, this.editor.positions);
+    if (!selection) return;
+    event.preventDefault();
+    this.editor.setSelection(selection, { source: "api" });
+    this.renderer.render(this.editor.document, selection);
+  };
   private clickListener = (event: Event) => {
     const target = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-smart-atomic]") : null;
     const mapped = target ? this.renderer.mapping.domToNode(target) : null;
@@ -209,6 +230,18 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
   private cutListener = (event: Event) => this.handleCut(event as ClipboardEvent);
   private dragStartListener = (event: Event) => this.handleDragStart(event as DragEvent);
   private dropListener = (event: Event) => this.handleDrop(event as DragEvent);
+
+  private cellFromNode(input: EventTarget | Node | null): { id: string; tableId: string } | null {
+    const node = input instanceof Node ? input : null;
+    const element = node?.nodeType === Node.ELEMENT_NODE ? node as Element : node?.parentElement;
+    const cell = element?.closest<HTMLElement>('[data-smart-type="table_cell"]');
+    if (!cell) return null;
+    const table = cell.closest<HTMLElement>('[data-smart-type="table"]');
+    const mappedCell = this.renderer.mapping.domToNode(cell);
+    const mappedTable = table ? this.renderer.mapping.domToNode(table) : null;
+    if (!mappedCell || isTextNode(mappedCell.node) || !mappedTable || isTextNode(mappedTable.node)) return null;
+    return { id: mappedCell.nodeId, tableId: mappedTable.nodeId };
+  }
 
   private payloadFromTransfer(transfer: DataTransfer): RawClipboardPayload {
     const representations = Object.fromEntries(Array.from(transfer.types).filter((type) => type !== "Files").map((type) => [type, transfer.getData(type)]));
@@ -783,8 +816,14 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
     const head = this.renderer.mapping.domToPos(native.focusNode, native.focusOffset);
     if (!anchor || !head) return;
     let model: SmartSelection = { type: "text", anchor, head };
+    const anchorCell = this.cellFromNode(native.anchorNode);
+    const headCell = this.cellFromNode(native.focusNode);
+    if (anchorCell && headCell && anchorCell.tableId === headCell.tableId && anchorCell.id !== headCell.id) {
+      const cellSelection = cellSelectionFromIds(anchorCell.id, headCell.id, this.editor.positions);
+      if (cellSelection) model = cellSelection;
+    }
     const description = this.editor.resolveScope({ want: "describe" }, model);
-    if ("spansIsolatingBoundary" in description && description.spansIsolatingBoundary) {
+    if (model.type !== "cell" && "spansIsolatingBoundary" in description && description.spansIsolatingBoundary) {
       const isolateId = description.inTable?.tableId || description.isolatingAncestorId;
       const range = isolateId ? this.editor.positions.rangeOf(isolateId) : null;
       if (range) model = { type: "node", anchor: range.from, head: range.to };
@@ -805,6 +844,8 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
     this.root.removeEventListener("compositionupdate", this.compositionUpdateListener);
     this.root.removeEventListener("compositionend", this.compositionEndListener);
     this.root.removeEventListener("click", this.clickListener);
+    this.root.removeEventListener("mousedown", this.tableMouseDownListener);
+    this.root.removeEventListener("mouseup", this.tableMouseUpListener);
     this.ownerDocument.removeEventListener("selectionchange", this.selectionChangeListener);
     this.root.removeEventListener("paste", this.pasteListener);
     this.root.removeEventListener("copy", this.copyListener);

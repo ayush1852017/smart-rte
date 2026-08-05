@@ -433,6 +433,10 @@ export const SRTE_DEFAULT_CSS = `
   border: 1px solid var(--srte-border);
   vertical-align: top;
 }
+.srte-editor [contenteditable] [data-smart-cell-selected="true"] {
+  background: color-mix(in srgb, var(--srte-primary) 12%, var(--srte-canvas));
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--srte-primary) 65%, transparent);
+}
 .srte-editor [contenteditable] th {
   background: var(--srte-surface-subtle);
   font-weight: 600;

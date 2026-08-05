@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
 const selectFirstText = async (page: Page) => page.evaluate(() => {
   const root = document.querySelector<HTMLElement>('[data-smart-authority="canonical"] [contenteditable="true"]')!;
@@ -24,6 +24,16 @@ const placeCaret = async (page: Page, selector: string, last = false) => page.ev
   document.dispatchEvent(new Event("selectionchange"));
 }, { selector, last });
 
+const selectCellRange = async (page: Page, start: Locator, end: Locator) => {
+  const startBox = await start.boundingBox();
+  const endBox = await end.boundingBox();
+  if (!startBox || !endBox) throw new Error("Canonical table cells must be visible before selecting them.");
+  await page.mouse.move(startBox.x + startBox.width / 2, startBox.y + startBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(endBox.x + endBox.width / 2, endBox.y + endBox.height / 2, { steps: 4 });
+  await page.mouse.up();
+};
+
 test.describe("canonical toolbar routing", () => {
   test("routes lists, links, tables, atoms, resize, import, and export through retained state", async ({ page }) => {
     let linkPrompt = 0;
@@ -31,7 +41,9 @@ test.describe("canonical toolbar routing", () => {
       const message = dialog.message();
       const answer = message.includes("Link") ? (linkPrompt++ === 0 ? "https://example.test" : "https://updated.example.test")
         : message.includes("Formula") ? "E=mc^2"
-          : message.includes("Image URL") ? "https://example.test/image.png"
+            : message.includes("Image URL") ? "https://example.test/image.png"
+              : message.includes("video URL") ? "https://example.test/video.mp4"
+                : message.includes("audio URL") ? "https://example.test/audio.mp3"
             : message.includes("Alt text") ? "Example image" : "";
       void dialog.accept(answer);
     });
@@ -72,6 +84,10 @@ test.describe("canonical toolbar routing", () => {
     await image.click();
     await page.getByRole("button", { name: "Grow selected atom" }).click();
     await expect(image).toHaveAttribute("width", "180");
+    await page.getByRole("button", { name: "Insert video" }).click();
+    await expect(surface.locator('[data-smart-type="video"]')).toHaveAttribute("src", "https://example.test/video.mp4");
+    await page.getByRole("button", { name: "Insert audio" }).click();
+    await expect(surface.locator('[data-smart-type="audio"]')).toHaveAttribute("src", "https://example.test/audio.mp3");
 
     const download = page.waitForEvent("download");
     await page.getByRole("button", { name: "Export native document" }).click();
@@ -81,6 +97,26 @@ test.describe("canonical toolbar routing", () => {
       name: "replacement.html", mimeType: "text/html", buffer: Buffer.from("<h2>Imported canonical content</h2>"),
     });
     await expect(surface.locator("h2")).toContainText("Imported canonical content");
+  });
+
+  test("selects canonical cells individually and supports merge/split", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=2");
+    const surface = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
+    await placeCaret(page, '[data-smart-authority="canonical"] [contenteditable="true"] p');
+    await page.getByRole("button", { name: "Insert table" }).click();
+    const table = surface.locator("table");
+    await expect(table).toHaveCount(1);
+    const first = table.locator("tr").first().locator("td,th").nth(0);
+    const second = table.locator("tr").first().locator("td,th").nth(1);
+    await selectCellRange(page, first, second);
+    await expect(surface.locator('[data-smart-cell-selected="true"]')).toHaveCount(2);
+    await expect(page.getByRole("button", { name: "Merge cells" })).toBeEnabled();
+    await page.getByRole("button", { name: "Merge cells" }).click();
+    await expect(table.locator("tr").first().locator("td,th")).toHaveCount(1);
+    await expect(table.locator("tr").first().locator("td,th").first()).toHaveAttribute("colspan", "2");
+    await expect(page.getByRole("button", { name: "Split cell" })).toBeEnabled();
+    await page.getByRole("button", { name: "Split cell" }).click();
+    await expect(table.locator("tr").first().locator("td,th")).toHaveCount(2);
   });
 
   test("shows an empty-line caret, applies content styling, and keeps structural tools contextual", async ({ page }) => {
