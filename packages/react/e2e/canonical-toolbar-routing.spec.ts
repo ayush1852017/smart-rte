@@ -26,9 +26,10 @@ const placeCaret = async (page: Page, selector: string, last = false) => page.ev
 
 test.describe("canonical toolbar routing", () => {
   test("routes lists, links, tables, atoms, resize, import, and export through retained state", async ({ page }) => {
+    let linkPrompt = 0;
     page.on("dialog", (dialog) => {
       const message = dialog.message();
-      const answer = message.includes("Link") ? "https://example.test"
+      const answer = message.includes("Link") ? (linkPrompt++ === 0 ? "https://example.test" : "https://updated.example.test")
         : message.includes("Formula") ? "E=mc^2"
           : message.includes("Image URL") ? "https://example.test/image.png"
             : message.includes("Alt text") ? "Example image" : "";
@@ -40,14 +41,24 @@ test.describe("canonical toolbar routing", () => {
     await selectFirstText(page);
     await page.getByRole("button", { name: "Insert or edit link" }).click();
     await expect(surface.locator("a")).toHaveAttribute("href", "https://example.test");
+    await expect(surface.locator("a")).toHaveCSS("text-decoration-line", "underline");
+    await placeCaret(page, '[data-smart-authority="canonical"] [contenteditable="true"] a');
+    await page.getByRole("button", { name: "Insert or edit link" }).click();
+    await expect(surface.locator("a")).toHaveAttribute("href", "https://updated.example.test");
 
     await page.getByRole("button", { name: "Bulleted list" }).click();
     await expect(surface.locator("ul > li")).toHaveCount(1);
+    await page.getByRole("button", { name: "Numbered list" }).click();
+    await expect(surface.locator("ol > li")).toHaveCount(1);
+    await page.getByRole("button", { name: "Checklist" }).click();
+    await expect(surface.locator('ul[data-smart-checkable="true"]')).toHaveCount(1);
+    await page.getByRole("button", { name: "Check selected items" }).click();
+    await expect(surface.locator('[role="checkbox"]')).toHaveAttribute("aria-checked", "true");
 
     await placeCaret(page, '[data-smart-authority="canonical"] [contenteditable="true"] p', true);
     await page.getByRole("button", { name: "Insert table" }).click();
     await expect(surface.locator("table tr")).toHaveCount(2);
-    await placeCaret(page, '[data-smart-authority="canonical"] [contenteditable="true"] :is(td, th) p');
+    await expect(page.getByRole("button", { name: "Add row" })).toBeEnabled();
     await page.getByRole("button", { name: "Add row" }).click();
     await expect(surface.locator("table tr")).toHaveCount(3);
 
@@ -70,5 +81,69 @@ test.describe("canonical toolbar routing", () => {
       name: "replacement.html", mimeType: "text/html", buffer: Buffer.from("<h2>Imported canonical content</h2>"),
     });
     await expect(surface.locator("h2")).toContainText("Imported canonical content");
+  });
+
+  test("shows an empty-line caret, applies content styling, and keeps structural tools contextual", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=3");
+    const surface = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
+    await placeCaret(page, '[data-smart-authority="canonical"] [contenteditable="true"] p');
+    await page.keyboard.press("Enter");
+
+    const presentation = await surface.evaluate((root) => {
+      const empty = root.querySelector<HTMLElement>('[data-srte-caret-boundary="true"]')!;
+      const rootStyle = getComputedStyle(root);
+      const emptyStyle = getComputedStyle(empty);
+      return {
+        paddingLeft: rootStyle.paddingLeft,
+        caretColor: rootStyle.caretColor,
+        color: rootStyle.color,
+        emptyHeight: empty.getBoundingClientRect().height,
+        emptyLineHeight: Number.parseFloat(emptyStyle.lineHeight),
+      };
+    });
+    expect(presentation.paddingLeft).toBe("20px");
+    expect(presentation.caretColor).toBe(presentation.color);
+    expect(presentation.emptyHeight).toBeGreaterThanOrEqual(presentation.emptyLineHeight - 0.1);
+
+    await expect(page.getByRole("button", { name: "Add row" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Check selected items" })).toBeDisabled();
+  });
+
+  test("keeps list selection stable through indent, outdent, movement, restart, and continue", async ({ page }) => {
+    page.on("dialog", (dialog) => void dialog.accept("3"));
+    await page.goto("/?canonicalAuthority=1&blocks=3");
+    const surface = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
+    await page.evaluate(() => {
+      const blocks = document.querySelectorAll<HTMLElement>('[data-smart-authority="canonical"] [contenteditable="true"] > p');
+      const range = document.createRange();
+      range.selectNodeContents(blocks[0]);
+      range.setEndAfter(blocks[1]);
+      const selection = window.getSelection()!;
+      selection.removeAllRanges();
+      selection.addRange(range);
+      document.dispatchEvent(new Event("selectionchange"));
+    });
+    await page.getByRole("button", { name: "Bulleted list" }).click();
+    await expect(surface.locator(":scope > ul > li")).toHaveCount(2);
+
+    await placeCaret(page, '[data-smart-authority="canonical"] [contenteditable="true"] > ul > li:nth-child(2) p');
+    await expect(page.getByRole("button", { name: "Indent list item" })).toBeEnabled();
+    await page.getByRole("button", { name: "Indent list item" }).click();
+    await expect(surface.locator(":scope > ul > li > ul > li")).toHaveCount(1);
+    await page.getByRole("button", { name: "Outdent list item" }).click();
+    await expect(surface.locator(":scope > ul > li")).toHaveCount(2);
+
+    await page.getByRole("button", { name: "Move item up" }).click();
+    await expect(surface.locator(":scope > ul > li").first()).toContainText("block 1");
+    await page.getByRole("button", { name: "Move item down" }).click();
+    await expect(surface.locator(":scope > ul > li").first()).toContainText("Canonical product editor");
+
+    await page.getByRole("button", { name: "Numbered list" }).click();
+    const ordered = surface.locator(":scope > ol");
+    await expect(ordered).toHaveCount(1);
+    await page.getByRole("button", { name: "Restart numbering" }).click();
+    await expect(ordered).toHaveAttribute("start", "3");
+    await page.getByRole("button", { name: "Continue numbering" }).click();
+    await expect(ordered).not.toHaveAttribute("start");
   });
 });

@@ -15,6 +15,7 @@ const elementForMark = (mark: SmartMark, document: Document): HTMLElement => {
   if (mark.attrs) element.setAttribute("data-smart-mark-attrs", stableValue(mark.attrs));
   if (mark.type === "link") {
     element.setAttribute("href", String(mark.attrs?.href || ""));
+    element.setAttribute("title", "Ctrl/Cmd+click to open link");
     if (mark.attrs?.target) element.setAttribute("target", String(mark.attrs.target));
   } else if (mark.type === "textColor") element.style.color = String(mark.attrs?.value || "");
   else if (mark.type === "backgroundColor") element.style.backgroundColor = String(mark.attrs?.value || "");

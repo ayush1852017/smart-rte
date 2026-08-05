@@ -1,4 +1,4 @@
-import React, { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
+import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import {
   atomDeclarations,
   continueListNumbering,
@@ -41,6 +41,8 @@ import {
   type ResolvedScope,
   type SmartElementNode,
   type SmartNode,
+  type TableGridScope,
+  type SelectionDescription,
 } from "smartrte-core/foundation";
 import { ensureStyleSheet } from "../theme.js";
 import {
@@ -107,6 +109,7 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
   const runtimeRef = useRef<CanonicalEditorRuntime>();
   if (!runtimeRef.current) runtimeRef.current = new CanonicalEditorRuntime({ initialValue: defaultValue, onChange, onHtmlChange, onClipboardDiagnostic });
   const runtime = runtimeRef.current;
+  const [, setEditorTick] = useState(0);
   runtime.setCallbacks(onChange, onHtmlChange);
   useImperativeHandle(forwardedRef, () => runtime, [runtime]);
 
@@ -118,6 +121,8 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
     return () => runtime.unmount();
   }, [runtime, onRuntime]);
 
+  useEffect(() => runtime.editor.subscribe(() => setEditorTick((value) => value + 1)), [runtime]);
+
   const transactBlock = (operations: SmartOperation[]) => {
     runtime.executeOperations(operations);
   };
@@ -128,18 +133,56 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
   const atomScope = () => runtime.editor.resolveScope({ want: "atomic-node" }) as ResolvedScope;
   const ids = (count: number) => Array.from({ length: count }, () => createNodeId());
 
+  const currentListScope = listScope();
+  const currentList = currentListScope.kind === "list-selection"
+    ? findNode(runtime.editor.document, currentListScope.listId)
+    : null;
+  const currentTableScope = tableScope();
+  const currentAtomScope = atomScope();
+  const currentListItems = currentListScope.kind === "list-selection" ? currentListScope.items : [];
+  const currentListIndexes = currentList?.children?.flatMap((child, index) =>
+    !isTextNode(child) && currentListItems.some((item) => item.itemId === child.id) ? [index] : []) || [];
+  const orderedList = Boolean(currentList && /^(?:decimal|lower-|upper-|ordered)/.test(String(currentList.attrs?.style || currentList.attrs?.preset || "")));
+  const canIndent = currentListIndexes.length > 0 && Math.min(...currentListIndexes) > 0;
+  const canMoveUp = canIndent;
+  const canMoveDown = currentListIndexes.length > 0
+    && Math.max(...currentListIndexes) < (currentList?.children?.length || 0) - 1;
+  const tableSelected = currentTableScope.kind === "table-grid";
+  const atomSelected = currentAtomScope.kind === "atomic-node";
+
+  const toggleCheckedItems = () => {
+    if (currentListScope.kind !== "list-selection" || currentList?.attrs?.checkable !== true) return;
+    const selectedIds = new Set(currentListScope.items.map((item) => item.itemId));
+    const selectedNodes = (currentList.children || []).filter((node): node is SmartElementNode => !isTextNode(node) && selectedIds.has(node.id));
+    const checked = !selectedNodes.length || !selectedNodes.every((node) => node.attrs?.checked === true);
+    runtime.executeOperations(setListChecked(runtime.editor.document, currentListScope, { checked }, blockContext()), { preserveSelectionById: true });
+  };
+
+  const restartNumbering = () => {
+    if (currentListScope.kind !== "list-selection" || !orderedList) return;
+    const value = window.prompt("Restart numbering at", String(currentList?.attrs?.start || 1));
+    const start = Number(value);
+    if (!Number.isInteger(start) || start < 1) return;
+    runtime.executeOperations(restartListNumbering(runtime.editor.document, currentListScope, { start }, blockContext()), { preserveSelectionById: true });
+  };
+
   const toggleList = (style: string, checkable = false) => {
     const selectedList = listScope();
     const context = blockContext();
     if (selectedList.kind === "list-selection") {
-      runtime.executeOperations(unwrapList(runtime.editor.document, selectedList, { splitListIds: ids(4) }, context));
+      const list = findNode(runtime.editor.document, selectedList.listId);
+      const sameStyle = list?.attrs?.style === style && Boolean(list.attrs?.checkable) === checkable;
+      const operations = sameStyle
+        ? unwrapList(runtime.editor.document, selectedList, { splitListIds: ids(4) }, context)
+        : setListStyle(runtime.editor.document, selectedList, { style, checkable }, context);
+      runtime.executeOperations(operations, { preserveSelectionById: true });
       return;
     }
     const selectedBlocks = blockScope();
     const count = selectedBlocks.kind === "block-range" ? selectedBlocks.blockIds.length : 1;
     runtime.executeOperations(createList(runtime.editor.document, selectedBlocks, {
       listIds: ids(Math.max(1, count)), itemIds: ids(Math.max(1, count)), style, checkable,
-    }, context));
+    }, context), { preserveSelectionById: true });
   };
 
   const runList = (action: "indent" | "outdent" | "up" | "down") => {
@@ -148,13 +191,16 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
     const operations = action === "indent" ? indentList(runtime.editor.document, scope, { nestedListIds: ids(8) }, context)
       : action === "outdent" ? outdentList(runtime.editor.document, scope, { splitListIds: ids(8) }, context)
         : moveListItems(runtime.editor.document, scope, { direction: action }, context);
-    runtime.executeOperations(operations);
+    runtime.executeOperations(operations, { preserveSelectionById: true });
   };
 
-  const insertTable = () => runtime.executeOperations(insertTableCommand(runtime.editor.document, blockScope(), {
-    rows: 2, columns: 2, placement: "after",
-    ids: { tableId: createNodeId(), rowIds: ids(2), cellIds: ids(4), paragraphIds: ids(4) },
-  }, blockContext()));
+  const insertTable = () => {
+    const paragraphIds = ids(4);
+    runtime.executeOperations(insertTableCommand(runtime.editor.document, blockScope(), {
+      rows: 2, columns: 2, placement: "after",
+      ids: { tableId: createNodeId(), rowIds: ids(2), cellIds: ids(4), paragraphIds },
+    }, blockContext()), { selectionOwnerId: paragraphIds[0] });
+  };
 
   const runTable = (action: string) => {
     const scope = tableScope();
@@ -170,7 +216,7 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
                   : action === "header" ? setTableHeaderCommand(runtime.editor.document, scope, { target: "row" }, context)
                     : action === "row-up" || action === "row-down" ? moveTableRowCommand(runtime.editor.document, scope, { direction: action === "row-up" ? "up" : "down" }, context)
                       : moveTableColumnCommand(runtime.editor.document, scope, { direction: action === "column-left" ? "left" : "right" }, context);
-    runtime.executeOperations(operations);
+    runtime.executeOperations(operations, { preserveSelectionById: true });
   };
 
   const insertInlineFormula = () => {
@@ -227,7 +273,7 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
     return downloadText(rootRef.current!.ownerDocument, "smart-rte.html", "text/html", serializeCanonicalListHtml(envelope.document, { clean: true }));
   };
 
-  return <section className={`srte-root srte-canonical-authority${className ? ` ${className}` : ""}`} data-smart-authority="canonical">
+  return <section className={`srte-root srte-editor srte-canonical-authority${className ? ` ${className}` : ""}`} data-smart-authority="canonical">
     <div className="srte-toolbar" role="toolbar" aria-label="Formatting toolbar">
       {inlineToolDeclarations.filter((tool) => labels[tool.id]).map((tool) => <button
         type="button"
@@ -264,7 +310,9 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
       <button type="button" className="srte-tool-button" aria-label="Insert or edit link" disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={() => {
         const href = window.prompt("Link URL", "https://");
         const tool = inlineToolDeclarations.find((entry) => entry.id === "link");
-        if (href && tool) { executeMarkTool(runtime.editor, tool, "apply", { href }); runtime.focus(); }
+        const description = runtime.editor.resolveScope({ want: "describe" }) as SelectionDescription;
+        const editingExisting = description.marks.some((entry) => entry.mark.type === "link");
+        if (href && tool) { executeMarkTool(runtime.editor, tool, editingExisting ? "editLink" : "apply", { href }); runtime.focus(); }
       }}>Link</button>
       <button type="button" className="srte-tool-button" aria-label="Remove link" disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={() => {
         const tool = inlineToolDeclarations.find((entry) => entry.id === "link");
@@ -273,26 +321,29 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
       <button type="button" className="srte-tool-button" aria-label="Bulleted list" disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={() => toggleList("disc")}>Bullets</button>
       <button type="button" className="srte-tool-button" aria-label="Numbered list" disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={() => toggleList("decimal")}>Numbering</button>
       <button type="button" className="srte-tool-button" aria-label="Checklist" disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={() => toggleList("disc", true)}>Checklist</button>
-      <button type="button" className="srte-tool-button" aria-label="Check selected items" disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={() => runtime.executeOperations(setListChecked(runtime.editor.document, listScope(), { checked: true }, blockContext()))}>Check</button>
-      <button type="button" className="srte-tool-button" aria-label="Indent list item" disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={() => runList("indent")}>Indent</button>
-      <button type="button" className="srte-tool-button" aria-label="Outdent list item" disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={() => runList("outdent")}>Outdent</button>
-      <button type="button" className="srte-tool-button" aria-label="Move item up" disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={() => runList("up")}>Item ↑</button>
-      <button type="button" className="srte-tool-button" aria-label="Move item down" disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={() => runList("down")}>Item ↓</button>
-      <button type="button" className="srte-tool-button" aria-label="Restart numbering" disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={() => runtime.executeOperations(restartListNumbering(runtime.editor.document, listScope(), { start: 1 }, blockContext()))}>Restart 1</button>
-      <button type="button" className="srte-tool-button" aria-label="Continue numbering" disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={() => runtime.executeOperations(continueListNumbering(runtime.editor.document, listScope(), {}, blockContext()))}>Continue</button>
+      <button type="button" className="srte-tool-button" aria-label="Check selected items" aria-pressed={currentListScope.kind === "list-selection" && currentListScope.items.every((item) => findNode(runtime.editor.document, item.itemId)?.attrs?.checked === true)} disabled={readOnly || currentList?.attrs?.checkable !== true} onMouseDown={(event) => event.preventDefault()} onClick={toggleCheckedItems}>Check</button>
+      <button type="button" className="srte-tool-button" aria-label="Indent list item" disabled={readOnly || !canIndent} onMouseDown={(event) => event.preventDefault()} onClick={() => runList("indent")}>Indent</button>
+      <button type="button" className="srte-tool-button" aria-label="Outdent list item" disabled={readOnly || currentListScope.kind !== "list-selection"} onMouseDown={(event) => event.preventDefault()} onClick={() => runList("outdent")}>Outdent</button>
+      <button type="button" className="srte-tool-button" aria-label="Move item up" disabled={readOnly || !canMoveUp} onMouseDown={(event) => event.preventDefault()} onClick={() => runList("up")}>Item ↑</button>
+      <button type="button" className="srte-tool-button" aria-label="Move item down" disabled={readOnly || !canMoveDown} onMouseDown={(event) => event.preventDefault()} onClick={() => runList("down")}>Item ↓</button>
+      <button type="button" className="srte-tool-button" aria-label="Restart numbering" disabled={readOnly || !orderedList} onMouseDown={(event) => event.preventDefault()} onClick={restartNumbering}>Restart</button>
+      <button type="button" className="srte-tool-button" aria-label="Continue numbering" disabled={readOnly || !orderedList} onMouseDown={(event) => event.preventDefault()} onClick={() => runtime.executeOperations(continueListNumbering(runtime.editor.document, currentListScope, {}, blockContext()), { preserveSelectionById: true })}>Continue</button>
       <button type="button" className="srte-tool-button" aria-label="Insert table" disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={insertTable}>Table 2×2</button>
       {([["row+", "Add row"], ["row-", "Remove row"], ["column+", "Add column"], ["column-", "Remove column"], ["merge", "Merge cells"], ["split", "Split cell"], ["header", "Header row"], ["row-up", "Move row up"], ["row-down", "Move row down"], ["column-left", "Move column left"], ["column-right", "Move column right"], ["remove", "Remove table"]] as const).map(([action, label]) => <button
-        key={action} type="button" className="srte-tool-button" aria-label={label} disabled={readOnly}
+        key={action} type="button" className="srte-tool-button" aria-label={label} disabled={readOnly || !tableSelected
+          || action === "merge" && (currentTableScope as TableGridScope).cellIds.length < 2
+          || action === "row-up" && (currentTableScope as TableGridScope).rect.top === 0
+          || action === "column-left" && (currentTableScope as TableGridScope).rect.left === 0}
         onMouseDown={(event) => event.preventDefault()} onClick={() => runTable(action)}
       >{label}</button>)}
       <button type="button" className="srte-tool-button" aria-label="Insert image" disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={() => insertBlockAtom("block_image")}>Image</button>
       <button type="button" className="srte-tool-button" aria-label="Insert video" disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={() => insertBlockAtom("video")}>Video</button>
       <button type="button" className="srte-tool-button" aria-label="Insert audio" disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={() => insertBlockAtom("audio")}>Audio</button>
       <button type="button" className="srte-tool-button" aria-label="Insert formula" disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={insertInlineFormula}>Formula</button>
-      <button type="button" className="srte-tool-button" aria-label="Edit selected atom" disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={() => editSelectedAtom()}>Edit media</button>
-      <button type="button" className="srte-tool-button" aria-label="Grow selected atom" disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={() => editSelectedAtom(20)}>Resize +</button>
-      <button type="button" className="srte-tool-button" aria-label="Shrink selected atom" disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={() => editSelectedAtom(-20)}>Resize −</button>
-      <button type="button" className="srte-tool-button" aria-label="Delete selected atom" disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={() => runtime.executeOperations(deleteAtom(runtime.editor.document, atomScope(), {}, blockContext()))}>Delete media</button>
+      <button type="button" className="srte-tool-button" aria-label="Edit selected atom" disabled={readOnly || !atomSelected} onMouseDown={(event) => event.preventDefault()} onClick={() => editSelectedAtom()}>Edit media</button>
+      <button type="button" className="srte-tool-button" aria-label="Grow selected atom" disabled={readOnly || !atomSelected} onMouseDown={(event) => event.preventDefault()} onClick={() => editSelectedAtom(20)}>Resize +</button>
+      <button type="button" className="srte-tool-button" aria-label="Shrink selected atom" disabled={readOnly || !atomSelected} onMouseDown={(event) => event.preventDefault()} onClick={() => editSelectedAtom(-20)}>Resize −</button>
+      <button type="button" className="srte-tool-button" aria-label="Delete selected atom" disabled={readOnly || !atomSelected} onMouseDown={(event) => event.preventDefault()} onClick={() => runtime.executeOperations(deleteAtom(runtime.editor.document, atomScope(), {}, blockContext()))}>Delete media</button>
       <input ref={importRef} type="file" accept=".html,.htm,.md,.markdown,text/html,text/markdown" hidden onChange={(event) => {
         const file = event.currentTarget.files?.[0];
         if (file) void runImport(file);
@@ -314,6 +365,12 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
       role="textbox"
       aria-label="Smart RTE editing surface"
       aria-multiline="true"
+      onClick={(event) => {
+        const anchor = (event.target as Element | null)?.closest<HTMLAnchorElement>("a[href]");
+        if (!anchor || !(event.metaKey || event.ctrlKey)) return;
+        event.preventDefault();
+        window.open(anchor.href, "_blank", "noopener,noreferrer");
+      }}
       style={{ minHeight, maxHeight, overflow: "auto" }}
     />
   </section>;

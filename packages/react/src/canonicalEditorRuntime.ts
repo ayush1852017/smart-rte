@@ -1,5 +1,6 @@
 import {
   createFoundationEditor,
+  applyOperations,
   createInputPipeline,
   createSubtreeRenderer,
   createTransactionMap,
@@ -40,9 +41,19 @@ export interface SmartEditorHandle {
   markSaved(revision: number): void;
   getRevision(): number;
   focus(): void;
-  executeOperations(operations: readonly SmartOperation[], opts?: { historyGroup?: string; addToHistory?: boolean }): void;
+  executeOperations(operations: readonly SmartOperation[], opts?: ExecuteOperationsOptions): void;
   createCheckpoint(): SmartEditorCheckpoint;
   restoreCheckpoint(checkpoint: SmartEditorCheckpoint): void;
+}
+
+export interface ExecuteOperationsOptions {
+  historyGroup?: string;
+  addToHistory?: boolean;
+  /** Keep structural commands anchored to the same stable inline-owner IDs. */
+  preserveSelectionById?: boolean;
+  /** Put the caret in a newly-created inline owner after the operation. */
+  selectionOwnerId?: string;
+  selectionOffset?: number;
 }
 
 export interface CanonicalEditorRuntimeOptions {
@@ -59,6 +70,16 @@ const nodeAtPath = (root: SmartNode, path: readonly number[]): SmartNode | null 
     node = node.children[index];
   }
   return node;
+};
+
+const pathOfNode = (root: SmartNode, nodeId: string, path: number[] = []): number[] | null => {
+  if (!isTextNode(root) && root.id === nodeId) return path;
+  if (isTextNode(root)) return null;
+  for (let index = 0; index < (root.children?.length || 0); index += 1) {
+    const found = pathOfNode(root.children![index], nodeId, [...path, index]);
+    if (found) return found;
+  }
+  return null;
 };
 
 const inlineWidth = (node: SmartNode): number => isTextNode(node)
@@ -215,9 +236,32 @@ export class CanonicalEditorRuntime implements SmartEditorHandle {
   }
   getRevision(): number { return this.editor.state.revision; }
   focus(): void { this.root?.focus(); }
-  executeOperations(operations: readonly SmartOperation[], opts: { historyGroup?: string; addToHistory?: boolean } = {}): void {
+  executeOperations(operations: readonly SmartOperation[], opts: ExecuteOperationsOptions = {}): void {
     if (!operations.length) return;
-    const selection = createTransactionMap(operations).mapSelection(this.editor.selection);
+    const beforeSelection = this.editor.selection;
+    let selection = createTransactionMap(operations).mapSelection(beforeSelection);
+    if (opts.selectionOwnerId || opts.preserveSelectionById) {
+      const beforeDocument = this.editor.document;
+      const preview = applyOperations(beforeDocument, operations);
+      const point = (pos: SmartPos, forcedId?: string): SmartPos | null => {
+        const beforeOwner = nodeAtPath(beforeDocument, pos.path);
+        const ownerId = forcedId || (!beforeOwner || isTextNode(beforeOwner) ? undefined : beforeOwner.id);
+        if (!ownerId) return null;
+        const path = pathOfNode(preview, ownerId);
+        if (!path) return null;
+        const owner = nodeAtPath(preview, path);
+        if (!owner) return null;
+        return { path, offset: Math.min(forcedId ? opts.selectionOffset ?? 0 : pos.offset, inlineWidth(owner)) };
+      };
+      if (opts.selectionOwnerId) {
+        const caret = point(beforeSelection.head, opts.selectionOwnerId);
+        if (caret) selection = { type: "text", anchor: caret, head: caret };
+      } else {
+        const anchor = point(beforeSelection.anchor);
+        const head = point(beforeSelection.head);
+        if (anchor && head) selection = { ...beforeSelection, anchor, head };
+      }
+    }
     this.editor.transact((builder) => {
       builder.operations.push(...operations);
       builder.setSelection(selection);

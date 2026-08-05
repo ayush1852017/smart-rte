@@ -104,6 +104,8 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
       if (node.attrs?.start !== undefined) this.setAttribute(element, "start", String(node.attrs.start), node.id);
       else this.removeAttribute(element, "start", node.id);
       this.setAttribute(element, "data-smart-checkable", node.attrs?.checkable === true ? "true" : "false", node.id);
+      if (node.attrs?.checkable === true) this.setAttribute(element, "data-srte-checklist", "true", node.id);
+      else this.removeAttribute(element, "data-srte-checklist", node.id);
     } else if (node.type === "list_item") {
       const parent = element.parentElement;
       const checkable = parent?.getAttribute("data-smart-checkable") === "true";
@@ -113,6 +115,7 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
           control = element.ownerDocument.createElement("button");
           control.setAttribute("type", "button");
           control.setAttribute(SMART_UI_ATTRIBUTE, "check-control");
+          control.setAttribute("data-srte-check", "true");
           control.setAttribute("role", "checkbox");
           control.setAttribute("aria-label", "Toggle checklist item");
           control.contentEditable = "false";
@@ -120,11 +123,13 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
           this.recordWrite(node.id);
         }
         this.setAttribute(control, "aria-checked", node.attrs?.checked === true ? "true" : "false", node.id);
+        this.setAttribute(element, "data-srte-checked", node.attrs?.checked === true ? "true" : "false", node.id);
         this.removeAttribute(element, "role", node.id);
         this.removeAttribute(element, "aria-checked", node.id);
         this.removeAttribute(element, "tabindex", node.id);
       } else {
         if (control) { control.remove(); this.recordWrite(node.id); }
+        this.removeAttribute(element, "data-srte-checked", node.id);
         this.removeAttribute(element, "role", node.id);
         this.removeAttribute(element, "aria-checked", node.id);
         this.removeAttribute(element, "tabindex", node.id);
@@ -277,10 +282,12 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
       const line = element.ownerDocument.createElement("br");
       line.setAttribute(SMART_EMPTY_LINE_ATTRIBUTE, "true");
       line.setAttribute(SMART_UI_ATTRIBUTE, "empty-line");
+      element.setAttribute("data-srte-caret-boundary", "true");
       element.appendChild(line);
       this.recordWrite(node.id);
     } else if (!needsProjection && existing) {
       existing.remove();
+      element.removeAttribute("data-srte-caret-boundary");
       this.recordWrite(node.id);
     }
   }

@@ -73,6 +73,18 @@ export const SRTE_DEFAULT_CSS = `
   font-family: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   container: srte-editor / inline-size;
 }
+.srte-canonical-authority > .srte-editor[contenteditable] {
+  width: 100%;
+  padding: 16px 20px;
+  box-sizing: border-box;
+  border: 1px solid var(--srte-border);
+  border-radius: 0 0 var(--srte-radius) var(--srte-radius);
+  outline: none;
+  background: var(--srte-canvas);
+  color: var(--srte-foreground);
+  caret-color: var(--srte-foreground);
+  line-height: 1.6;
+}
 .srte-toolbar {
   display: flex;
   flex-wrap: wrap;
