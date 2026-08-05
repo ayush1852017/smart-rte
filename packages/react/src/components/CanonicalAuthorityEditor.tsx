@@ -246,7 +246,7 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
   };
 
   const insertBlockAtom = (type: "block_image" | "video" | "audio") => {
-    const src = window.prompt(type === "block_image" ? "Image URL" : `${type} URL`);
+    const src = window.prompt(type === "block_image" ? "Image URL (direct image resource)" : `${type} URL (direct ${type} resource, not a page)`);
     if (!src) return;
     const kind = type === "block_image" ? "image" : type;
     const safeSrc = sanitizeAtomSource(src, { kind });
