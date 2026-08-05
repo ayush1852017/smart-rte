@@ -1,25 +1,5 @@
 import { expect, test } from "@playwright/test";
-
-const semanticSnapshot = async (page: import("@playwright/test").Page) => page.evaluate(() => {
-  const root = document.querySelector<HTMLElement>('[contenteditable="true"]')!;
-  const walk = (node: Node): unknown => {
-    if (node.nodeType === Node.TEXT_NODE) return node.textContent;
-    if (!(node instanceof HTMLElement) || node.dataset.smartUi !== undefined) return null;
-    return {
-      tag: node.tagName.toLowerCase(),
-      children: Array.from(node.childNodes).map(walk).filter((value) => value !== null && value !== ""),
-    };
-  };
-  const selection = window.getSelection();
-  return {
-    tree: Array.from(root.childNodes).map(walk).filter((value) => value !== null),
-    selection: selection?.rangeCount ? {
-      collapsed: selection.isCollapsed,
-      anchorOffset: selection.anchorOffset,
-      focusOffset: selection.focusOffset,
-    } : null,
-  };
-});
+import { foundationSchema, normalizedStructureWithoutIds, parseCanonicalListHtml } from "smartrte-core/foundation";
 
 const placeCaretAtEnd = async (page: import("@playwright/test").Page) => page.evaluate(() => {
   const root = document.querySelector<HTMLElement>('[contenteditable="true"]')!;
@@ -34,6 +14,48 @@ const placeCaretAtEnd = async (page: import("@playwright/test").Page) => page.ev
   document.dispatchEvent(new Event("selectionchange"));
   root.focus();
 });
+
+const selectFirstText = async (page: import("@playwright/test").Page) => page.evaluate(() => {
+  const root = document.querySelector<HTMLElement>('[contenteditable="true"]')!;
+  const text = document.createTreeWalker(root, NodeFilter.SHOW_TEXT).nextNode();
+  if (!text) return;
+  const range = document.createRange(); range.selectNodeContents(text);
+  const selection = window.getSelection()!; selection.removeAllRanges(); selection.addRange(range);
+  document.dispatchEvent(new Event("selectionchange"));
+});
+
+const replaySnapshot = async (page: import("@playwright/test").Page) => page.evaluate(() => {
+  const root = document.querySelector<HTMLElement>('[contenteditable="true"]')!;
+  const clone = root.cloneNode(true) as HTMLElement;
+  clone.querySelectorAll("[data-smart-ui],[data-smart-projection]").forEach((node) => node.remove());
+  const selection = window.getSelection();
+  const point = (node: Node | null, offset: number) => {
+    if (!node || !root.contains(node)) return null;
+    let block = node.nodeType === Node.ELEMENT_NODE ? node as Element : node.parentElement;
+    while (block?.parentElement && block.parentElement !== root) block = block.parentElement;
+    if (!block || block.parentElement !== root) return null;
+    const range = document.createRange();
+    range.selectNodeContents(block);
+    range.setEnd(node, offset);
+    return { block: Array.from(root.children).indexOf(block), offset: range.toString().length };
+  };
+  return {
+    html: clone.innerHTML,
+    selection: selection ? {
+      anchor: point(selection.anchorNode, selection.anchorOffset),
+      head: point(selection.focusNode, selection.focusOffset),
+      type: selection.isCollapsed ? "caret" : "range",
+    } : null,
+  };
+});
+
+const normalizedReplaySnapshot = async (page: import("@playwright/test").Page) => {
+  const value = await replaySnapshot(page);
+  return {
+    structure: normalizedStructureWithoutIds(parseCanonicalListHtml(value.html), foundationSchema),
+    selection: value.selection,
+  };
+};
 
 test.describe("Phase 8b canonical product authority", () => {
   test("owns product input, checkpoints, undo, and composition without DOM writes", async ({ page }) => {
@@ -67,26 +89,109 @@ test.describe("Phase 8b canonical product authority", () => {
     expect(composingWrites).toBe(0);
   });
 
-  test("reports a first divergent intent for a retained-vs-canonical typing trajectory", async ({ browser }) => {
+  test("reports the first divergence across the retained-vs-canonical lifecycle trajectory", async ({ browser }) => {
     const context = await browser.newContext();
     const legacy = await context.newPage();
     const canonical = await context.newPage();
     await legacy.goto("/?sessionReplay=1");
     await canonical.goto("/?canonicalAuthority=1&sessionReplay=1");
-    const legacyEditor = legacy.locator('[contenteditable="true"]');
-    const canonicalEditor = canonical.locator('[contenteditable="true"]');
-    const intents = ["a", "b", "c"];
+    const intents: { name: string; run: (page: import("@playwright/test").Page, canonical: boolean) => Promise<void> }[] = [
+      { name: "type-a", run: async (page) => { await placeCaretAtEnd(page); await page.keyboard.type("a"); } },
+      { name: "type-b", run: async (page) => { await page.keyboard.type("b"); } },
+      { name: "select-all", run: async (page) => { await selectFirstText(page); } },
+      { name: "bold", run: async (page) => page.evaluate(() => {
+        const button = document.querySelector<HTMLButtonElement>('button[aria-label="Bold"],button[title="Bold"]');
+        button?.click();
+      }) },
+      { name: "undo", run: async (page) => {
+        await page.evaluate(() => document.querySelector<HTMLButtonElement>('button[aria-label="Undo"]')!.click());
+      } },
+      { name: "redo", run: async (page) => {
+        await page.evaluate(() => document.querySelector<HTMLButtonElement>('button[aria-label="Redo"]')!.click());
+      } },
+      { name: "focus-blur-focus", run: async (page) => {
+        const root = page.locator('[contenteditable="true"]'); await root.focus(); await root.blur(); await root.focus();
+      } },
+      { name: "external-replacement", run: async (page, canonical) => page.evaluate((isCanonical) => {
+        const root = document.querySelector<HTMLElement>('[contenteditable="true"]')!;
+        if (isCanonical) {
+          window.__smartProductCanonical!.replaceValue({
+            schemaVersion: window.__smartProductCanonical!.editor.schema.version,
+            revision: 50,
+            document: { type: "doc", id: "replay-doc", children: [{ type: "paragraph", id: "replay-p", children: [{ type: "text", text: "replacement" }] }] },
+          });
+        } else {
+          root.innerHTML = "<p>replacement</p>";
+          root.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertReplacementText" }));
+        }
+        const text = document.createTreeWalker(root, NodeFilter.SHOW_TEXT).nextNode();
+        if (text) {
+          const range = document.createRange(); range.setStart(text, 0); range.collapse(true);
+          const selection = window.getSelection()!; selection.removeAllRanges(); selection.addRange(range);
+          document.dispatchEvent(new Event("selectionchange"));
+        }
+      }, canonical) },
+      { name: "paste-fragment", run: async (page) => page.evaluate(() => {
+        const root = document.querySelector<HTMLElement>('[contenteditable="true"]')!;
+        root.focus();
+        const transfer = new DataTransfer();
+        transfer.setData("text/html", "<strong> pasted</strong>");
+        transfer.setData("text/plain", " pasted");
+        root.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: transfer }));
+      }) },
+      { name: "drop-fragment", run: async (page, canonical) => page.evaluate((isCanonical) => {
+        const root = document.querySelector<HTMLElement>('[contenteditable="true"]')!;
+        if (isCanonical) {
+          const transfer = new DataTransfer();
+          transfer.setData("text/html", "<em> dropped</em>");
+          transfer.setData("text/plain", " dropped");
+          root.dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: transfer }));
+          return;
+        }
+        // Synthetic DragEvent does not execute the browser's native legacy
+        // default insertion, so the retained harness performs that default.
+        const selection = window.getSelection();
+        if (!selection?.rangeCount) return;
+        const range = selection.getRangeAt(0);
+        const emphasis = document.createElement("em"); emphasis.textContent = " dropped";
+        range.insertNode(emphasis); range.setStartAfter(emphasis); range.collapse(true);
+        selection.removeAllRanges(); selection.addRange(range);
+        root.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertFromDrop" }));
+      }, canonical) },
+      { name: "composition", run: async (page) => page.evaluate(() => {
+        const root = document.querySelector<HTMLElement>('[contenteditable="true"]')!;
+        root.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true, data: "" }));
+        const selection = window.getSelection();
+        if (selection?.rangeCount) {
+          let text = selection.focusNode?.nodeType === Node.TEXT_NODE ? selection.focusNode as Text : null;
+          if (!text && selection.focusNode?.nodeType === Node.ELEMENT_NODE) {
+            const owner = selection.focusNode as Element;
+            const candidate = owner.childNodes[Math.max(0, selection.focusOffset - 1)] || owner.childNodes[selection.focusOffset];
+            const walker = document.createTreeWalker(candidate, NodeFilter.SHOW_TEXT);
+            for (let node = walker.nextNode(); node; node = walker.nextNode()) text = node as Text;
+          }
+          if (text) {
+            text.data += "क";
+            selection.setBaseAndExtent(text, text.data.length, text, text.data.length);
+          }
+        }
+        root.dispatchEvent(new CompositionEvent("compositionupdate", { bubbles: true, data: "क" }));
+        root.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: "क" }));
+      }) },
+    ];
     let firstDivergence: { index: number; intent: string; legacy: unknown; canonical: unknown } | null = null;
     for (let index = 0; index < intents.length; index += 1) {
-      await placeCaretAtEnd(legacy);
-      await legacy.keyboard.type(intents[index]);
-      await placeCaretAtEnd(canonical);
-      await canonical.keyboard.type(intents[index]);
-      const left = await semanticSnapshot(legacy);
-      const right = await semanticSnapshot(canonical);
-      const leftText = await legacyEditor.textContent();
-      const rightText = await canonicalEditor.textContent();
-      if (leftText !== rightText && !firstDivergence) firstDivergence = { index, intent: intents[index], legacy: left, canonical: right };
+      await intents[index].run(legacy, false);
+      await intents[index].run(canonical, true);
+      const left = await normalizedReplaySnapshot(legacy);
+      const right = await normalizedReplaySnapshot(canonical);
+      const comparableSelection = left.selection?.anchor && left.selection.head && right.selection?.anchor && right.selection.head;
+      const selectionCompared = comparableSelection && intents[index].name !== "composition";
+      const equivalent = JSON.stringify(left.structure) === JSON.stringify(right.structure)
+        && (!selectionCompared || JSON.stringify(left.selection) === JSON.stringify(right.selection));
+      if (!equivalent && !firstDivergence) {
+        firstDivergence = { index, intent: intents[index].name, legacy: left, canonical: right };
+      }
     }
     expect(firstDivergence).toBeNull();
     await context.close();

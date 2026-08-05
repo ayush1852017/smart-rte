@@ -34,7 +34,17 @@ export const insertCanonicalClipboardData = (
     if (!selection?.rangeCount) return false;
     const range = selection.getRangeAt(0);
     range.deleteContents();
-    const fragmentNode = range.createContextualFragment(cleanHtml);
+    const startElement = range.startContainer.nodeType === Node.ELEMENT_NODE
+      ? range.startContainer as Element : range.startContainer.parentElement;
+    const inlineOwner = startElement?.closest("p,h1,h2,h3,h4,h5,h6,pre,li,td,th");
+    const only = fragment.document.children.length === 1 ? fragment.document.children[0] : null;
+    let insertionHtml = cleanHtml;
+    if (inlineOwner && only && only.type !== "text" && ["paragraph", "heading"].includes(only.type)) {
+      const container = ownerDocument.createElement("div");
+      container.innerHTML = cleanHtml;
+      insertionHtml = container.firstElementChild?.innerHTML || cleanHtml;
+    }
+    const fragmentNode = range.createContextualFragment(insertionHtml);
     const last = fragmentNode.lastChild;
     range.insertNode(fragmentNode);
     if (last) {

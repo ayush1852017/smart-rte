@@ -47,6 +47,19 @@ describe("Phase 8a ClassicEditor clipboard runtime", () => {
     remove();
   });
 
+  it("inserts a one-block clipboard fragment inline without nesting paragraphs", () => {
+    const root = document.createElement("div");
+    root.innerHTML = "<p>replacement</p>";
+    document.body.appendChild(root);
+    const text = root.querySelector("p")!.firstChild!;
+    const range = document.createRange(); range.setStart(text, 0); range.collapse(true);
+    document.getSelection()!.removeAllRanges(); document.getSelection()!.addRange(range);
+    const values = new Map([["text/html", "<p><strong> pasted</strong></p>"], ["text/plain", " pasted"]]);
+    const transfer = { types: [...values.keys()], getData: (type: string) => values.get(type) || "" } as unknown as DataTransfer;
+    expect(insertCanonicalClipboardData(transfer, document)).toBe(true);
+    expect(root.innerHTML).toBe("<p><strong> pasted</strong>replacement</p>");
+  });
+
   it("reports rejected paste without allowing raw content into diagnostics", () => {
     const secret = "CLIENT-SECRET-malformed-native";
     const values = new Map([["application/x-smart-rte+json", `{${secret}`]]);
