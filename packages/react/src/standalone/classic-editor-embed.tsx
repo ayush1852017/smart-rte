@@ -1,6 +1,8 @@
-import React, { useImperativeHandle, useRef, useState } from "react";
+import React, { useImperativeHandle, useRef } from "react";
 import { createRoot } from "react-dom/client";
-import { ClassicEditor as ClassicEditorComponent } from "../components/ClassicEditor.js";
+import { foundationSchema, parseCanonicalListHtml, serializeCanonicalListHtml } from "smartrte-core/foundation";
+import { ClassicEditor as ClassicEditorComponent } from "../components/ClassicEditorAuthority.js";
+import type { SmartEditorHandle } from "../canonicalEditorRuntime.js";
 import type { MediaManagerAdapter } from "../components/MediaManager.js";
 import type { SrteTheme } from "../theme.js";
 
@@ -48,20 +50,24 @@ function ClassicEditorHost(
   },
   ref: React.Ref<ClassicEditorController>
 ) {
-  const [html, setHtml] = useState<string>(props.value || "");
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const editorRef = useRef<SmartEditorHandle | null>(null);
 
   useImperativeHandle(
     ref,
     () => ({
       setHtml(next: string) {
-        setHtml(next ?? "");
+        const current = editorRef.current;
+        if (!current) return;
+        current.replaceValue({
+          schemaVersion: foundationSchema.version,
+          revision: current.getRevision() + 1,
+          document: parseCanonicalListHtml(next || "<p></p>"),
+        });
       },
       getHtml() {
-        return (
-          containerRef.current?.querySelector('[contenteditable="true"]')
-            ?.innerHTML ?? html
-        );
+        const value = editorRef.current?.getValue();
+        return value ? serializeCanonicalListHtml(value.document, { clean: true }) : "";
       },
       focus() {
         const el = containerRef.current?.querySelector(
@@ -79,22 +85,23 @@ function ClassicEditorHost(
         // No-op here; actual unmount happens in init
       },
     }),
-    [html]
+    []
   );
 
   return (
     <div ref={containerRef} style={{ height: "100%", width: "100%" }}>
       <ClassicEditorComponent
-        value={html}
-        onChange={(v) => {
-          setHtml(v);
-          props.onChange?.(v);
+        ref={editorRef}
+        canonicalAuthority
+        defaultValue={props.value || "<p></p>"}
+        onHtmlChange={(html) => {
+          props.onChange?.(html);
           try {
             // Bridge to Flutter if present
             // @ts-ignore
             const ch = (window as any).ToFlutter;
             if (ch && typeof ch.postMessage === "function") {
-              ch.postMessage(JSON.stringify({ type: "change", html: v }));
+              ch.postMessage(JSON.stringify({ type: "change", html }));
             }
           } catch {}
         }}

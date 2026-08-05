@@ -1,12 +1,19 @@
 import { useState } from "react";
-import { ClassicEditor } from "smartrte-react";
+import { ClassicEditor, type CanonicalEditorRuntime } from "smartrte-react";
 import CanonicalSurface from "./CanonicalSurface";
 import ClipboardCapture from "./ClipboardCapture";
 
 function App() {
-  if (new URLSearchParams(window.location.search).has("clipboardCapture")) return <ClipboardCapture />;
-  if (new URLSearchParams(window.location.search).has("canonical")) return <CanonicalSurface />;
+  const params = new URLSearchParams(window.location.search);
+  if (params.has("clipboardCapture")) return <ClipboardCapture />;
+  if (params.has("canonical")) return <CanonicalSurface />;
   const [theme, setTheme] = useState<"light" | "dark">("light");
+  const canonicalAuthority = params.has("canonicalAuthority");
+  const requestedBlocks = Number(params.get("blocks") || 1);
+  const blocks = Number.isFinite(requestedBlocks) ? Math.max(1, Math.min(10_000, Math.floor(requestedBlocks))) : 1;
+  const defaultValue = canonicalAuthority
+    ? params.has("sessionReplay") ? "<p>seed</p>" : Array.from({ length: blocks }, (_, index) => `<p>${index === 0 ? "Canonical product editor" : `block ${index}`}</p>`).join("")
+    : undefined;
 
   return (
     <div style={{
@@ -31,10 +38,16 @@ function App() {
         </button>
       </div>
       <ClassicEditor
+        canonicalAuthority={canonicalAuthority}
+        defaultValue={defaultValue}
+        value={!canonicalAuthority && params.has("sessionReplay") ? "<p>seed</p>" : undefined}
         theme={theme}
         minHeight={200}
         maxHeight={400}
-        onChange={(html) => console.log("Classic HTML:", html)}
+        onHtmlChange={(html) => console.log("Classic HTML:", html)}
+        onRuntime={(runtime) => {
+          (window as Window & { __smartProductCanonical?: CanonicalEditorRuntime }).__smartProductCanonical = runtime;
+        }}
       />
     </div>
   );
