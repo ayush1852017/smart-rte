@@ -24,6 +24,7 @@ import {
   removeTableRowCommand,
   resizeAtom,
   restartListNumbering,
+  sanitizeAtomSource,
   serializeCanonicalListHtml,
   serializeCanonicalListMarkdown,
   setListChecked,
@@ -247,6 +248,12 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
   const insertBlockAtom = (type: "block_image" | "video" | "audio") => {
     const src = window.prompt(type === "block_image" ? "Image URL" : `${type} URL`);
     if (!src) return;
+    const kind = type === "block_image" ? "image" : type;
+    const safeSrc = sanitizeAtomSource(src, { kind });
+    if (!safeSrc) {
+      window.alert(`Enter a direct ${type === "block_image" ? "image" : type} URL (http(s), a relative path, or a supported image data URL).`);
+      return;
+    }
     const declaration = atomDeclarations.find((entry) => entry.type === type)!;
     const selection = runtime.editor.selection;
     let parentId: string | undefined;
@@ -274,7 +281,7 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
     if (!parentId || index === undefined) return;
     runtime.executeOperations(insertAtom(runtime.editor.document, atomScope(), {
       declaration, nodeId: createNodeId(), parentId, index,
-      attrs: type === "block_image" ? { src, alt: window.prompt("Alt text") || "", decorative: false, status: "ready" } : { src, status: "ready" },
+      attrs: type === "block_image" ? { src: safeSrc, alt: window.prompt("Alt text", "Image") || "Image", decorative: false, status: "ready" } : { src: safeSrc, status: "ready" },
     }, blockContext()));
   };
 

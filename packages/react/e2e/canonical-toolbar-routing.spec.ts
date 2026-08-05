@@ -139,6 +139,45 @@ test.describe("canonical toolbar routing", () => {
     await expect(after).toContainText("after table");
   });
 
+  test("creates a nested list inside a table cell", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    const surface = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
+    await placeCaret(page, '[data-smart-authority="canonical"] [contenteditable="true"] > p');
+    await page.getByRole("button", { name: "Insert table" }).click();
+    const cellParagraph = surface.locator("table tr").first().locator("td,th").first().locator("p");
+    await placeCaret(page, '[data-smart-authority="canonical"] [contenteditable="true"] table tr:first-child td:first-child p');
+    await page.getByRole("button", { name: "Bulleted list" }).click();
+    await expect(cellParagraph.locator("xpath=ancestor::td").locator(":scope > ul > li")).toHaveCount(1);
+
+    // A second item must be able to indent without escaping the isolating
+    // cell. This is the cross-feature case that a single-item list does not
+    // exercise.
+    await placeCaret(page, '[data-smart-authority="canonical"] [contenteditable="true"] table tr:first-child td:first-child p');
+    await page.keyboard.type("first");
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("second");
+    const secondParagraph = surface.locator("table tr").first().locator("td,th").first().locator("ul > li:nth-child(2) p");
+    await expect(secondParagraph).toHaveCount(1);
+    await placeCaret(page, '[data-smart-authority="canonical"] table tr:first-child td:first-child ul > li:nth-child(2) p');
+    await page.getByRole("button", { name: "Indent list item" }).click();
+    await expect(surface.locator("table tr:first-child td:first-child ul > li > ul > li")).toHaveCount(1);
+  });
+
+  test("selects a vertical cell range and merges it", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    const surface = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
+    await placeCaret(page, '[data-smart-authority="canonical"] [contenteditable="true"] > p');
+    await page.getByRole("button", { name: "Insert table" }).click();
+    const table = surface.locator("table");
+    const first = table.locator("tr").nth(0).locator("td,th").nth(0);
+    const below = table.locator("tr").nth(1).locator("td,th").nth(0);
+    await selectCellRange(page, first, below);
+    await expect(surface.locator('[data-smart-cell-selected="true"]')).toHaveCount(2);
+    await expect(page.getByRole("button", { name: "Merge cells" })).toBeEnabled();
+    await page.getByRole("button", { name: "Merge cells" }).click();
+    await expect(table.locator("tr").first().locator("td,th").first()).toHaveAttribute("rowspan", "2");
+  });
+
   test("shows an empty-line caret, applies content styling, and keeps structural tools contextual", async ({ page }) => {
     await page.goto("/?canonicalAuthority=1&blocks=3");
     const surface = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');

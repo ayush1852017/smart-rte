@@ -201,6 +201,31 @@ describe("Phase 2.5 renderer and input pipeline", () => {
     expect(renderer.mapping.nodeToDom("p1")?.textContent).toBe("stable");
   });
 
+  it("renders media atoms with playback attributes and exposes load failures", () => {
+    const root = document.createElement("div");
+    const media: SmartDocument = { type: "doc", id: "doc", children: [
+      { type: "block_image", id: "image", attrs: {
+        src: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB", alt: "Pixel", status: "ready",
+      } },
+      { type: "video", id: "video", attrs: { src: "https://cdn.test/clip.mp4", status: "ready" } },
+      { type: "audio", id: "audio", attrs: { src: "https://cdn.test/sound.mp3", status: "ready" } },
+    ] };
+    const renderer = createSubtreeRenderer(root);
+    renderer.render(media, { type: "none", anchor: { path: [], offset: 0 }, head: { path: [], offset: 0 } });
+    const image = root.querySelector<HTMLElement>('[data-smart-type="block_image"]')!;
+    const video = root.querySelector<HTMLVideoElement>('[data-smart-type="video"]')!;
+    const audio = root.querySelector<HTMLAudioElement>('[data-smart-type="audio"]')!;
+    expect(image.getAttribute("src")).toContain("data:image/png");
+    expect(video.controls).toBe(true);
+    expect(video.preload).toBe("metadata");
+    expect(video.playsInline).toBe(true);
+    expect(audio.controls).toBe(true);
+    expect(audio.preload).toBe("metadata");
+    video.dispatchEvent(new Event("error"));
+    expect(video.getAttribute("data-smart-media-state")).toBe("error");
+    expect(video.getAttribute("title")).toBe("Video could not be loaded");
+  });
+
   it("reconciles composition by marked tokens without flattening sibling runs", () => {
     const root = document.createElement("div");
     document.body.appendChild(root);

@@ -9,7 +9,7 @@ import {
 import type { SmartDocument, SmartElementNode, SmartNode, SmartSelection } from "../types.js";
 import type { CanonicalSubtreeRenderer } from "./types.js";
 import { renderMarkedText, stableValue } from "../marks/index.js";
-import { occupancyGridFor } from "../table/index.js";
+import { occupancyGridFor, snapTableCellRect } from "../table/index.js";
 import { sanitizeAtomSource } from "../atom/security.js";
 
 const atomTypes = new Set(["image", "block_image", "formula", "block_formula", "video", "audio"]);
@@ -186,12 +186,51 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
       const source = sanitizeAtomSource(String(node.attrs?.src || ""), { kind: node.type });
       if (source) this.setAttribute(element, "src", source, node.id); else this.removeAttribute(element, "src", node.id);
       this.setAttribute(element, "controls", "", node.id);
+      this.setAttribute(element, "preload", "metadata", node.id);
+      if (node.type === "video") this.setAttribute(element, "playsinline", "", node.id);
+      else this.removeAttribute(element, "playsinline", node.id);
+      if (node.attrs?.width) this.setAttribute(element, "width", String(node.attrs.width), node.id);
+      else this.removeAttribute(element, "width", node.id);
+      if (node.attrs?.height) this.setAttribute(element, "height", String(node.attrs.height), node.id);
+      else this.removeAttribute(element, "height", node.id);
+      const extension = source?.match(/\.([a-z0-9]+)(?:[?#]|$)/i)?.[1]?.toLowerCase();
+      const mediaType = node.type === "audio"
+        ? extension === "mp3" ? "audio/mpeg" : extension === "wav" ? "audio/wav" : extension === "ogg" ? "audio/ogg" : extension === "webm" ? "audio/webm" : null
+        : extension === "mp4" ? "video/mp4" : extension === "webm" ? "video/webm" : extension === "ogv" ? "video/ogg" : null;
+      if (mediaType) this.setAttribute(element, "type", mediaType, node.id);
+      else this.removeAttribute(element, "type", node.id);
       this.setAttribute(element, "aria-label", node.type === "video" ? "Video player" : "Audio player", node.id);
       if (node.type === "video" && node.attrs?.poster) {
         const poster = sanitizeAtomSource(String(node.attrs.poster), { kind: "image" });
         if (poster) this.setAttribute(element, "poster", poster, node.id); else this.removeAttribute(element, "poster", node.id);
       }
     }
+  }
+
+  /**
+   * Keep failed remote resources visible as model-backed atoms instead of
+   * leaving a silent broken-image/media control. The event only updates
+   * renderer diagnostics; it never mutates the canonical document. A later
+   * attribute transaction (retry, replacement, or upload completion) clears
+   * the state through the normal diff path.
+   */
+  private installMediaDiagnostics(element: HTMLElement, node: SmartElementNode): void {
+    if (!atomTypes.has(node.type) || node.type === "formula" || node.type === "block_formula") return;
+    if (element.hasAttribute("data-smart-media-events")) return;
+    element.setAttribute("data-smart-media-events", "true");
+    const clear = () => {
+      element.setAttribute("data-smart-media-state", "ready");
+      element.removeAttribute("title");
+    };
+    const failed = () => {
+      element.setAttribute("data-smart-media-state", "error");
+      element.setAttribute("title", node.type === "block_image" || node.type === "image"
+        ? "Image could not be loaded"
+        : `${node.type === "video" ? "Video" : "Audio"} could not be loaded`);
+    };
+    element.addEventListener("load", clear);
+    element.addEventListener("canplay", clear);
+    element.addEventListener("error", failed);
   }
 
   private syncTableAccessibility(): void {
@@ -236,6 +275,7 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
     element.setAttribute(SMART_NODE_ID_ATTRIBUTE, node.id);
     element.setAttribute("data-smart-type", node.type);
     this.syncNodeAttributes(element, node);
+    this.installMediaDiagnostics(element, node);
     if (node.type === "hard_break") {
       element.setAttribute("data-smart-atomic", "true");
     } else if (node.type === "unknown" || node.attrs?.atomic === true || atomTypes.has(node.type)) {
@@ -299,6 +339,7 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
     this.setAttribute(element, SMART_NODE_ID_ATTRIBUTE, after.id, after.id);
     this.setAttribute(element, "data-smart-type", after.type, after.id);
     this.syncNodeAttributes(element, after);
+    this.installMediaDiagnostics(element, after);
     const beforeChildren = before.children || [];
     const afterChildren = after.children || [];
     // Remove the visual-only empty line before inserting real model children.
@@ -411,12 +452,32 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
     const anchorCell = anchor instanceof Element ? anchor.closest<HTMLElement>('[data-smart-type="table_cell"]') : anchor?.parentElement?.closest<HTMLElement>('[data-smart-type="table_cell"]');
     const headCell = head instanceof Element ? head.closest<HTMLElement>('[data-smart-type="table_cell"]') : head?.parentElement?.closest<HTMLElement>('[data-smart-type="table_cell"]');
     if (!anchorCell || !headCell) return;
-    const cells = [...this.root.querySelectorAll<HTMLElement>('[data-smart-type="table_cell"]')];
-    const anchorIndex = cells.indexOf(anchorCell);
-    const headIndex = cells.indexOf(headCell);
-    if (anchorIndex < 0 || headIndex < 0) return;
-    cells.slice(Math.min(anchorIndex, headIndex), Math.max(anchorIndex, headIndex) + 1)
-      .forEach((cell) => cell.setAttribute("data-smart-cell-selected", "true"));
+    const tableElement = anchorCell.closest<HTMLElement>('[data-smart-type="table"]');
+    const mappedTable = tableElement ? this.mapping.domToNode(tableElement) : null;
+    const mappedAnchor = this.mapping.domToNode(anchorCell);
+    const mappedHead = this.mapping.domToNode(headCell);
+    if (!mappedTable || !mappedAnchor || !mappedHead || isTextNode(mappedTable.node)
+      || isTextNode(mappedAnchor.node) || isTextNode(mappedHead.node)) return;
+    const grid = occupancyGridFor(mappedTable.node);
+    const anchorGridCell = grid.anchors.find((cell) => cell.cellId === mappedAnchor.nodeId);
+    const headGridCell = grid.anchors.find((cell) => cell.cellId === mappedHead.nodeId);
+    if (!anchorGridCell || !headGridCell) return;
+    // Cell selections are logical rectangles, not DOM-order ranges. DOM order
+    // is row-major, so slicing it would select the cells between two vertical
+    // endpoints (for example three cells in a 2x2 table) rather than the two
+    // cells in the requested column. Snap through merged cells as the model
+    // resolver does, then project exactly the resulting anchor IDs.
+    const snapped = snapTableCellRect(mappedTable.node, {
+      top: Math.min(anchorGridCell.top, headGridCell.top),
+      left: Math.min(anchorGridCell.left, headGridCell.left),
+      bottom: Math.max(anchorGridCell.bottom, headGridCell.bottom),
+      right: Math.max(anchorGridCell.right, headGridCell.right),
+    });
+    const selected = new Set(snapped.cellIds);
+    this.root.querySelectorAll<HTMLElement>('[data-smart-type="table_cell"]').forEach((cell) => {
+      const mapped = this.mapping.domToNode(cell);
+      if (mapped && selected.has(mapped.nodeId)) cell.setAttribute("data-smart-cell-selected", "true");
+    });
   }
 
   /** Keep the active line visible without scrolling the surrounding page. */
