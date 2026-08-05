@@ -88,6 +88,34 @@ const ownerAt = (editor: FoundationEditor, pos: SmartPos): SmartElementNode => {
   return node;
 };
 
+const isInlineOwnerNode = (node: SmartNode, schema: FoundationEditor["schema"]): boolean => {
+  if (isTextNode(node) || schema.nodes[node.type]?.atomic === true) return false;
+  if (["paragraph", "heading", "code_block"].includes(node.type)) return true;
+  return /(?:^|[|(\s])(?:inline|text)(?:[+*?]|$)/.test(schema.nodes[node.type]?.content || "");
+};
+
+/** Finds the nearest editable inline owner inside a structural sibling. */
+const editableOwnerPosition = (
+  node: SmartNode,
+  path: readonly number[],
+  direction: -1 | 1,
+  schema: FoundationEditor["schema"],
+): SmartPos | null => {
+  if (isTextNode(node) || schema.nodes[node.type]?.atomic === true) return null;
+  if (isInlineOwnerNode(node, schema)) return {
+    path: [...path],
+    offset: direction > 0 ? 0 : inlineText(node).length,
+  };
+  const children = node.children || [];
+  const indexes = Array.from({ length: children.length }, (_, index) => index);
+  if (direction < 0) indexes.reverse();
+  for (const index of indexes) {
+    const found = editableOwnerPosition(children[index], [...path, index], direction, schema);
+    if (found) return found;
+  }
+  return null;
+};
+
 const textSegments = (owner: SmartElementNode) => {
   let offset = 0;
   return (owner.children || []).map((node, index) => {
@@ -427,6 +455,52 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
     });
   }
 
+  /**
+   * Block atoms have no legal internal caret. When the browser reports a
+   * structural boundary beside one (including a node selection's head), move
+   * to the nearest editable block instead of manufacturing a position inside
+   * the atom. If the atom is at a container edge, create the empty paragraph
+   * that gives the user a real line to continue typing on.
+   */
+  private moveFromStructuralBoundary(path: readonly number[], offset: number, direction: -1 | 1): boolean {
+    const parent = nodeAtPath(this.editor.document, path);
+    if (!parent || isTextNode(parent) || isInlineOwnerNode(parent, this.editor.schema)) return false;
+    const children = parent.children || [];
+    let cursor = direction < 0 ? offset - 1 : offset;
+    while (cursor >= 0 && cursor < children.length) {
+      const child = children[cursor];
+      if (!isTextNode(child) && this.editor.schema.nodes[child.type]?.atomic === true) {
+        cursor += direction;
+        continue;
+      }
+      const target = editableOwnerPosition(child, [...path, cursor], direction, this.editor.schema);
+      if (target) {
+        const model: SmartSelection = { type: "text", anchor: target, head: target };
+        this.editor.setSelection(model, { source: "keyboard" });
+        this.renderer.render(this.editor.document, model);
+        return true;
+      }
+      cursor += direction;
+    }
+
+    // Only containers whose schema accepts blocks may receive the fallback
+    // paragraph. This keeps the operation valid inside a document, list item,
+    // quote, or table cell while refusing to put content inside an atom.
+    const content = this.editor.schema.nodes[parent.type]?.content || "";
+    if (parent.type !== "doc" && !/(?:^|[|(\s])block(?:[+*?]|$)/.test(content)) return false;
+    const insertionIndex = direction > 0
+      ? Math.max(0, Math.min(children.length, cursor))
+      : Math.max(0, Math.min(children.length, cursor + 1));
+    const paragraph: SmartElementNode = { type: "paragraph", id: createNodeId(), children: [] };
+    const target: SmartPos = { path: [...path, insertionIndex], offset: 0 };
+    this.editor.transact((builder) => {
+      builder.operations.push({ type: "insertNode", pos: { path: [...path], offset: insertionIndex }, node: paragraph });
+      builder.setSelection({ type: "text", anchor: target, head: target });
+    }, { source: "keyboard", addToHistory: true });
+    this.renderer.render(this.editor.document, this.editor.selection);
+    return true;
+  }
+
   private insertParagraph(): void {
     const selection = this.editor.selection;
     if (collapsed(selection)) {
@@ -594,6 +668,11 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
   private moveCaret(direction: -1 | 1, word = false): void {
     const selection = this.editor.selection;
     const active = selection.head;
+    const activeOwner = nodeAtPath(this.editor.document, active.path);
+    if (activeOwner && !isTextNode(activeOwner) && !isInlineOwnerNode(activeOwner, this.editor.schema)) {
+      if (this.moveFromStructuralBoundary(active.path, active.offset, direction)) return;
+      return;
+    }
     const owner = ownerAt(this.editor, active);
     const text = inlineText(owner);
     let offset = word
@@ -709,6 +788,12 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
     if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
       event.preventDefault();
       this.moveCaret(event.key === "ArrowLeft" ? -1 : 1, modifier || event.altKey);
+    } else if ((event.key === "ArrowUp" || event.key === "ArrowDown") && this.editor.selection.type === "node") {
+      // Native vertical movement has no useful target while a block atom is
+      // selected. Treat it as movement to the preceding/following editable
+      // line, matching left/right atom-boundary navigation.
+      event.preventDefault();
+      this.moveCaret(event.key === "ArrowUp" ? -1 : 1);
     } else if (event.key === "Home" || event.key === "End") {
       event.preventDefault();
       const active = this.editor.selection.head;

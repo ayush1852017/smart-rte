@@ -279,10 +279,26 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
       index = location ? location.pos.offset + 1 : undefined;
     }
     if (!parentId || index === undefined) return;
-    runtime.executeOperations(insertAtom(runtime.editor.document, atomScope(), {
+    const operations = insertAtom(runtime.editor.document, atomScope(), {
       declaration, nodeId: createNodeId(), parentId, index,
       attrs: type === "block_image" ? { src: safeSrc, alt: window.prompt("Alt text", "Image") || "Image", decorative: false, status: "ready" } : { src: safeSrc, status: "ready" },
-    }, blockContext()));
+    }, blockContext());
+    if (!operations.length) return;
+    // Block atoms cannot contain a caret. Keep an editable paragraph after a
+    // media node inserted at the end of its container (document root or table
+    // cell), and place the caret there so the next keystroke has a legal owner.
+    const parent = findNode(runtime.editor.document, parentId);
+    const contentRange = runtime.editor.positions.contentRangeOf(parentId);
+    let selectionOwnerId: string | undefined;
+    if (parent?.children && index >= parent.children.length && contentRange) {
+      selectionOwnerId = createNodeId();
+      operations.push({
+        type: "insertNode",
+        pos: { path: [...contentRange.from.path], offset: index + 1 },
+        node: { type: "paragraph", id: selectionOwnerId, children: [] },
+      });
+    }
+    runtime.executeOperations(operations, selectionOwnerId ? { selectionOwnerId, selectionOffset: 0 } : {});
   };
 
   const editSelectedAtom = (resizeBy?: number) => {

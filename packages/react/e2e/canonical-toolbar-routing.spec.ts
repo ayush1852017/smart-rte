@@ -178,6 +178,22 @@ test.describe("canonical toolbar routing", () => {
     await expect(table.locator("tr").first().locator("td,th").first()).toHaveAttribute("rowspan", "2");
   });
 
+  test("moves the caret to an editable line after a block atom", async ({ page }) => {
+    page.on("dialog", (dialog) => void dialog.accept(dialog.message().includes("Image URL")
+      ? "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB"
+      : "Image"));
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    const surface = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
+    await placeCaret(page, '[data-smart-authority="canonical"] [contenteditable="true"] > p');
+    await page.getByRole("button", { name: "Insert image" }).click();
+    const image = surface.locator('[data-smart-type="block_image"]');
+    await expect(image).toHaveCount(1);
+    await image.click();
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.type("below image");
+    await expect(surface.locator(":scope > p").last()).toContainText("below image");
+  });
+
   test("shows an empty-line caret, applies content styling, and keeps structural tools contextual", async ({ page }) => {
     await page.goto("/?canonicalAuthority=1&blocks=3");
     const surface = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');

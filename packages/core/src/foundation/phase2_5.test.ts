@@ -226,6 +226,22 @@ describe("Phase 2.5 renderer and input pipeline", () => {
     expect(video.getAttribute("title")).toBe("Video could not be loaded");
   });
 
+  it("creates an editable line when navigating past a trailing block atom", () => {
+    const root = document.createElement("div");
+    const model: SmartDocument = { type: "doc", id: "doc", children: [
+      paragraph("before-atom", "before"),
+      { type: "block_image", id: "image", attrs: { src: "https://cdn.test/image.png", alt: "Image", status: "ready" } },
+    ] };
+    const editor = createFoundationEditor({ document: model, selection: {
+      type: "node", anchor: { path: [], offset: 1 }, head: { path: [], offset: 2 },
+    } });
+    const renderer = createSubtreeRenderer(root);
+    const pipeline = createInputPipeline(editor, renderer, root);
+    pipeline.handleKeyDown(new KeyboardEvent("keydown", { key: "ArrowRight" }));
+    expect(editor.document.children.map((node) => node.type)).toEqual(["paragraph", "block_image", "paragraph"]);
+    expect(editor.selection).toMatchObject({ type: "text", anchor: { path: [2], offset: 0 }, head: { path: [2], offset: 0 } });
+  });
+
   it("reconciles composition by marked tokens without flattening sibling runs", () => {
     const root = document.createElement("div");
     document.body.appendChild(root);
