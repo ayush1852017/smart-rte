@@ -62,7 +62,7 @@ test.describe("Phase 8b canonical product authority", () => {
     await page.goto("/?canonicalAuthority=1");
     const editor = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
     await expect(editor).toBeVisible();
-    await editor.click();
+    await placeCaretAtEnd(page);
     await page.keyboard.type("abc");
     await expect(editor).toContainText("Canonical product editorabc");
     const checkpoint = await page.evaluate(() => {
