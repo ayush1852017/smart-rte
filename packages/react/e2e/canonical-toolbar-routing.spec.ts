@@ -1,0 +1,61 @@
+import { expect, test, type Page } from "@playwright/test";
+
+const selectFirstText = async (page: Page) => page.evaluate(() => {
+  const root = document.querySelector<HTMLElement>('[data-smart-authority="canonical"] [contenteditable="true"]')!;
+  const text = document.createTreeWalker(root, NodeFilter.SHOW_TEXT).nextNode() as Text;
+  const range = document.createRange();
+  range.selectNodeContents(text);
+  const selection = window.getSelection()!;
+  selection.removeAllRanges();
+  selection.addRange(range);
+  document.dispatchEvent(new Event("selectionchange"));
+});
+
+test.describe("canonical toolbar routing", () => {
+  test("routes lists, links, tables, atoms, resize, import, and export through retained state", async ({ page }) => {
+    page.on("dialog", (dialog) => {
+      const message = dialog.message();
+      const answer = message.includes("Link") ? "https://example.test"
+        : message.includes("Formula") ? "E=mc^2"
+          : message.includes("Image URL") ? "https://example.test/image.png"
+            : message.includes("Alt text") ? "Example image" : "";
+      void dialog.accept(answer);
+    });
+    await page.goto("/?canonicalAuthority=1&blocks=2");
+    const surface = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
+
+    await selectFirstText(page);
+    await page.getByRole("button", { name: "Insert or edit link" }).click();
+    await expect(surface.locator("a")).toHaveAttribute("href", "https://example.test");
+
+    await page.getByRole("button", { name: "Bulleted list" }).click();
+    await expect(surface.locator("ul > li")).toHaveCount(1);
+
+    await surface.locator("p").last().click();
+    await page.getByRole("button", { name: "Insert table" }).click();
+    await expect(surface.locator("table tr")).toHaveCount(2);
+    await surface.locator("td p, th p").first().click();
+    await page.getByRole("button", { name: "Add row" }).click();
+    await expect(surface.locator("table tr")).toHaveCount(3);
+
+    await surface.locator("p").last().click();
+    await page.getByRole("button", { name: "Insert formula" }).click();
+    await expect(surface.locator('[data-smart-type="formula"]')).toHaveAttribute("data-smart-formula", "E=mc^2");
+
+    await page.getByRole("button", { name: "Insert image" }).click();
+    const image = surface.locator('[data-smart-type="block_image"]');
+    await expect(image).toHaveAttribute("src", "https://example.test/image.png");
+    await image.click();
+    await page.getByRole("button", { name: "Grow selected atom" }).click();
+    await expect(image).toHaveAttribute("width", "180");
+
+    const download = page.waitForEvent("download");
+    await page.getByRole("button", { name: "Export native document" }).click();
+    expect((await download).suggestedFilename()).toBe("smart-rte.json");
+
+    await page.locator('input[type="file"]').setInputFiles({
+      name: "replacement.html", mimeType: "text/html", buffer: Buffer.from("<h2>Imported canonical content</h2>"),
+    });
+    await expect(surface.locator("h2")).toContainText("Imported canonical content");
+  });
+});

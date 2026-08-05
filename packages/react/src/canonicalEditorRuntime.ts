@@ -2,6 +2,7 @@ import {
   createFoundationEditor,
   createInputPipeline,
   createSubtreeRenderer,
+  createTransactionMap,
   foundationSchema,
   isTextNode,
   parseCanonicalListHtml,
@@ -13,6 +14,7 @@ import {
   type PersistedEditorDocument,
   type SmartMark,
   type SmartNode,
+  type SmartOperation,
   type SmartPos,
   type SmartSelection,
   type SmartTransaction,
@@ -38,6 +40,7 @@ export interface SmartEditorHandle {
   markSaved(revision: number): void;
   getRevision(): number;
   focus(): void;
+  executeOperations(operations: readonly SmartOperation[], opts?: { historyGroup?: string; addToHistory?: boolean }): void;
   createCheckpoint(): SmartEditorCheckpoint;
   restoreCheckpoint(checkpoint: SmartEditorCheckpoint): void;
 }
@@ -212,6 +215,19 @@ export class CanonicalEditorRuntime implements SmartEditorHandle {
   }
   getRevision(): number { return this.editor.state.revision; }
   focus(): void { this.root?.focus(); }
+  executeOperations(operations: readonly SmartOperation[], opts: { historyGroup?: string; addToHistory?: boolean } = {}): void {
+    if (!operations.length) return;
+    const selection = createTransactionMap(operations).mapSelection(this.editor.selection);
+    this.editor.transact((builder) => {
+      builder.operations.push(...operations);
+      builder.setSelection(selection);
+    }, {
+      source: "toolbar",
+      addToHistory: opts.addToHistory ?? true,
+      ...(opts.historyGroup ? { historyGroup: opts.historyGroup } : {}),
+    });
+    this.focus();
+  }
   createCheckpoint(): SmartEditorCheckpoint {
     return {
       envelope: this.getValue(),
