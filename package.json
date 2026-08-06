@@ -5,7 +5,7 @@
   "scripts": {
     "build": "pnpm -r --filter './packages/*' run build",
     "dev": "pnpm build",
-    "lint": "pnpm run lint:foundation-boundary && pnpm run lint:scope-contract && pnpm run lint:phase2.5-contract && pnpm run lint:phase3-contract && pnpm run lint:phase4-contract && pnpm run lint:phase6-contract && pnpm run lint:phase7-contract && pnpm run lint:phase8a-contract && pnpm -r --filter './packages/*' run lint",
+    "lint": "pnpm run lint:foundation-boundary && pnpm run lint:scope-contract && pnpm run lint:phase2.5-contract && pnpm run lint:phase3-contract && pnpm run lint:phase4-contract && pnpm run lint:phase6-contract && pnpm run lint:phase7-contract && pnpm run lint:phase8a-contract && pnpm run lint:phase8b-contract && pnpm -r --filter './packages/*' run lint",
     "lint:foundation-boundary": "node scripts/check-foundation-boundary.mjs",
     "lint:scope-contract": "node scripts/check-scope-contract.mjs",
     "lint:phase2.5-contract": "node scripts/check-phase2-5-contract.mjs",
@@ -14,6 +14,7 @@
     "lint:phase6-contract": "node scripts/check-phase6-contract.mjs",
     "lint:phase7-contract": "node scripts/check-phase7-contract.mjs",
     "lint:phase8a-contract": "node scripts/check-phase8a-contract.mjs",
+    "lint:phase8b-contract": "node scripts/check-phase8b-contract.mjs",
     "benchmark:phase2": "pnpm --filter smartrte-core run build && node scripts/benchmark-phase2.mjs",
     "benchmark:phase2.5": "pnpm --filter smartrte-core run build && node scripts/benchmark-phase2-5.mjs",
     "test": "pnpm -r --filter './packages/*' run test",

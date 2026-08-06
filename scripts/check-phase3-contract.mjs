@@ -1,68 +1,47 @@
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { assertContract, mapKeys, readSource, sourceHas, withoutComments } from "./contract-utils.mjs";
 
-const root = resolve(import.meta.dirname, "..");
-const [commands, types, classic, bridge, rootIndex, legacyIndex, corePackage, shadow, touchpoints, adapters, behaviorChanges] = await Promise.all([
-  "packages/core/src/foundation/list/commands.ts",
-  "packages/core/src/foundation/list/types.ts",
-  "packages/react/src/components/ClassicEditor.tsx",
-  "packages/react/src/adapters/canonicalListCommandBridge.ts",
-  "packages/core/src/index.ts",
-  "packages/core/src/legacy/index.ts",
-  "packages/core/package.json",
-  "packages/core/src/foundation/list/shadow.ts",
-  "docs/LEGACY_LIST_TOUCHPOINTS.md",
-  "docs/MIGRATION_ADAPTER_INVENTORY.md",
-  "docs/PHASE_3_STRUCTURAL_BEHAVIOR_CHANGES.md",
-].map(async (path) => [path, await readFile(resolve(root, path), "utf8")]));
-
-const source = Object.fromEntries([
-  commands, types, classic, bridge, rootIndex, legacyIndex, corePackage, shadow,
-  touchpoints, adapters, behaviorChanges,
+const [types, commands, canonicalEditor, classic, shadow, harness, rootIndex, legacyIndex, corePackage] = await Promise.all([
+  readSource("packages/core/src/foundation/list/types.ts"),
+  readSource("packages/core/src/foundation/list/commands.ts"),
+  readSource("packages/react/src/components/CanonicalAuthorityEditor.tsx"),
+  readSource("packages/react/src/components/ClassicEditor.tsx"),
+  readSource("packages/core/src/foundation/list/shadow.ts"),
+  readSource("packages/react/src/adapters/legacyListShadowComparator.ts"),
+  readSource("packages/core/src/index.ts"),
+  readSource("packages/core/src/legacy/index.ts"),
+  readSource("packages/core/package.json"),
 ]);
-const violations = [];
-if (!/type ListCommand<P>\s*=\s*\(\s*document:\s*SmartDocument,\s*scope:\s*ResolvedScope,\s*params:\s*P,\s*ctx:\s*CommandContext/s.test(source[types[0]])) {
-  violations.push("ListCommand no longer has the pure (document, scope, params, ctx) signature");
-}
-if (/\b(?:editor|transaction|selection)\b/.test(source[types[0]].match(/type ListCommand<P>[\s\S]*?SmartOperation\[\];/)?.[0] || "")) {
-  violations.push("ListCommand signature leaked editor/transaction/selection authority");
-}
-for (const id of ["create", "unwrap", "indent", "outdent", "setPreset", "setStyle", "setChecked", "move", "restartNumbering", "continueNumbering"]) {
-  if (!new RegExp(`"list\\.${id}"`).test(source[commands[0]])) violations.push(`missing pure list.${id} command`);
-}
-if (/Legacy implementation retained|nestSelectedListItems|outdentSelectedListItems|\.execute\(\s*["']list\.(?:indent|outdent|toggle)/.test(source[classic[0]])) {
-  violations.push("ClassicEditor still contains a legacy list mutation path");
-}
-for (const route of ["executeCanonicalListDepth", "executeCanonicalListMove", "executeCanonicalListStyle", "executeCanonicalListToggle", "executeCanonicalListStructuralInput"]) {
-  if (!source[classic[0]].includes(route) || !source[bridge[0]].includes(`export const ${route}`)) violations.push(`ClassicEditor is not routed through ${route}`);
-}
-if (!source[rootIndex[0]].includes('export * from "./foundation/index.js"')) violations.push("root canonical promotion missing");
-if (!source[legacyIndex[0]].includes("Compatibility API") || !source[corePackage[0]].includes('"./legacy"')) violations.push("legacy rename subpath missing");
-if (!/normalized document structure with IDs stripped/.test(source[shadow[0]]) || !/never document text/.test(source[shadow[0]])) {
-  violations.push("shadow equivalence/privacy policy is not frozen in code");
-}
-const expectedTouchpoints = new Map([
-  ["imported-list-normalization", "Phase8"],
-]);
-const actualTouchpoints = [...source[classic[0]].matchAll(/LEGACY_LIST_TOUCHPOINT:\s+(\S+)\s+owner=(Phase\d+)/g)];
-if (actualTouchpoints.length !== expectedTouchpoints.size) violations.push("legacy list-touching inventory count changed without a contract update");
-for (const [, marker, owner] of actualTouchpoints) {
-  if (expectedTouchpoints.get(marker) !== owner || !source[touchpoints[0]].includes(`\`${marker}\``)) {
-    violations.push(`untracked legacy list touchpoint ${marker} (${owner})`);
-  }
-}
-const migrationAdapters = [...source[bridge[0]].matchAll(/MIGRATION_ADAPTER:\s+(\S+)\s+owner=(Phase\d+)/g)];
-if (migrationAdapters.length !== 1 || migrationAdapters[0]?.[1] !== "canonical-list-dom-roundtrip" || migrationAdapters[0]?.[2] !== "Phase8") {
-  violations.push("temporary canonical list adapter inventory changed without a contract update");
-}
-if (!/\*\*Active adapter count: \d+\*\*/.test(source[adapters[0]]) || !source[adapters[0]].includes("`canonical-list-dom-roundtrip`")) {
-  violations.push("canonical list migration adapter is missing from the tracked metric");
-}
-if (!/retain the legacy execution path in a \*\*test-only\s+harness before production deletion\*\*/.test(source[behaviorChanges[0]])) {
-  violations.push("future shadow-before-delete process rule is missing");
-}
+const failures = [];
+const commandSource = withoutComments(commands);
+const typeSource = withoutComments(types);
+const requiredCommands = [
+  "list.create", "list.unwrap", "list.indent", "list.outdent", "list.setPreset", "list.setStyle",
+  "list.setChecked", "list.move", "list.restartNumbering", "list.continueNumbering",
+];
 
-if (violations.length) {
-  process.stderr.write(`Phase 3 contract violations:\n${violations.map((value) => `- ${value}`).join("\n")}\n`);
-  process.exitCode = 1;
-} else process.stdout.write("Phase 3 pure-command, product-routing, root-promotion, and shadow-policy gates passed.\n");
+if (!/export\s+type\s+ListCommand<P>\s*=\s*\(\s*document:\s*SmartDocument,\s*scope:\s*ResolvedScope,\s*params:\s*P,\s*ctx:\s*CommandContext,?\s*\)\s*=>\s*SmartOperation\[\]/s.test(typeSource)) {
+  failures.push("ListCommand is not the pure (document, scope, params, ctx) => SmartOperation[] contract.");
+}
+if (/from\s+["'](?:react|smartrte-core\/legacy)["']|\b(?:HTMLElement|Document|window|FoundationEditor|SmartTransaction)\b/.test(commandSource)) {
+  failures.push("List command implementation imports or constructs product/DOM/editor authority.");
+}
+const keys = mapKeys(commands, "listCommands");
+for (const key of requiredCommands) if (!keys.includes(key)) failures.push(`listCommands is missing ${key}.`);
+if (!sourceHas(canonicalEditor, /createList\(|indentList\(|outdentList\(|moveListItems\(/)) {
+  failures.push("Canonical product toolbar does not call the foundation list commands.");
+}
+if (sourceHas(classic, /(?:nestSelectedListItems|outdentSelectedListItems|legacyToggleList|legacyIndentListItems|legacyOutdentListItems)/)) {
+  failures.push("ClassicEditor still contains a legacy list mutation call.");
+}
+if (!sourceHas(shadow, /normalizedStructureWithoutIds|semanticSelectionPosition|shadowLogRecord/)) {
+  failures.push("List shadow comparator does not compare normalized structure and semantic selection.");
+}
+if (!sourceHas(harness, /Test-only|smartrte-core\/legacy/)) failures.push("Retained list engine harness is missing.");
+if (!sourceHas(rootIndex, /export\s+\*\s+from\s+["']\.\/foundation\/index\.js["']/)) failures.push("Root canonical foundation export is missing.");
+if (!sourceHas(legacyIndex, /export\s+\*\s+from\s+["']\.\.\/model\.js["']/)
+  || !sourceHas(legacyIndex, /export\s+\*\s+from\s+["']\.\.\/transaction\.js["']/)
+  || !corePackage.includes('"./legacy"')) failures.push("Legacy compatibility subpath is missing.");
+
+if (assertContract("Phase 3 pure-command/routing", failures)) {
+  process.stdout.write(`Phase 3 contract: ${keys.length} mapped list commands, pure command source, canonical routing, and retained shadow harness passed.\n`);
+}

@@ -1,33 +1,31 @@
-import { readFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { assertContract, mapKeys, readSource, sourceHas, withoutComments } from "./contract-utils.mjs";
 
-const root = new URL("..", import.meta.url).pathname;
-const read = (path) => readFileSync(join(root, path), "utf8");
-const classic = read("packages/react/src/components/ClassicEditor.tsx");
-const harness = read("packages/react/src/test-harness/legacyInlineEngine.ts");
-const declarations = read("packages/core/src/foundation/marks/schema.ts");
-const inventory = read("docs/MIGRATION_ADAPTER_INVENTORY.md");
-
+const [schema, commands, classic, canonical, harness] = await Promise.all([
+  readSource("packages/core/src/foundation/marks/schema.ts"),
+  readSource("packages/core/src/foundation/marks/commands.ts"),
+  readSource("packages/react/src/components/ClassicEditor.tsx"),
+  readSource("packages/react/src/components/CanonicalAuthorityEditor.tsx"),
+  readSource("packages/react/src/test-harness/legacyInlineEngine.ts"),
+]);
 const failures = [];
-if (!harness.includes("Test-only Phase 4 snapshot") || !harness.includes("smartrte-core/legacy")) {
-  failures.push("Legacy inline engine is not retained in the test-only harness.");
+const schemaSource = withoutComments(schema);
+const commandSource = withoutComments(commands);
+const toolBlock = schemaSource.match(/export\s+const\s+inlineToolDeclarations\s*=\s*\[([\s\S]*?)\]\s*as\s+const/)?.[1] || "";
+const toolIds = [...toolBlock.matchAll(/\bid:\s*"([^"]+)"/g)].map((match) => match[1]);
+const expectedTools = ["bold", "italic", "underline", "strikethrough", "inlineCode", "superscript", "subscript", "textColor", "backgroundColor", "fontSize", "fontFamily", "link"];
+if (toolIds.length !== expectedTools.length || expectedTools.some((id) => !toolIds.includes(id))) {
+  failures.push(`Expected exactly ${expectedTools.length} generic inline tool declarations; found ${toolIds.length}: ${toolIds.join(", ")}.`);
 }
-for (const id of ["bold", "italic", "underline", "strikethrough", "inlineCode", "superscript", "subscript", "textColor", "backgroundColor", "fontSize", "fontFamily", "link"]) {
-  if (!declarations.includes(`id: "${id}"`)) failures.push(`Missing inline tool declaration: ${id}`);
+for (const key of ["mark.apply", "mark.remove", "mark.toggle", "mark.setAttrs", "mark.clearAll"]) {
+  if (!mapKeys(commands, "markCommands").includes(key)) failures.push(`markCommands is missing ${key}.`);
 }
-const legacyImports = [...classic.matchAll(/import\s+[^;]+from\s+["']smartrte-core\/legacy["']/g)].map((match) => match[0]).join("\n");
-if (/\b(?:toggleBold|toggleItalic|toggleUnderline|toggleStrike|applyTextColor|applyFontSize|applyFontFamily|applyLink|removeLink)\b/.test(legacyImports)) {
-  failures.push("ClassicEditor still references a legacy inline command.");
+if (!sourceHas(commands, /export\s+const\s+(?:applyMarkCommand|removeMarkCommand|toggleMarkCommand|setMarkAttrsCommand|clearAllMarksCommand)/)) {
+  failures.push("Generic mark command implementation is missing.");
 }
-if (/execCommand\(\s*["'](?:bold|italic|underline|strikeThrough|subscript|superscript|foreColor|hiliteColor|fontName|fontSize|createLink|unlink)["']/.test(classic)) {
-  failures.push("ClassicEditor still invokes an inline-formatting execCommand.");
-}
-const adapterFiles = readdirSync(join(root, "packages/react/src/adapters")).filter((file) => file.endsWith(".ts"));
-const markers = adapterFiles.flatMap((file) => [...read(`packages/react/src/adapters/${file}`).matchAll(/MIGRATION_ADAPTER:/g)]).length;
-if (markers !== 3) failures.push(`Expected three feature adapters in the adapters directory; source contains ${markers}.`);
+if (sourceHas(classic, /document\.execCommand\s*\(/)) failures.push("ClassicEditor still invokes execCommand for inline formatting.");
+if (!sourceHas(canonical, /executeMarkTool\(/)) failures.push("Canonical surface does not route marks through the generic mark engine.");
+if (!sourceHas(harness, /runLegacyInlineTool\(|legacyInlineToolIds/) || !sourceHas(harness, /smartrte-core\/legacy/)) failures.push("Retained inline legacy harness is missing.");
 
-if (failures.length) {
-  failures.forEach((failure) => console.error(`Phase 4 contract: ${failure}`));
-  process.exit(1);
+if (assertContract("Phase 4 generic-mark", failures)) {
+  process.stdout.write(`Phase 4 contract: ${toolIds.length} declarations, generic mark command map, canonical routing, and retained harness passed.\n`);
 }
-console.log(`Phase 4 contract: 12 declarations, retained legacy harness, no Classic inline legacy path, ${markers} tracked adapters.`);

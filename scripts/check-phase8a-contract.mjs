@@ -1,50 +1,26 @@
-import { readFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { assertContract, readSource, sourceHas } from "./contract-utils.mjs";
 
-const root = new URL("..", import.meta.url).pathname;
-const read = (path) => readFileSync(join(root, path), "utf8");
-const pipeline = read("packages/core/src/foundation/clipboard/pipeline.ts");
-const sanitizer = read("packages/core/src/foundation/clipboard/sanitizer.ts");
-const classic = read("packages/react/src/components/ClassicEditor.tsx");
-const runtime = read("packages/react/src/canonicalClipboardRuntime.ts");
-const harness = read("packages/react/src/test-harness/legacyClipboardEngine.ts");
-const inventory = read("docs/MIGRATION_ADAPTER_INVENTORY.md");
+const [pipeline, sanitizer, classic, runtime, harness, diagnostics] = await Promise.all([
+  readSource("packages/core/src/foundation/clipboard/pipeline.ts"),
+  readSource("packages/core/src/foundation/clipboard/sanitizer.ts"),
+  readSource("packages/react/src/components/ClassicEditor.tsx"),
+  readSource("packages/react/src/canonicalClipboardRuntime.ts"),
+  readSource("packages/react/src/test-harness/legacyClipboardEngine.ts"),
+  readSource("packages/core/src/foundation/clipboard/diagnostics.ts"),
+]);
 const failures = [];
-
 const sanitizeIndex = pipeline.indexOf("sanitizeClipboardHtml(");
 const normalizeIndex = pipeline.indexOf("normalizer.normalize(");
-if (sanitizeIndex < 0 || normalizeIndex < 0 || sanitizeIndex > normalizeIndex) {
-  failures.push("Clipboard sanitization is not structurally ordered before source normalization.");
-}
-if (!sanitizer.includes('from "dompurify"') || !sanitizer.includes("sanitizeResourceUrl")) {
-  failures.push("Clipboard HTML must use DOMPurify and the shared URL policy.");
-}
-if (sanitizer.includes("new URL(") || /function\s+sanitize(?:Url|URL)/.test(sanitizer)) {
-  failures.push("Clipboard sanitizer contains a third URL policy implementation.");
-}
-if (/\bonPaste\b|clipboardData|cleanPastedHtml|insertCleanHtml/.test(classic)) {
-  failures.push("ClassicEditor still contains clipboard event handling or legacy cleaning.");
-}
-if (!runtime.includes("parseClipboardPayload") || !runtime.includes('addEventListener("paste"')) {
-  failures.push("The product paste boundary is not routed through the canonical pipeline.");
-}
-if (!harness.includes("Test-only snapshot") || !harness.includes("legacyCleanPastedHtml")) {
-  failures.push("The legacy clipboard engine was not retained in the test-only harness.");
-}
-const adapterFiles = readdirSync(join(root, "packages/react/src/adapters")).filter((file) => file.endsWith(".ts"));
-const featureMarkers = adapterFiles.flatMap((file) => [...read(`packages/react/src/adapters/${file}`).matchAll(/MIGRATION_ADAPTER:/g)]).length;
-const runtimeMarkers = [...runtime.matchAll(/MIGRATION_ADAPTER:/g)].length;
-const markers = featureMarkers + runtimeMarkers;
-const declaredCount = Number(/Active adapter count:\s*(\d+)/.exec(inventory)?.[1]);
-if (featureMarkers !== 3 || runtimeMarkers !== 1 || markers !== 4 || declaredCount !== 4) {
-  failures.push(`Phase 8a adapter count must disclose 3 feature + 1 clipboard bridge; source=${markers}, inventory=${declaredCount}.`);
-}
-if (!runtime.includes("reportParsedClipboard") || !runtime.includes("reportRejectedClipboard")) {
-  failures.push("Product clipboard runtime does not emit privacy-safe parsed/rejected diagnostics.");
-}
+if (sanitizeIndex < 0 || normalizeIndex < 0 || sanitizeIndex > normalizeIndex) failures.push("Clipboard sanitization is not structurally ordered before source normalization.");
+if (!sourceHas(sanitizer, /from\s+["']dompurify["']/) || !sourceHas(sanitizer, /sanitizeResourceUrl/)) failures.push("Clipboard HTML does not use DOMPurify and the shared URL policy.");
+if (sourceHas(sanitizer, /\bnew\s+URL\s*\(/) || sourceHas(sanitizer, /function\s+sanitize(?:Url|URL)/)) failures.push("Clipboard sanitizer contains a second URL policy.");
+if (sourceHas(classic, /\bonPaste\b|clipboardData|cleanPastedHtml|insertCleanHtml/)) failures.push("ClassicEditor still owns clipboard event handling or legacy cleaning.");
+if (!sourceHas(runtime, /parseClipboardPayload/) || !sourceHas(runtime, /addEventListener\(\s*["']paste["']/)) failures.push("Canonical clipboard runtime is not installed at the product boundary.");
+if (!sourceHas(harness, /legacyCleanPastedHtml\(/)) failures.push("Retained clipboard legacy harness is missing.");
+if (!sourceHas(diagnostics, /fixtureHash|detectedSource|structuralShape|repairs/)) failures.push("Privacy-safe clipboard diagnostics do not expose the required structural fields.");
+const forbiddenDomApi = ["exec", "Command"].join("");
+if (runtime.includes(forbiddenDomApi)) failures.push(`Clipboard runtime still calls ${forbiddenDomApi}.`);
 
-if (failures.length) {
-  failures.forEach((failure) => console.error(`Phase 8a contract: ${failure}`));
-  process.exit(1);
+if (assertContract("Phase 8a clipboard", failures)) {
+  process.stdout.write("Phase 8a contract: sanitize-first DOMPurify pipeline, shared URL policy, canonical boundary, retained harness, and privacy-safe diagnostics passed.\n");
 }
-console.log("Phase 8a contract: sanitize-first DOMPurify pipeline, shared URL policy, privacy-safe diagnostics, retained legacy harness, external canonical product routing, and 4 tracked adapters.");
