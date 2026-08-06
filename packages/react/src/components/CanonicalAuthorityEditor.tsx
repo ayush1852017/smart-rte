@@ -6,6 +6,7 @@ import {
   createNodeId,
   deleteAtom,
   executeMarkTool,
+  indentBlockCommand,
   indentList,
   inlineToolDeclarations,
   isTextNode,
@@ -25,15 +26,19 @@ import {
   resizeAtom,
   runAtomUpload,
   restartListNumbering,
-  sanitizeAtomSource,
   serializeCanonicalListHtml,
   serializeCanonicalListMarkdown,
   setListChecked,
+  setListPreset,
   setListStyle,
   setTableHeaderCommand,
   setBlockAttributes,
   setBlockTypeCommand,
+  moveBlockCommand,
+  outdentBlockCommand,
   splitTableCellCommand,
+  unwrapBlocks,
+  wrapBlocks,
   unwrapList,
   updateAtom,
   outdentList,
@@ -49,6 +54,10 @@ import {
 import { ensureStyleSheet } from "../theme.js";
 import type { MediaKind, MediaProvider } from "../mediaProvider.js";
 import { DefaultMediaPicker, type MediaPickerComponent } from "./MediaPicker.js";
+import { serializeSmartDocument, smartDocumentFromHtml } from "../adapters/domSmartDocument.js";
+import { exportDocxDocument } from "../adapters/docxFormat.js";
+import { importStyledDocxDocument } from "../adapters/styledDocxFormat.js";
+import { importPdfDocument, printSmartDocumentAsPdf } from "../adapters/pdfFormat.js";
 import {
   CanonicalEditorRuntime,
   type SmartEditorChange,
@@ -78,6 +87,8 @@ export interface CanonicalAuthorityEditorProps {
 const labels: Record<string, string> = {
   bold: "Bold", italic: "Italic", underline: "Underline", strike: "Strikethrough",
   inlineCode: "Inline code", superscript: "Superscript", subscript: "Subscript",
+  textColor: "Text colour", backgroundColor: "Background colour",
+  fontSize: "Font size", fontFamily: "Font family",
 };
 
 const findNode = (root: SmartNode, id: string): SmartElementNode | null => {
@@ -92,6 +103,15 @@ const findNode = (root: SmartNode, id: string): SmartElementNode | null => {
 
 const downloadText = (ownerDocument: Document, name: string, type: string, value: string) => {
   const url = URL.createObjectURL(new Blob([value], { type }));
+  const anchor = ownerDocument.createElement("a");
+  anchor.href = url;
+  anchor.download = name;
+  anchor.click();
+  URL.revokeObjectURL(url);
+};
+
+const downloadBlob = (ownerDocument: Document, name: string, blob: Blob) => {
+  const url = URL.createObjectURL(blob);
   const anchor = ownerDocument.createElement("a");
   anchor.href = url;
   anchor.download = name;
@@ -207,6 +227,70 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
     const operations = action === "indent" ? indentList(runtime.editor.document, scope, { nestedListIds: ids(8) }, context)
       : action === "outdent" ? outdentList(runtime.editor.document, scope, { splitListIds: ids(8) }, context)
         : moveListItems(runtime.editor.document, scope, { direction: action }, context);
+    runtime.executeOperations(operations, { preserveSelectionById: true });
+  };
+
+  const applyAttributedMark = (id: string) => {
+    const declaration = inlineToolDeclarations.find((tool) => tool.id === id);
+    if (!declaration) return;
+    const attrs = id === "textColor" || id === "backgroundColor"
+      ? (() => {
+        const value = window.prompt(id === "textColor" ? "Text colour" : "Background colour", "#000000");
+        return value ? { value } : undefined;
+      })()
+      : id === "fontSize"
+        ? (() => {
+          const value = window.prompt("Font size (px)", "16");
+          const valuePx = value === null ? undefined : Number(value);
+          return Number.isFinite(valuePx) ? { valuePx } : undefined;
+        })()
+        : id === "fontFamily"
+          ? (() => {
+            const value = window.prompt("Font family", "system-ui");
+            return value ? { value } : undefined;
+          })()
+          : undefined;
+    if ((id === "textColor" || id === "backgroundColor" || id === "fontSize" || id === "fontFamily") && !attrs) return;
+    try {
+      executeMarkTool(runtime.editor, declaration, "apply", attrs);
+      runtime.focus();
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "Invalid formatting value.");
+    }
+  };
+
+  const toggleBlockquote = () => {
+    const scope = blockScope();
+    const resolved = runtime.editor.resolve({ pos: runtime.editor.selection.head });
+    const ancestor = [...resolved.ancestors].reverse().find((node) => node.type === "blockquote");
+    const context = blockContext();
+    if (ancestor) {
+      const quoteScope: ResolvedScope = {
+        kind: "block-range",
+        blockIds: [ancestor.id],
+        promotedFromPartial: false,
+        commonParentId: null,
+        range: { from: resolved.pos, to: resolved.pos },
+        isolatingAncestorId: null,
+        clamped: false,
+      };
+      runtime.executeOperations(unwrapBlocks(runtime.editor.document, quoteScope, { type: "blockquote" }, context), { preserveSelectionById: true });
+      return;
+    }
+    if (scope.kind !== "block-range" || !scope.blockIds.length) return;
+    runtime.executeOperations(wrapBlocks(runtime.editor.document, scope, {
+      type: "blockquote", wrapperIds: ids(scope.blockIds.length),
+    }, context), { preserveSelectionById: true });
+  };
+
+  const runBlock = (action: "up" | "down" | "indent" | "outdent") => {
+    const scope = blockScope();
+    const context = blockContext();
+    const operations = action === "up" || action === "down"
+      ? moveBlockCommand(runtime.editor.document, scope, { direction: action }, context)
+      : action === "indent"
+        ? indentBlockCommand(runtime.editor.document, scope, {}, context)
+        : outdentBlockCommand(runtime.editor.document, scope, {}, context);
     runtime.executeOperations(operations, { preserveSelectionById: true });
   };
 
@@ -350,11 +434,35 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
     runtime.executeOperations(operations, resizeBy === undefined ? {} : { historyGroup: `resize-${scope.nodeId}` });
   };
 
-  const runImport = async (file: File) => {
-    const text = await file.text();
-    const document = /\.md(?:own)?$/i.test(file.name) ? parseCanonicalListMarkdown(text) : parseCanonicalListHtml(text);
+  const replaceCanonicalDocument = (document: ReturnType<typeof parseCanonicalListHtml>) => {
     runtime.replaceValue({ schemaVersion: runtime.editor.schema.version, revision: runtime.getRevision() + 1, document });
     runtime.focus();
+  };
+
+  const legacyDocument = () => {
+    const ownerDocument = rootRef.current?.ownerDocument;
+    if (!ownerDocument) return null;
+    return smartDocumentFromHtml(serializeCanonicalListHtml(runtime.editor.document, { clean: true }), ownerDocument);
+  };
+
+  const runImport = async (file: File) => {
+    if (/\.docx$/i.test(file.name) || file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
+      const ownerDocument = rootRef.current?.ownerDocument;
+      if (!ownerDocument) return;
+      const result = await importStyledDocxDocument(await file.arrayBuffer(), ownerDocument);
+      replaceCanonicalDocument(parseCanonicalListHtml(result.layoutHtml || serializeSmartDocument(result.document)));
+      return;
+    }
+    if (/\.pdf$/i.test(file.name) || file.type === "application/pdf") {
+      const ownerDocument = rootRef.current?.ownerDocument;
+      if (!ownerDocument) return;
+      const result = await importPdfDocument(await file.arrayBuffer(), ownerDocument);
+      replaceCanonicalDocument(parseCanonicalListHtml(result.layoutHtml));
+      return;
+    }
+    const text = await file.text();
+    const document = /\.md(?:own)?$/i.test(file.name) ? parseCanonicalListMarkdown(text) : parseCanonicalListHtml(text);
+    replaceCanonicalDocument(document);
   };
 
   const runExport = (format: "html" | "markdown" | "native") => {
@@ -362,6 +470,19 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
     if (format === "native") return downloadText(rootRef.current!.ownerDocument, "smart-rte.json", "application/json", JSON.stringify(envelope, null, 2));
     if (format === "markdown") return downloadText(rootRef.current!.ownerDocument, "smart-rte.md", "text/markdown", serializeCanonicalListMarkdown(envelope.document));
     return downloadText(rootRef.current!.ownerDocument, "smart-rte.html", "text/html", serializeCanonicalListHtml(envelope.document, { clean: true }));
+  };
+
+  const runDocxExport = async () => {
+    const document = legacyDocument();
+    if (!document || !rootRef.current) return;
+    const blob = await exportDocxDocument(document);
+    downloadBlob(rootRef.current.ownerDocument, "smart-rte.docx", blob);
+  };
+
+  const runPdfExport = () => {
+    const document = legacyDocument();
+    const view = rootRef.current?.ownerDocument.defaultView;
+    if (document && view) printSmartDocumentAsPdf(document, view);
   };
 
   return <section className={`srte-root srte-editor srte-canonical-authority${className ? ` ${className}` : ""}`} data-smart-authority="canonical">
@@ -374,7 +495,10 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
         title={labels[tool.id]}
         disabled={readOnly}
         onMouseDown={(event) => event.preventDefault()}
-        onClick={() => { executeMarkTool(runtime.editor, tool, "toggle"); runtime.focus(); }}
+        onClick={() => {
+          if (["textColor", "backgroundColor", "fontSize", "fontFamily"].includes(tool.id)) applyAttributedMark(tool.id);
+          else { executeMarkTool(runtime.editor, tool, "toggle"); runtime.focus(); }
+        }}
       >{labels[tool.id]}</button>)}
       <select
         aria-label="Block type"
@@ -398,6 +522,11 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
         onMouseDown={(event) => event.preventDefault()}
         onClick={() => transactBlock(setBlockAttributes(runtime.editor.document, blockScope(), { attrs: { align } }, blockContext()))}
       >{align}</button>)}
+      <button type="button" className="srte-tool-button" aria-label="Blockquote" disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={toggleBlockquote}>Blockquote</button>
+      <button type="button" className="srte-tool-button" aria-label="Move block up" disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={() => runBlock("up")}>Block ↑</button>
+      <button type="button" className="srte-tool-button" aria-label="Move block down" disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={() => runBlock("down")}>Block ↓</button>
+      <button type="button" className="srte-tool-button" aria-label="Indent block" disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={() => runBlock("indent")}>Block indent</button>
+      <button type="button" className="srte-tool-button" aria-label="Outdent block" disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={() => runBlock("outdent")}>Block outdent</button>
       <button type="button" className="srte-tool-button" aria-label="Insert or edit link" disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={() => {
         const href = window.prompt("Link URL", "https://");
         const tool = inlineToolDeclarations.find((entry) => entry.id === "link");
@@ -412,6 +541,19 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
       <button type="button" className="srte-tool-button" aria-label="Bulleted list" disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={() => toggleList("disc")}>Bullets</button>
       <button type="button" className="srte-tool-button" aria-label="Numbered list" disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={() => toggleList("decimal")}>Numbering</button>
       <button type="button" className="srte-tool-button" aria-label="Checklist" disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={() => toggleList("disc", true)}>Checklist</button>
+      <select aria-label="List preset" disabled={readOnly || currentListScope.kind !== "list-selection"} defaultValue="" onChange={(event) => {
+        const preset = event.target.value;
+        if (!preset || currentListScope.kind !== "list-selection") return;
+        runtime.executeOperations(setListPreset(runtime.editor.document, currentListScope, { preset }, blockContext()), { preserveSelectionById: true });
+      }}>
+        <option value="">List preset</option>
+        <option value="bullet-disc">Bullet · disc</option>
+        <option value="bullet-circle">Bullet · circle</option>
+        <option value="bullet-square">Bullet · square</option>
+        <option value="ordered-decimal">Number · decimal</option>
+        <option value="ordered-upper-alpha">Number · upper alpha</option>
+        <option value="ordered-upper-roman">Number · upper roman</option>
+      </select>
       <button type="button" className="srte-tool-button" aria-label="Check selected items" aria-pressed={currentListScope.kind === "list-selection" && currentListScope.items.every((item) => findNode(runtime.editor.document, item.itemId)?.attrs?.checked === true)} disabled={readOnly || currentList?.attrs?.checkable !== true} onMouseDown={(event) => event.preventDefault()} onClick={toggleCheckedItems}>Check</button>
       <button type="button" className="srte-tool-button" aria-label="Indent list item" disabled={readOnly || !canIndent} onMouseDown={(event) => event.preventDefault()} onClick={() => runList("indent")}>Indent</button>
       <button type="button" className="srte-tool-button" aria-label="Outdent list item" disabled={readOnly || currentListScope.kind !== "list-selection"} onMouseDown={(event) => event.preventDefault()} onClick={() => runList("outdent")}>Outdent</button>
@@ -435,7 +577,7 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
       <button type="button" className="srte-tool-button" aria-label="Grow selected atom" disabled={readOnly || !atomSelected} onMouseDown={(event) => event.preventDefault()} onClick={() => editSelectedAtom(20)}>Resize +</button>
       <button type="button" className="srte-tool-button" aria-label="Shrink selected atom" disabled={readOnly || !atomSelected} onMouseDown={(event) => event.preventDefault()} onClick={() => editSelectedAtom(-20)}>Resize −</button>
       <button type="button" className="srte-tool-button" aria-label="Delete selected atom" disabled={readOnly || !atomSelected} onMouseDown={(event) => event.preventDefault()} onClick={() => runtime.executeOperations(deleteAtom(runtime.editor.document, atomScope(), {}, blockContext()))}>Delete media</button>
-      <input ref={importRef} type="file" accept=".html,.htm,.md,.markdown,text/html,text/markdown" hidden onChange={(event) => {
+      <input ref={importRef} type="file" accept=".html,.htm,.md,.markdown,.docx,.pdf,text/html,text/markdown,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf" hidden onChange={(event) => {
         const file = event.currentTarget.files?.[0];
         if (file) void runImport(file);
         event.currentTarget.value = "";
@@ -443,6 +585,8 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
       <button type="button" className="srte-tool-button" aria-label="Import document" disabled={readOnly} onClick={() => importRef.current?.click()}>Import</button>
       <button type="button" className="srte-tool-button" aria-label="Export HTML" onClick={() => runExport("html")}>Export HTML</button>
       <button type="button" className="srte-tool-button" aria-label="Export Markdown" onClick={() => runExport("markdown")}>Export Markdown</button>
+      <button type="button" className="srte-tool-button" aria-label="Export DOCX" onClick={() => void runDocxExport()}>Export DOCX</button>
+      <button type="button" className="srte-tool-button" aria-label="Export PDF" onClick={runPdfExport}>Export PDF</button>
       <button type="button" className="srte-tool-button" aria-label="Export native document" onClick={() => runExport("native")}>Export Native</button>
       <button type="button" className="srte-tool-button" aria-label="Undo" disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={() => { runtime.editor.undo(); runtime.focus(); }}>Undo</button>
       <button type="button" className="srte-tool-button" aria-label="Redo" disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={() => { runtime.editor.redo(); runtime.focus(); }}>Redo</button>

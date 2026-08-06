@@ -11,18 +11,21 @@ const selectFirstText = async (page: Page) => page.evaluate(() => {
   document.dispatchEvent(new Event("selectionchange"));
 });
 
-const placeCaret = async (page: Page, selector: string, last = false) => page.evaluate(({ selector, last }) => {
-  const matches = Array.from(document.querySelectorAll<HTMLElement>(selector));
-  const target = last ? matches.at(-1) : matches[0];
-  if (!target) throw new Error(`Cannot place caret: no element matches ${selector}`);
-  const range = document.createRange();
-  range.selectNodeContents(target);
-  range.collapse(false);
-  const selection = window.getSelection()!;
-  selection.removeAllRanges();
-  selection.addRange(range);
-  document.dispatchEvent(new Event("selectionchange"));
-}, { selector, last });
+const placeCaret = async (page: Page, selector: string, last = false) => {
+  await expect(page.locator(selector).first()).toBeAttached();
+  await page.evaluate(({ selector, last }) => {
+    const matches = Array.from(document.querySelectorAll<HTMLElement>(selector));
+    const target = last ? matches.at(-1) : matches[0];
+    if (!target) throw new Error(`Cannot place caret: no element matches ${selector}`);
+    const range = document.createRange();
+    range.selectNodeContents(target);
+    range.collapse(false);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+  }, { selector, last });
+};
 
 const selectCellRange = async (page: Page, start: Locator, end: Locator) => {
   const startBox = await start.boundingBox();
@@ -112,6 +115,45 @@ test.describe("canonical toolbar routing", () => {
       name: "replacement.html", mimeType: "text/html", buffer: Buffer.from("<h2>Imported canonical content</h2>"),
     });
     await expect(surface.locator("h2")).toContainText("Imported canonical content");
+  });
+
+  test("routes attributed marks, block transforms, list presets, and DOCX/PDF workflows", async ({ page }) => {
+    page.on("dialog", (dialog) => {
+      const message = dialog.message();
+      const answer = message.includes("Text colour") || message.includes("Background colour") ? "#336699"
+        : message.includes("Font size") ? "18"
+          : message.includes("Font family") ? "Inter" : "";
+      void dialog.accept(answer);
+    });
+    await page.goto("/?canonicalAuthority=1&blocks=3");
+    const surface = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
+    await selectFirstText(page);
+    for (const label of ["Text colour", "Background colour", "Font size", "Font family"]) {
+      await page.getByRole("button", { name: label, exact: true }).click();
+    }
+    for (const mark of ["textColor", "backgroundColor", "fontSize", "fontFamily"]) {
+      await expect(surface.locator(`p:first-of-type [data-smart-mark="${mark}"]`)).toHaveCount(1);
+    }
+
+    await page.getByRole("button", { name: "Blockquote", exact: true }).click();
+    await expect(surface.locator("blockquote")).toContainText("Canonical product editor");
+
+    await placeCaret(page, '[data-smart-authority="canonical"] [contenteditable="true"] > p', true);
+    await page.getByRole("button", { name: "Move block up", exact: true }).click();
+    await page.getByRole("button", { name: "Indent block", exact: true }).click();
+    await expect(surface.locator('p[style*="margin-inline-start"]')).toHaveCount(1);
+
+    await page.getByRole("button", { name: "Numbered list", exact: true }).click();
+    await page.getByRole("combobox", { name: "List preset" }).selectOption("ordered-upper-alpha");
+    await expect(surface.locator('ol[data-smart-list-preset="ordered-upper-alpha"]')).toHaveCount(1);
+
+    const docxDownload = page.waitForEvent("download");
+    await page.getByRole("button", { name: "Export DOCX", exact: true }).click();
+    expect((await docxDownload).suggestedFilename()).toBe("smart-rte.docx");
+
+    const pdfPopup = page.waitForEvent("popup");
+    await page.getByRole("button", { name: "Export PDF", exact: true }).click();
+    await (await pdfPopup).close();
   });
 
   test("selects canonical cells individually and supports merge/split", async ({ page }) => {
