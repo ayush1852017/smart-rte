@@ -24,6 +24,34 @@ const selectFirstText = async (page: import("@playwright/test").Page) => page.ev
   document.dispatchEvent(new Event("selectionchange"));
 });
 
+const placeCaret = async (page: import("@playwright/test").Page, selector: string, last = false) => {
+  await expect(page.locator(selector).first()).toBeAttached();
+  await page.evaluate(({ selector, last }) => {
+    const matches = Array.from(document.querySelectorAll<HTMLElement>(selector));
+    const target = last ? matches.at(-1) : matches[0];
+    if (!target) throw new Error(`Cannot place caret: no element matches ${selector}`);
+    const range = document.createRange(); range.selectNodeContents(target); range.collapse(false);
+    const selection = window.getSelection()!; selection.removeAllRanges(); selection.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+  }, { selector, last });
+};
+
+const selectCellRange = async (page: import("@playwright/test").Page, start: import("@playwright/test").Locator, end: import("@playwright/test").Locator) => {
+  const startBox = await start.boundingBox();
+  const endBox = await end.boundingBox();
+  if (!startBox || !endBox) throw new Error("Cannot select generated table cells without layout boxes.");
+  await page.mouse.move(startBox.x + startBox.width / 2, startBox.y + startBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(endBox.x + endBox.width / 2, endBox.y + endBox.height / 2, { steps: 4 });
+  await page.mouse.up();
+};
+
+const chooseMedia = async (page: import("@playwright/test").Page, kind: "image" | "video" | "audio", name: string, mimeType: string) => {
+  const picker = page.getByRole("dialog", { name: `Choose ${kind}` });
+  await picker.locator('input[type="file"]').setInputFiles({ name, mimeType, buffer: Buffer.from(`${kind}-generated-session`) });
+  await expect(picker).toHaveCount(0);
+};
+
 const replaySnapshot = async (page: import("@playwright/test").Page) => page.evaluate(() => {
   const root = document.querySelector<HTMLElement>('[contenteditable="true"]')!;
   const clone = root.cloneNode(true) as HTMLElement;
@@ -51,9 +79,23 @@ const replaySnapshot = async (page: import("@playwright/test").Page) => page.eva
 
 const normalizedReplaySnapshot = async (page: import("@playwright/test").Page) => {
   const value = await replaySnapshot(page);
+  const semanticSelection = await page.evaluate(() => {
+    const runtime = (window as typeof window & { __smartProductCanonical?: { editor: {
+      selection: { type: string; anchor: { path: number[]; offset: number }; head: { path: number[]; offset: number } };
+      resolve: (input: { pos: { path: number[]; offset: number } }) => { pos: { path: number[]; offset: number }; kind: string };
+    } } }).__smartProductCanonical;
+    if (!runtime) return null;
+    const selection = runtime.editor.selection;
+    const point = (pos: { path: number[]; offset: number }) => {
+      const resolved = runtime.editor.resolve({ pos });
+      return { ownerPath: [...resolved.pos.path], kind: resolved.kind, offset: pos.offset };
+    };
+    return { type: selection.type, anchor: point(selection.anchor), head: point(selection.head) };
+  });
   return {
     structure: normalizedStructureWithoutIds(parseCanonicalListHtml(value.html), foundationSchema),
     selection: value.selection,
+    semanticSelection,
   };
 };
 
@@ -195,6 +237,124 @@ test.describe("Phase 8b canonical product authority", () => {
     }
     expect(firstDivergence).toBeNull();
     await context.close();
+  });
+
+  test("replays generated complete command sessions with semantic selection checkpoints", async ({ page }, testInfo) => {
+    test.setTimeout(120_000);
+    type Intent = { name: string; run: (page: import("@playwright/test").Page) => Promise<void> };
+    const button = (name: string): Intent["run"] => async (currentPage) => {
+      await currentPage.getByRole("button", { name, exact: true }).click();
+    };
+    const markSession: Intent[] = [
+      { name: "mark.bold", run: async (currentPage) => { await selectFirstText(currentPage); await button("Bold")(currentPage); } },
+      { name: "mark.italic", run: button("Italic") },
+      { name: "mark.underline", run: button("Underline") },
+      { name: "mark.strike", run: button("Strikethrough") },
+      { name: "mark.code", run: button("Inline code") },
+      { name: "mark.superscript", run: button("Superscript") },
+      { name: "mark.subscript", run: button("Subscript") },
+      { name: "mark.textColor", run: button("Text colour") },
+      { name: "mark.backgroundColor", run: button("Background colour") },
+      { name: "mark.fontSize", run: button("Font size") },
+      { name: "mark.fontFamily", run: button("Font family") },
+      { name: "mark.link", run: async (currentPage) => { await currentPage.getByRole("button", { name: "Insert or edit link", exact: true }).click(); } },
+    ];
+    const blockSession: Intent[] = [
+      { name: "block.setType", run: async (currentPage) => { await placeCaret(currentPage, '[data-smart-authority="canonical"] [contenteditable="true"] > p'); await currentPage.getByRole("combobox", { name: "Block type" }).selectOption("heading-2"); } },
+      { name: "block.setAttributes", run: button("Align center") },
+      { name: "block.wrap", run: button("Blockquote") },
+      { name: "block.unwrap", run: button("Blockquote") },
+      { name: "block.move", run: async (currentPage) => { await placeCaret(currentPage, '[data-smart-authority="canonical"] [contenteditable="true"] > :is(p,h1,h2,h3,h4,h5,h6)', true); await button("Move block up")(currentPage); } },
+      { name: "block.indent", run: button("Indent block") },
+      { name: "block.outdent", run: button("Outdent block") },
+    ];
+    const selectFirstTableCell = async (currentPage: import("@playwright/test").Page) => {
+      const table = currentPage.locator('[data-smart-authority="canonical"] [contenteditable="true"] table');
+      const cell = table.locator("tr").first().locator("td,th").first();
+      await selectCellRange(currentPage, cell, cell);
+    };
+    const listSession: Intent[] = [
+      { name: "list.create", run: async (currentPage) => { await placeCaret(currentPage, '[data-smart-authority="canonical"] [contenteditable="true"] > p'); await button("Bulleted list")(currentPage); await currentPage.keyboard.press("End"); await currentPage.keyboard.press("Enter"); await currentPage.keyboard.type("second"); } },
+      { name: "list.setPreset", run: async (currentPage) => { await currentPage.getByRole("combobox", { name: "List preset" }).selectOption("bullet-circle"); } },
+      { name: "list.setStyle", run: button("Bulleted list") },
+      { name: "list.indent", run: button("Indent list item") },
+      { name: "list.outdent", run: button("Outdent list item") },
+      { name: "list.move", run: button("Move item up") },
+      { name: "list.move.reverse", run: button("Move item down") },
+      { name: "list.create.numbered", run: button("Numbered list") },
+      { name: "list.setChecked", run: async (currentPage) => { await button("Checklist")(currentPage); await button("Check selected items")(currentPage); } },
+      { name: "list.restartNumbering", run: async (currentPage) => { await button("Numbered list")(currentPage); await button("Restart numbering")(currentPage); } },
+      { name: "list.continueNumbering", run: button("Continue numbering") },
+      { name: "list.unwrap", run: button("Numbered list") },
+    ];
+    const tableSession: Intent[] = [
+      { name: "table.insert", run: async (currentPage) => { await placeCaret(currentPage, '[data-smart-authority="canonical"] [contenteditable="true"] > p'); await button("Insert table")(currentPage); } },
+      { name: "table.mergeCells", run: async (currentPage) => { const table = currentPage.locator('[data-smart-authority="canonical"] [contenteditable="true"] table'); await selectCellRange(currentPage, table.locator("tr").first().locator("td,th").nth(0), table.locator("tr").first().locator("td,th").nth(1)); await button("Merge cells")(currentPage); } },
+      { name: "table.splitCell", run: async (currentPage) => { await selectFirstTableCell(currentPage); await button("Split cell")(currentPage); } },
+      { name: "table.insertRow", run: async (currentPage) => { await selectFirstTableCell(currentPage); await button("Add row")(currentPage); } },
+      { name: "table.removeRow", run: async (currentPage) => { await selectFirstTableCell(currentPage); await button("Remove row")(currentPage); } },
+      { name: "table.insertColumn", run: async (currentPage) => { await selectFirstTableCell(currentPage); await button("Add column")(currentPage); } },
+      { name: "table.removeColumn", run: async (currentPage) => { await selectFirstTableCell(currentPage); await button("Remove column")(currentPage); } },
+      { name: "table.setHeader", run: async (currentPage) => { await selectFirstTableCell(currentPage); await button("Header row")(currentPage); } },
+      { name: "table.moveRow", run: async (currentPage) => { await selectFirstTableCell(currentPage); await button("Move row down")(currentPage); } },
+      { name: "table.moveColumn", run: async (currentPage) => { await selectFirstTableCell(currentPage); await button("Move column right")(currentPage); } },
+      { name: "table.remove", run: async (currentPage) => { await selectFirstTableCell(currentPage); await button("Remove table")(currentPage); } },
+    ];
+    const atomSession: Intent[] = [
+      { name: "atom.insert.image", run: async (currentPage) => { await placeCaret(currentPage, '[data-smart-authority="canonical"] [contenteditable="true"] > p', true); await button("Insert image")(currentPage); await chooseMedia(currentPage, "image", "generated.png", "image/png"); } },
+      { name: "atom.resize", run: async (currentPage) => { await currentPage.locator('[data-smart-type="block_image"]').click(); await button("Grow selected atom")(currentPage); await button("Shrink selected atom")(currentPage); } },
+      { name: "atom.update", run: async (currentPage) => { await button("Edit selected atom")(currentPage); } },
+      { name: "atom.delete", run: button("Delete selected atom") },
+      { name: "atom.insert.video", run: async (currentPage) => { await placeCaret(currentPage, '[data-smart-authority="canonical"] [contenteditable="true"] > p', true); await button("Insert video")(currentPage); await chooseMedia(currentPage, "video", "generated.mp4", "video/mp4"); } },
+      { name: "atom.insert.audio", run: async (currentPage) => { await placeCaret(currentPage, '[data-smart-authority="canonical"] [contenteditable="true"] > p', true); await button("Insert audio")(currentPage); await chooseMedia(currentPage, "audio", "generated.mp3", "audio/mpeg"); } },
+      { name: "atom.insert.formula", run: async (currentPage) => { await placeCaret(currentPage, '[data-smart-authority="canonical"] [contenteditable="true"] > p', true); await button("Insert formula")(currentPage); } },
+    ];
+    const sessions: Array<{ name: string; intents: Intent[] }> = [
+      { name: "marks", intents: markSession },
+      { name: "blocks", intents: blockSession },
+      { name: "lists", intents: listSession },
+      { name: "tables", intents: tableSession },
+      { name: "atoms", intents: atomSession },
+    ];
+    const volatile = (value: unknown) => JSON.stringify(value).replace(/https:\/\/media\.playground\.test\/[^"\\]+/g, "https://media.playground.test/fixture");
+    const runSession = async (intents: readonly Intent[]) => {
+      await expect(page.locator('[data-smart-authority="canonical"] [contenteditable="true"]')).toBeVisible();
+      const snapshots: unknown[] = [];
+      for (const intent of intents) {
+        await intent.run(page);
+        const snapshot = await normalizedReplaySnapshot(page);
+        snapshots.push(snapshot);
+        expect(snapshot.structure).toBeDefined();
+      }
+      return snapshots;
+    };
+    page.on("dialog", (dialog) => {
+      const message = dialog.message();
+      const answer = message.includes("Text colour") || message.includes("Background colour") ? "#336699"
+        : message.includes("Font size") ? "18"
+          : message.includes("Font family") ? "Inter"
+            : message.includes("Link URL") ? "https://generated.example.test"
+              : message.includes("Alt text") ? "Generated image" : "E=mc^2";
+      void dialog.accept(answer);
+    });
+    let totalIntents = 0;
+    let comparableSelections = 0;
+    for (const session of sessions) {
+      await page.goto("/?canonicalAuthority=1&blocks=3&sessionReplay=1");
+      const first = await runSession(session.intents);
+      await page.goto("/?canonicalAuthority=1&blocks=3&sessionReplay=1");
+      const second = await runSession(session.intents);
+      expect(second.map((snapshot) => volatile(snapshot))).toEqual(first.map((snapshot) => volatile(snapshot)));
+      first.forEach((snapshot, index) => {
+        const selection = (snapshot as { semanticSelection?: unknown }).semanticSelection;
+        const replaySelection = (second[index] as { semanticSelection?: unknown }).semanticSelection;
+        if (selection && replaySelection) comparableSelections += 1;
+      });
+      totalIntents += session.intents.length;
+    }
+    testInfo.annotations.push({ type: "session-replay", description: `${sessions.length} generated sessions, ${totalIntents} intents, ${comparableSelections} semantic selection checkpoints compared` });
+    expect(totalIntents).toBeGreaterThan(40);
+    expect(comparableSelections).toBeGreaterThan(40);
   });
 
   test("Enter immediately displays the caret on a new empty line", async ({ page }) => {

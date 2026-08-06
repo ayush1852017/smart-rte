@@ -85,7 +85,7 @@ export interface CanonicalAuthorityEditorProps {
 }
 
 const labels: Record<string, string> = {
-  bold: "Bold", italic: "Italic", underline: "Underline", strike: "Strikethrough",
+  bold: "Bold", italic: "Italic", underline: "Underline", strike: "Strikethrough", strikethrough: "Strikethrough",
   inlineCode: "Inline code", superscript: "Superscript", subscript: "Subscript",
   textColor: "Text colour", backgroundColor: "Background colour",
   fontSize: "Font size", fontFamily: "Font family",
