@@ -17,7 +17,10 @@ const payloadFromTransfer = (transfer: DataTransfer): RawClipboardPayload => {
   };
 };
 
-/** Legacy rollback-only DOM insertion. The canonical product path never imports this module. */
+/**
+ * ROLLBACK_ADAPTER: canonical-clipboard-dom-insert; unreachable from canonical authority.
+ * Legacy rollback-only DOM insertion. The canonical product path never imports this module.
+ */
 export const insertCanonicalClipboardData = (
   transfer: DataTransfer,
   ownerDocument: Document,
