@@ -34,6 +34,16 @@ const selectCellRange = async (page: Page, start: Locator, end: Locator) => {
   await page.mouse.up();
 };
 
+const chooseMedia = async (page: Page, kind: "image" | "video" | "audio", name: string, mimeType: string) => {
+  const picker = page.getByRole("dialog", { name: `Choose ${kind}` });
+  await picker.locator('input[type="file"]').setInputFiles({
+    name,
+    mimeType,
+    buffer: Buffer.from(`${kind}-fixture`),
+  });
+  await expect(picker).toHaveCount(0);
+};
+
 test.describe("canonical toolbar routing", () => {
   test("routes lists, links, tables, atoms, resize, import, and export through retained state", async ({ page }) => {
     let linkPrompt = 0;
@@ -41,9 +51,6 @@ test.describe("canonical toolbar routing", () => {
       const message = dialog.message();
       const answer = message.includes("Link") ? (linkPrompt++ === 0 ? "https://example.test" : "https://updated.example.test")
         : message.includes("Formula") ? "E=mc^2"
-            : message.includes("Image URL") ? "https://example.test/image.png"
-              : message.includes("video URL") ? "https://example.test/video.mp4"
-                : message.includes("audio URL") ? "https://example.test/audio.mp3"
             : message.includes("Alt text") ? "Example image" : "";
       void dialog.accept(answer);
     });
@@ -79,19 +86,22 @@ test.describe("canonical toolbar routing", () => {
     await expect(surface.locator('[data-smart-type="formula"]')).toHaveAttribute("data-smart-formula", "E=mc^2");
 
     await page.getByRole("button", { name: "Insert image" }).click();
+    await chooseMedia(page, "image", "example.png", "image/png");
     const image = surface.locator('[data-smart-type="block_image"]');
-    await expect(image).toHaveAttribute("src", "https://example.test/image.png");
+    await expect(image).toHaveAttribute("src", /^https:\/\/media\.playground\.test\//);
     await expect(image).toBeVisible();
     await image.click();
     await page.getByRole("button", { name: "Grow selected atom" }).click();
     await expect(image).toHaveAttribute("width", "180");
     await page.getByRole("button", { name: "Insert video" }).click();
+    await chooseMedia(page, "video", "example.mp4", "video/mp4");
     const video = surface.locator('[data-smart-type="video"]');
-    await expect(video).toHaveAttribute("src", "https://example.test/video.mp4");
+    await expect(video).toHaveAttribute("src", /^https:\/\/media\.playground\.test\//);
     await expect(video).toBeVisible();
     await page.getByRole("button", { name: "Insert audio" }).click();
+    await chooseMedia(page, "audio", "example.mp3", "audio/mpeg");
     const audio = surface.locator('[data-smart-type="audio"]');
-    await expect(audio).toHaveAttribute("src", "https://example.test/audio.mp3");
+    await expect(audio).toHaveAttribute("src", /^https:\/\/media\.playground\.test\//);
     await expect(audio).toBeVisible();
 
     const download = page.waitForEvent("download");
@@ -105,7 +115,6 @@ test.describe("canonical toolbar routing", () => {
   });
 
   test("selects canonical cells individually and supports merge/split", async ({ page }) => {
-    page.on("dialog", (dialog) => void dialog.accept(dialog.message().includes("Image URL") ? "https://example.test/cell.png" : "Cell image"));
     await page.goto("/?canonicalAuthority=1&blocks=2");
     const surface = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
     await placeCaret(page, '[data-smart-authority="canonical"] [contenteditable="true"] p');
@@ -124,7 +133,8 @@ test.describe("canonical toolbar routing", () => {
     await page.getByRole("button", { name: "Split cell" }).click();
     await expect(table.locator("tr").first().locator("td,th")).toHaveCount(2);
     await page.getByRole("button", { name: "Insert image" }).click();
-    await expect(surface.locator('[data-smart-type="block_image"]')).toHaveAttribute("src", "https://example.test/cell.png");
+    await chooseMedia(page, "image", "cell.png", "image/png");
+    await expect(surface.locator('[data-smart-type="block_image"]')).toHaveAttribute("src", /^https:\/\/media\.playground\.test\//);
   });
 
   test("keeps a caret and new text available after a table", async ({ page }) => {
@@ -179,13 +189,11 @@ test.describe("canonical toolbar routing", () => {
   });
 
   test("moves the caret to an editable line after a block atom", async ({ page }) => {
-    page.on("dialog", (dialog) => void dialog.accept(dialog.message().includes("Image URL")
-      ? "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB"
-      : "Image"));
     await page.goto("/?canonicalAuthority=1&blocks=1");
     const surface = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
     await placeCaret(page, '[data-smart-authority="canonical"] [contenteditable="true"] > p');
     await page.getByRole("button", { name: "Insert image" }).click();
+    await chooseMedia(page, "image", "image.png", "image/png");
     const image = surface.locator('[data-smart-type="block_image"]');
     await expect(image).toHaveCount(1);
     await image.click();

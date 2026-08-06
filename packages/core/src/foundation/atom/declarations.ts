@@ -9,7 +9,8 @@ const imageValid = (attrs: Attrs) => typeof attrs.alt === "string"
   && positiveDimensions(attrs)
   && Boolean(sanitizeAtomSource(String(attrs.src || ""), { kind: "image", allowBlobPreview: attrs.status === "pending" }));
 const formulaValid = (attrs: Attrs) => safeFormulaSource(attrs.source) && (attrs.notation === "latex" || attrs.notation === "mathml");
-const mediaValid = (kind: "video" | "audio") => (attrs: Attrs) => positiveDimensions(attrs) && Boolean(sanitizeAtomSource(String(attrs.src || ""), { kind }));
+const mediaValid = (kind: "video" | "audio") => (attrs: Attrs) => positiveDimensions(attrs)
+  && Boolean(sanitizeAtomSource(String(attrs.src || ""), { kind, allowBlobPreview: attrs.status === "pending" }));
 
 export const atomDeclarations: readonly AtomDeclaration[] = [
   { type: "image", kind: "image", group: "inline", validate: imageValid },

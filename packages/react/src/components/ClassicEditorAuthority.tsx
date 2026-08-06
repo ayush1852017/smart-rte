@@ -2,6 +2,8 @@ import React, { forwardRef, useRef, useSyncExternalStore } from "react";
 import { foundationSchema, parseCanonicalListHtml, serializeCanonicalListHtml, type PersistedEditorDocument } from "smartrte-core/foundation";
 import { canonicalAuthorityFlag, type CanonicalAuthorityContext } from "../canonicalAuthorityFlag.js";
 import type { CanonicalEditorRuntime, SmartEditorChange, SmartEditorHandle } from "../canonicalEditorRuntime.js";
+import type { MediaProvider } from "../mediaProvider.js";
+import type { MediaPickerComponent } from "./MediaPicker.js";
 import { CanonicalAuthorityEditor, type CanonicalAuthorityEditorProps } from "./CanonicalAuthorityEditor.js";
 import { LegacyClassicEditor, type ClassicEditorProps as LegacyClassicEditorProps } from "./ClassicEditor.js";
 
@@ -14,6 +16,8 @@ export type ClassicEditorProps = Omit<LegacyClassicEditorProps, "value" | "onCha
   onHtmlChange?: (html: string) => void;
   canonicalAuthority?: boolean;
   authorityContext?: CanonicalAuthorityContext;
+  mediaProvider?: MediaProvider;
+  mediaPicker?: MediaPickerComponent;
   onRuntime?: CanonicalAuthorityEditorProps["onRuntime"];
 };
 
@@ -39,7 +43,7 @@ export const ClassicEditor = forwardRef<SmartEditorHandle, ClassicEditorProps>(f
       latestHtml.current = serializeCanonicalListHtml(latestEnvelope.current.document, { clean: true });
       runtime.current = null;
     }
-    const { defaultValue, onHtmlChange, canonicalAuthority: _canonical, authorityContext: _context, onRuntime: _runtime, ...legacy } = props;
+    const { defaultValue, onHtmlChange, canonicalAuthority: _canonical, authorityContext: _context, onRuntime: _runtime, mediaProvider: _provider, mediaPicker: _picker, ...legacy } = props;
     const value = latestEnvelope.current
       // Internal rollback HTML retains stable IDs. External callbacks receive
       // the clean representation below.

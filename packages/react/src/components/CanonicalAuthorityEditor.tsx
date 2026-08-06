@@ -23,6 +23,7 @@ import {
   removeTableCommand,
   removeTableRowCommand,
   resizeAtom,
+  runAtomUpload,
   restartListNumbering,
   sanitizeAtomSource,
   serializeCanonicalListHtml,
@@ -46,6 +47,8 @@ import {
   type SelectionDescription,
 } from "smartrte-core/foundation";
 import { ensureStyleSheet } from "../theme.js";
+import type { MediaKind, MediaProvider } from "../mediaProvider.js";
+import { DefaultMediaPicker, type MediaPickerComponent } from "./MediaPicker.js";
 import {
   CanonicalEditorRuntime,
   type SmartEditorChange,
@@ -59,6 +62,10 @@ export interface CanonicalAuthorityEditorProps {
   /** Transitional serialization callback for hosts that still persist HTML. */
   onHtmlChange?: (html: string) => void;
   onClipboardDiagnostic?: (report: ClipboardDiagnosticReport) => void;
+  /** Host-owned upload/search/remove boundary for canonical media insertion. */
+  mediaProvider?: MediaProvider;
+  /** Replaceable picker; the default only selects a local file. */
+  mediaPicker?: MediaPickerComponent;
   placeholder?: string;
   minHeight?: number | string;
   maxHeight?: number | string;
@@ -97,6 +104,8 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
   onChange,
   onHtmlChange,
   onClipboardDiagnostic,
+  mediaProvider,
+  mediaPicker: MediaPicker = DefaultMediaPicker,
   placeholder = "Type here…",
   minHeight = 200,
   maxHeight = 500,
@@ -108,6 +117,8 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
   const rootRef = useRef<HTMLDivElement>(null);
   const importRef = useRef<HTMLInputElement>(null);
   const runtimeRef = useRef<CanonicalEditorRuntime>();
+  const pendingMediaUploads = useRef(new Set<AbortController>());
+  const [mediaKind, setMediaKind] = useState<MediaKind | null>(null);
   if (!runtimeRef.current) runtimeRef.current = new CanonicalEditorRuntime({ initialValue: defaultValue, onChange, onHtmlChange, onClipboardDiagnostic });
   const runtime = runtimeRef.current;
   const [, setEditorTick] = useState(0);
@@ -119,7 +130,11 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
     if (!root) return;
     runtime.mount(root);
     onRuntime?.(runtime);
-    return () => runtime.unmount();
+    return () => {
+      pendingMediaUploads.current.forEach((controller) => controller.abort());
+      pendingMediaUploads.current.clear();
+      runtime.unmount();
+    };
   }, [runtime, onRuntime]);
 
   useEffect(() => runtime.editor.subscribe(() => setEditorTick((value) => value + 1)), [runtime]);
@@ -245,15 +260,7 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
     }, blockContext()));
   };
 
-  const insertBlockAtom = (type: "block_image" | "video" | "audio") => {
-    const src = window.prompt(type === "block_image" ? "Image URL (direct image resource)" : `${type} URL (direct ${type} resource, not a page)`);
-    if (!src) return;
-    const kind = type === "block_image" ? "image" : type;
-    const safeSrc = sanitizeAtomSource(src, { kind });
-    if (!safeSrc) {
-      window.alert(`Enter a direct ${type === "block_image" ? "image" : type} URL (http(s), a relative path, or a supported image data URL).`);
-      return;
-    }
+  const insertBlockAtom = (type: "block_image" | "video" | "audio", attrs: Record<string, unknown>, nodeId: string): boolean => {
     const declaration = atomDeclarations.find((entry) => entry.type === type)!;
     const selection = runtime.editor.selection;
     let parentId: string | undefined;
@@ -278,12 +285,11 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
       parentId = location?.parent.id;
       index = location ? location.pos.offset + 1 : undefined;
     }
-    if (!parentId || index === undefined) return;
+    if (!parentId || index === undefined) return false;
     const operations = insertAtom(runtime.editor.document, atomScope(), {
-      declaration, nodeId: createNodeId(), parentId, index,
-      attrs: type === "block_image" ? { src: safeSrc, alt: window.prompt("Alt text", "Image") || "Image", decorative: false, status: "ready" } : { src: safeSrc, status: "ready" },
+      declaration, nodeId, parentId, index, attrs,
     }, blockContext());
-    if (!operations.length) return;
+    if (!operations.length) return false;
     // Block atoms cannot contain a caret. Keep an editable paragraph after a
     // media node inserted at the end of its container (document root or table
     // cell), and place the caret there so the next keystroke has a legal owner.
@@ -299,6 +305,33 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
       });
     }
     runtime.executeOperations(operations, selectionOwnerId ? { selectionOwnerId, selectionOffset: 0 } : {});
+    return true;
+  };
+
+  const insertMediaFile = async (kind: MediaKind, file: File) => {
+    setMediaKind(null);
+    if (!mediaProvider) return;
+    const type = kind === "image" ? "block_image" : kind;
+    const nodeId = createNodeId();
+    const preview = URL.createObjectURL(file);
+    const attrs = kind === "image"
+      ? { src: preview, alt: file.name || "Image", decorative: false, status: "pending", uploadId: nodeId }
+      : { src: preview, status: "pending", uploadId: nodeId };
+    if (!insertBlockAtom(type, attrs, nodeId)) {
+      URL.revokeObjectURL(preview);
+      return;
+    }
+    const controller = new AbortController();
+    pendingMediaUploads.current.add(controller);
+    try {
+      await runAtomUpload(runtime.editor, nodeId, async () => {
+        const result = await mediaProvider.upload(file, { signal: controller.signal });
+        return { src: result.url, id: result.id };
+      });
+    } finally {
+      pendingMediaUploads.current.delete(controller);
+      URL.revokeObjectURL(preview);
+    }
   };
 
   const editSelectedAtom = (resizeBy?: number) => {
@@ -394,9 +427,9 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
           || action === "column-left" && (currentTableScope as TableGridScope).rect.left === 0}
         onMouseDown={(event) => event.preventDefault()} onClick={() => runTable(action)}
       >{label}</button>)}
-      <button type="button" className="srte-tool-button" aria-label="Insert image" disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={() => insertBlockAtom("block_image")}>Image</button>
-      <button type="button" className="srte-tool-button" aria-label="Insert video" disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={() => insertBlockAtom("video")}>Video</button>
-      <button type="button" className="srte-tool-button" aria-label="Insert audio" disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={() => insertBlockAtom("audio")}>Audio</button>
+      <button type="button" className="srte-tool-button" aria-label="Insert image" disabled={readOnly || !mediaProvider} onMouseDown={(event) => event.preventDefault()} onClick={() => setMediaKind("image")}>Image</button>
+      <button type="button" className="srte-tool-button" aria-label="Insert video" disabled={readOnly || !mediaProvider} onMouseDown={(event) => event.preventDefault()} onClick={() => setMediaKind("video")}>Video</button>
+      <button type="button" className="srte-tool-button" aria-label="Insert audio" disabled={readOnly || !mediaProvider} onMouseDown={(event) => event.preventDefault()} onClick={() => setMediaKind("audio")}>Audio</button>
       <button type="button" className="srte-tool-button" aria-label="Insert formula" disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={insertInlineFormula}>Formula</button>
       <button type="button" className="srte-tool-button" aria-label="Edit selected atom" disabled={readOnly || !atomSelected} onMouseDown={(event) => event.preventDefault()} onClick={() => editSelectedAtom()}>Edit media</button>
       <button type="button" className="srte-tool-button" aria-label="Grow selected atom" disabled={readOnly || !atomSelected} onMouseDown={(event) => event.preventDefault()} onClick={() => editSelectedAtom(20)}>Resize +</button>
@@ -414,6 +447,7 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
       <button type="button" className="srte-tool-button" aria-label="Undo" disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={() => { runtime.editor.undo(); runtime.focus(); }}>Undo</button>
       <button type="button" className="srte-tool-button" aria-label="Redo" disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={() => { runtime.editor.redo(); runtime.focus(); }}>Redo</button>
     </div>
+    {mediaKind && mediaProvider && <MediaPicker kind={mediaKind} onPick={(file) => void insertMediaFile(mediaKind, file)} onCancel={() => setMediaKind(null)} />}
     <div
       ref={rootRef}
       className="srte-editor"

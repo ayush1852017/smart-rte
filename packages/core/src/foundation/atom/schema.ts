@@ -15,7 +15,7 @@ const formulaAttrs = {
   notation: { required: true, default: "latex", validate: (value: unknown) => value === "latex" || value === "mathml" },
   error: optionalString,
 };
-const mediaAttrs = { src: requiredString, poster: optionalString, width: dimension, height: dimension, status, error: optionalString };
+const mediaAttrs = { src: requiredString, poster: optionalString, width: dimension, height: dimension, status, uploadId: optionalString, error: optionalString };
 
 /** Inline and block variants are distinct because schema groups are static. */
 export const atomNodeSpecs: readonly NodeSpec[] = [

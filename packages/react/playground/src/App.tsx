@@ -1,13 +1,41 @@
-import { useState } from "react";
-import { ClassicEditor, type CanonicalEditorRuntime } from "smartrte-react";
+import { useMemo, useState } from "react";
+import { ClassicEditor, type CanonicalEditorRuntime, type MediaProvider } from "smartrte-react";
 import CanonicalSurface from "./CanonicalSurface";
 import ClipboardCapture from "./ClipboardCapture";
+
+const createReferenceMediaProvider = (): MediaProvider => {
+  const library = new Map<string, { id: string; url: string; title: string; mimeType?: string; sizeBytes?: number }>();
+  return {
+    async upload(file, options) {
+      if (options?.signal?.aborted) throw new DOMException("Upload cancelled", "AbortError");
+      const id = `playground-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      // The playground has no upload backend. Return a stable HTTPS URL so
+      // the reference provider exercises the same persisted-URL contract as
+      // a host backend; blob previews are intentionally transient only.
+      const url = `https://media.playground.test/${encodeURIComponent(id)}/${encodeURIComponent(file.name)}`;
+      library.set(id, { id, url, title: file.name, mimeType: file.type, sizeBytes: file.size });
+      return { id, url };
+    },
+    async search(query, filters = {}, page = 1) {
+      const needle = query.trim().toLowerCase();
+      const pageSize = filters.pageSize || 50;
+      return [...library.values()]
+        .filter((item) => (!needle || item.title.toLowerCase().includes(needle)) && (!filters.mimePrefix || item.mimeType?.startsWith(filters.mimePrefix)))
+        .slice(Math.max(0, page - 1) * pageSize, page * pageSize);
+    },
+    async remove(id) {
+      const item = library.get(id);
+      library.delete(id);
+    },
+  };
+};
 
 function App() {
   const params = new URLSearchParams(window.location.search);
   if (params.has("clipboardCapture")) return <ClipboardCapture />;
   if (params.has("canonical")) return <CanonicalSurface />;
   const [theme, setTheme] = useState<"light" | "dark">("light");
+  const mediaProvider = useMemo(createReferenceMediaProvider, []);
   const canonicalAuthority = params.has("canonicalAuthority");
   const requestedBlocks = Number(params.get("blocks") || 1);
   const blocks = Number.isFinite(requestedBlocks) ? Math.max(1, Math.min(10_000, Math.floor(requestedBlocks))) : 1;
@@ -40,6 +68,7 @@ function App() {
       <ClassicEditor
         canonicalAuthority={canonicalAuthority}
         defaultValue={defaultValue}
+        mediaProvider={mediaProvider}
         value={!canonicalAuthority && params.has("sessionReplay") ? "<p>seed</p>" : undefined}
         theme={theme}
         minHeight={200}

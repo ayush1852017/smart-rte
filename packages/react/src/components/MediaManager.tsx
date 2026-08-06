@@ -1,25 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-
-export type MediaItem = {
-  id: string;
-  url: string;
-  width?: number;
-  height?: number;
-  sizeBytes?: number;
-  mimeType?: string;
-  hashHex?: string;
-  createdAt?: string;
-  title?: string;
-  alt?: string;
-  tags?: string[];
-  license?: {
-    author?: string;
-    licenseType?: string;
-    licenseText?: string;
-    sourceUrl?: string;
-    workName?: string;
-  };
-};
+import type { MediaItem } from "../mediaProvider.js";
+export type { MediaItem } from "../mediaProvider.js";
 
 export type MediaSearchQuery = {
   q?: string;
