@@ -9,6 +9,11 @@ needs to understand the repository as it exists today. The documents under
 `docs/` describe the target architecture; this file also calls out where the
 implementation is still hybrid or transitional.
 
+> **For what comes next**, see `docs/PHASE_ROADMAP_8B_12B.md` (revised
+> 2026-08-06) and `docs/PHASE_1_8B_INDEPENDENT_AUDIT.md`. This snapshot
+> predates both and does not describe forward-looking phase work — read the
+> roadmap for that, not this file.
+
 ## 1. What this repository contains
 
 Smart RTE is a rich-text editor monorepo whose public compatibility contract is
