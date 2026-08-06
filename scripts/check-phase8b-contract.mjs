@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+import { withoutComments } from "./contract-utils.mjs";
 
 const read = (path) => readFileSync(path, "utf8");
 const failures = [];
@@ -25,9 +26,9 @@ for (const path of product) {
   catch (error) { if (error.status !== 1) throw error; }
   if (output.trim()) failures.push(`${path} contains a forbidden DOM-authority primitive:\n${output}`);
 }
-const authority = read("packages/react/src/components/ClassicEditorAuthority.tsx");
+const authority = withoutComments(read("packages/react/src/components/ClassicEditorAuthority.tsx"));
 if (!authority.includes("canonicalAuthorityFlag.enabled")) failures.push("Product export does not route through the runtime rollback flag.");
-const runtime = read("packages/react/src/canonicalEditorRuntime.ts");
+const runtime = withoutComments(read("packages/react/src/canonicalEditorRuntime.ts"));
 if (!runtime.includes("replaceState") || !runtime.includes("createCheckpoint")) failures.push("Retained runtime lacks explicit replacement/checkpoint ownership.");
 if (failures.length) {
   console.error(failures.join("\n\n"));
