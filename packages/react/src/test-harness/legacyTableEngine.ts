@@ -25,3 +25,20 @@ export const executeRetainedLegacyTable = (
   if (!editor.execute(intent.id, { ...(intent.input || {}), tablePath: [0] })) return null;
   return serializeSmartDocument(editor.state.document);
 };
+
+/** Retained snapshot for the block-level table insertion command. */
+export const executeRetainedLegacyTableInsert = (
+  html: string,
+  rows: number,
+  columns: number,
+  headerRow = false,
+  ownerDocument: Document = document,
+): string | null => {
+  const model = smartDocumentFromHtml(html, ownerDocument);
+  const editor = createSmartEditor({
+    state: { document: model, selection: { type: "text", anchor: { path: [0, 0], offset: 0 }, focus: { path: [0, 0], offset: 0 } } },
+    plugins: [tablePlugin],
+  });
+  if (!editor.execute("table.insert", { path: [1], rows, columns, headerRow })) return null;
+  return serializeSmartDocument(editor.state.document);
+};

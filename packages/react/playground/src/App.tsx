@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { ClassicEditor, type CanonicalEditorRuntime, type MediaProvider } from "smartrte-react";
 import CanonicalSurface from "./CanonicalSurface";
 import ClipboardCapture from "./ClipboardCapture";
+import Gate13ReplaySurface from "./Gate13ReplaySurface";
 
 const createReferenceMediaProvider = (): MediaProvider => {
   const library = new Map<string, { id: string; url: string; title: string; mimeType?: string; sizeBytes?: number }>();
@@ -33,14 +34,16 @@ const createReferenceMediaProvider = (): MediaProvider => {
 function App() {
   const params = new URLSearchParams(window.location.search);
   if (params.has("clipboardCapture")) return <ClipboardCapture />;
+  if (params.has("gate13Replay")) return <Gate13ReplaySurface />;
   if (params.has("canonical")) return <CanonicalSurface />;
   const [theme, setTheme] = useState<"light" | "dark">("light");
   const mediaProvider = useMemo(createReferenceMediaProvider, []);
   const canonicalAuthority = params.has("canonicalAuthority");
   const requestedBlocks = Number(params.get("blocks") || 1);
   const blocks = Number.isFinite(requestedBlocks) ? Math.max(1, Math.min(10_000, Math.floor(requestedBlocks))) : 1;
+  const replayAtomValue = '<p><img src="https://media.playground.test/replay-image.png" alt="Replay image" width="160" height="90"></p>';
   const defaultValue = canonicalAuthority
-    ? params.has("sessionReplay") ? "<p>seed</p>" : Array.from({ length: blocks }, (_, index) => `<p>${index === 0 ? "Canonical product editor" : `block ${index}`}</p>`).join("")
+    ? params.has("sessionReplayAtom") ? replayAtomValue : params.has("sessionReplay") ? "<p>seed</p>" : Array.from({ length: blocks }, (_, index) => `<p>${index === 0 ? "Canonical product editor" : `block ${index}`}</p>`).join("")
     : undefined;
 
   return (
@@ -68,8 +71,11 @@ function App() {
       <ClassicEditor
         canonicalAuthority={canonicalAuthority}
         defaultValue={defaultValue}
+        // The retained replay uses the existing optional font-family route so
+        // that this intent is compared against a real legacy capability.
+        preserveFontFamily={params.has("sessionReplay") && !canonicalAuthority}
         mediaProvider={mediaProvider}
-        value={!canonicalAuthority && params.has("sessionReplay") ? "<p>seed</p>" : undefined}
+        value={!canonicalAuthority && params.has("sessionReplayAtom") ? replayAtomValue : !canonicalAuthority && params.has("sessionReplay") ? "<p>seed</p>" : undefined}
         theme={theme}
         minHeight={200}
         maxHeight={400}

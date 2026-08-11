@@ -342,7 +342,11 @@ export const executeCanonicalListToggle = (args: {
         range: { from: { path: [], offset: 0 }, to: { path: [], offset: blockIds.length } }, isolatingAncestorId: null, clamped: false,
       };
       const operations = createList(source, scope, {
-        listIds: [createNodeId()], itemIds: blockIds.map(() => createNodeId()),
+        // Nesting reconstruction (see foundation createList) can need up to
+        // one extra list per block, on top of the one flat list this loop
+        // used to always produce — over-provision rather than assume flat.
+        listIds: blockIds.map(() => createNodeId()).concat(blockIds.map(() => createNodeId())),
+        itemIds: blockIds.map(() => createNodeId()),
         ...(args.preset !== undefined ? { preset: args.preset } : { style }),
         ...(args.checkable !== undefined ? { checkable: args.checkable } : {}),
       }, contextFor(source));
@@ -404,7 +408,8 @@ export const executeCanonicalListToggle = (args: {
           range: { from: { path: [], offset: 0 }, to: { path: [], offset: blockIds.length } }, isolatingAncestorId: null, clamped: false,
         };
         const operations = createList(source, scope, {
-          listIds: [createNodeId()], itemIds: blockIds.map(() => createNodeId()),
+          listIds: blockIds.map(() => createNodeId()).concat(blockIds.map(() => createNodeId())),
+          itemIds: blockIds.map(() => createNodeId()),
           ...(args.preset !== undefined ? { preset: args.preset } : { style }),
           ...(args.checkable !== undefined ? { checkable: args.checkable } : {}),
         }, contextFor(source));
@@ -449,7 +454,7 @@ export const executeCanonicalListStructuralInput = (
   const pos = { path: [...content.from.path], offset: snapshot.offset };
   const result = input === "enter"
     ? enterInList(document, pos, {
-      itemId: createNodeId(), blockId: createNodeId(), emptyBlockId: createNodeId(),
+      itemId: createNodeId(), blockId: createNodeId(), emptyBlockId: createNodeId(), splitListId: createNodeId(),
     }, ctx)
     : input === "backspace"
       ? backspaceAtListItemStart(document, pos, ctx)

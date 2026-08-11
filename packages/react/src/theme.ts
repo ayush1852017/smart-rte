@@ -255,6 +255,56 @@ export const SRTE_DEFAULT_CSS = `
 .srte-editor [contenteditable] ol[data-srte-list-preset="ordered-decimal-paren"][data-srte-list-depth="3"] > li::marker {
   content: counter(list-item, lower-roman) ")  ";
 }
+.srte-editor [contenteditable] ol[data-srte-list-preset="ordered-decimal"][data-srte-list-depth="0"] > li::marker {
+  content: counter(list-item, decimal) ".  ";
+}
+.srte-editor [contenteditable] ol[data-srte-list-preset="ordered-decimal"][data-srte-list-depth="1"] > li::marker {
+  content: counter(list-item, lower-alpha) ".  ";
+}
+.srte-editor [contenteditable] ol[data-srte-list-preset="ordered-decimal"][data-srte-list-depth="2"] > li::marker,
+.srte-editor [contenteditable] ol[data-srte-list-preset="ordered-decimal"][data-srte-list-depth="3"] > li::marker {
+  content: counter(list-item, lower-roman) ".  ";
+}
+.srte-editor [contenteditable] ol[data-srte-list-preset="ordered-upper-alpha"][data-srte-list-depth="0"] > li::marker {
+  content: counter(list-item, upper-alpha) ".  ";
+}
+.srte-editor [contenteditable] ol[data-srte-list-preset="ordered-upper-alpha"][data-srte-list-depth="1"] > li::marker {
+  content: counter(list-item, lower-alpha) ".  ";
+}
+.srte-editor [contenteditable] ol[data-srte-list-preset="ordered-upper-alpha"][data-srte-list-depth="2"] > li::marker,
+.srte-editor [contenteditable] ol[data-srte-list-preset="ordered-upper-alpha"][data-srte-list-depth="3"] > li::marker {
+  content: counter(list-item, lower-roman) ".  ";
+}
+.srte-editor [contenteditable] ol[data-srte-list-preset="ordered-upper-roman"][data-srte-list-depth="0"] > li::marker {
+  content: counter(list-item, upper-roman) ".  ";
+}
+.srte-editor [contenteditable] ol[data-srte-list-preset="ordered-upper-roman"][data-srte-list-depth="1"] > li::marker {
+  content: counter(list-item, upper-alpha) ".  ";
+}
+.srte-editor [contenteditable] ol[data-srte-list-preset="ordered-upper-roman"][data-srte-list-depth="2"] > li::marker,
+.srte-editor [contenteditable] ol[data-srte-list-preset="ordered-upper-roman"][data-srte-list-depth="3"] > li::marker {
+  content: counter(list-item, decimal) ".  ";
+}
+.srte-editor [contenteditable] ol[data-srte-list-preset="ordered-leading-zero"][data-srte-list-depth="0"] > li::marker {
+  content: counter(list-item, decimal-leading-zero) ".  ";
+}
+.srte-editor [contenteditable] ol[data-srte-list-preset="ordered-leading-zero"][data-srte-list-depth="1"] > li::marker {
+  content: counter(list-item, lower-alpha) ".  ";
+}
+.srte-editor [contenteditable] ol[data-srte-list-preset="ordered-leading-zero"][data-srte-list-depth="2"] > li::marker,
+.srte-editor [contenteditable] ol[data-srte-list-preset="ordered-leading-zero"][data-srte-list-depth="3"] > li::marker {
+  content: counter(list-item, lower-roman) ".  ";
+}
+.srte-editor [contenteditable] ul[data-srte-list-preset="bullet-disc"][data-srte-list-depth="0"] > li::marker {
+  content: "●  ";
+}
+.srte-editor [contenteditable] ul[data-srte-list-preset="bullet-disc"][data-srte-list-depth="1"] > li::marker {
+  content: "○  ";
+}
+.srte-editor [contenteditable] ul[data-srte-list-preset="bullet-disc"][data-srte-list-depth="2"] > li::marker,
+.srte-editor [contenteditable] ul[data-srte-list-preset="bullet-disc"][data-srte-list-depth="3"] > li::marker {
+  content: "■  ";
+}
 .srte-editor [contenteditable] ol[data-srte-list-preset="ordered-outline"] > li::marker {
   content: counters(list-item, ".") ".  ";
 }
@@ -281,10 +331,25 @@ export const SRTE_DEFAULT_CSS = `
   justify-content: center;
   width: 1.1em;
   height: 1.6em;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  appearance: none;
+  outline: none;
   margin: 0;
   line-height: 1.6;
   vertical-align: top;
   position: relative;
+}
+.srte-editor [contenteditable] ul[data-srte-checklist="true"] > li > [data-srte-check]:focus-visible {
+  outline: 2px solid var(--srte-ring);
+  outline-offset: 2px;
 }
 .srte-editor [contenteditable] ul[data-srte-checklist="true"] > li > [data-srte-check]::before {
   content: "";

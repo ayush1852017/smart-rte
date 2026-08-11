@@ -45,12 +45,14 @@ import {
   type PersistedEditorDocument,
   type ClipboardDiagnosticReport,
   type SmartOperation,
+  type SmartPos,
   type ResolvedScope,
   type SmartElementNode,
   type SmartNode,
   type TableGridScope,
   type SelectionDescription,
 } from "smartrte-core/foundation";
+import { SMART_LIST_PRESETS } from "smartrte-core";
 import { ensureStyleSheet } from "../theme.js";
 import type { MediaKind, MediaProvider } from "../mediaProvider.js";
 import { DefaultMediaPicker, type MediaPickerComponent } from "./MediaPicker.js";
@@ -89,6 +91,14 @@ const labels: Record<string, string> = {
   inlineCode: "Inline code", superscript: "Superscript", subscript: "Subscript",
   textColor: "Text colour", backgroundColor: "Background colour",
   fontSize: "Font size", fontFamily: "Font family",
+};
+
+type ListSelectionPart = Extract<ResolvedScope, { kind: "list-selection" }>;
+
+const listSelectionParts = (scope: ResolvedScope): ListSelectionPart[] => {
+  if (scope.kind === "list-selection") return [scope];
+  if (scope.kind !== "mixed") return [];
+  return scope.parts.flatMap(listSelectionParts);
 };
 
 const findNode = (root: SmartNode, id: string): SmartElementNode | null => {
@@ -168,23 +178,67 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
   const tableScope = () => runtime.editor.resolveScope({ want: "table-grid" }) as ResolvedScope;
   const atomScope = () => runtime.editor.resolveScope({ want: "atomic-node" }) as ResolvedScope;
   const ids = (count: number) => Array.from({ length: count }, () => createNodeId());
+  // Style/preset changes are a decision about the whole list the user is
+  // working in, not just the nested list segment nearest the cursor —
+  // unlike indent/outdent/move, which deliberately stay scoped to the
+  // nearest list and must not use this.
+  const outermostListId = (listId: string): string => {
+    let current = listId;
+    for (;;) {
+      const resolved = runtime.editor.positions.positionOf(current);
+      if (!resolved || resolved.parent.type !== "list_item") return current;
+      const itemResolved = runtime.editor.positions.positionOf(resolved.parent.id);
+      if (!itemResolved || itemResolved.parent.type !== "list") return current;
+      current = itemResolved.parent.id;
+    }
+  };
 
   const currentListScope = listScope();
-  const currentList = currentListScope.kind === "list-selection"
-    ? findNode(runtime.editor.document, currentListScope.listId)
+  const currentListParts = listSelectionParts(currentListScope);
+  const currentListStates = currentListParts.map((part) => {
+    const list = findNode(runtime.editor.document, part.listId);
+    const selectedIds = new Set(part.items.map((item) => item.itemId));
+    const indexes = list?.children?.flatMap((child, index) =>
+      !isTextNode(child) && selectedIds.has(child.id) ? [index] : []) || [];
+    return { part, list, indexes };
+  });
+  // A mixed scope is intentionally supported by list commands: list parts are
+  // transformed and plain-block parts are ignored. Keep the toolbar state in
+  // sync with that same policy instead of treating mixed as universally inert.
+  const currentList = currentListStates.length === 1 ? currentListStates[0].list : null;
+  const rootList = currentListScope.kind === "list-selection"
+    ? findNode(runtime.editor.document, outermostListId(currentListScope.listId))
     : null;
   const currentTableScope = tableScope();
   const currentAtomScope = atomScope();
-  const currentListItems = currentListScope.kind === "list-selection" ? currentListScope.items : [];
-  const currentListIndexes = currentList?.children?.flatMap((child, index) =>
-    !isTextNode(child) && currentListItems.some((item) => item.itemId === child.id) ? [index] : []) || [];
+  const currentListItems = currentListStates.length === 1 ? currentListStates[0].part.items : [];
   const orderedList = Boolean(currentList && /^(?:decimal|lower-|upper-|ordered)/.test(String(currentList.attrs?.style || currentList.attrs?.preset || "")));
-  const canIndent = currentListIndexes.length > 0 && Math.min(...currentListIndexes) > 0;
-  const canMoveUp = canIndent;
-  const canMoveDown = currentListIndexes.length > 0
-    && Math.max(...currentListIndexes) < (currentList?.children?.length || 0) - 1;
+  const canIndent = currentListStates.some(({ indexes }) => indexes.length > 0 && Math.min(...indexes) > 0);
+  const canMoveUp = currentListStates.some(({ indexes }) => indexes.length > 0 && Math.min(...indexes) > 0);
+  const canMoveDown = currentListStates.some(({ indexes, list }) => indexes.length > 0
+    && Math.max(...indexes) < (list?.children?.length || 0) - 1);
   const tableSelected = currentTableScope.kind === "table-grid";
   const atomSelected = currentAtomScope.kind === "atomic-node";
+
+  const blockTypeAt = (position: SmartPos): string => {
+    let node: SmartNode = runtime.editor.document;
+    for (let depth = 0; depth <= position.path.length; depth += 1) {
+      if (!isTextNode(node) && node.type !== "doc" && runtime.editor.schema.nodes[node.type]?.group === "block") {
+        if (node.type === "code_block") return "code_block";
+        if (node.type === "heading") return `heading-${Number(node.attrs?.level || 1)}`;
+        return "paragraph";
+      }
+      if (depth === position.path.length || isTextNode(node)) break;
+      const child = node.children?.[position.path[depth]];
+      if (!child) break;
+      node = child;
+    }
+    return "paragraph";
+  };
+  const currentBlockType = blockTypeAt(runtime.editor.selection.head);
+  const currentListPreset = currentListParts.length === 1 && typeof rootList?.attrs?.preset === "string"
+    ? rootList.attrs.preset
+    : "";
 
   const toggleCheckedItems = () => {
     if (currentListScope.kind !== "list-selection" || currentList?.attrs?.checkable !== true) return;
@@ -202,22 +256,38 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
     runtime.executeOperations(restartListNumbering(runtime.editor.document, currentListScope, { start }, blockContext()), { preserveSelectionById: true });
   };
 
+  // Shared by the toggle buttons' click handler and their aria-pressed state,
+  // so "this button looks active" and "clicking it again removes the list"
+  // can never drift apart. Checked against the outermost list (see
+  // outermostListId) so a deeply nested cursor still reports the true
+  // whole-list state, matching what applying a new type would change.
+  const listStyleActive = (style: string, checkable = false) =>
+    rootList?.attrs?.style === style && Boolean(rootList.attrs?.checkable) === checkable;
+
   const toggleList = (style: string, checkable = false) => {
     const selectedList = listScope();
     const context = blockContext();
     if (selectedList.kind === "list-selection") {
-      const list = findNode(runtime.editor.document, selectedList.listId);
+      const rootId = outermostListId(selectedList.listId);
+      const list = findNode(runtime.editor.document, rootId);
       const sameStyle = list?.attrs?.style === style && Boolean(list.attrs?.checkable) === checkable;
       const operations = sameStyle
+        // Toggling an already-active style off is deliberately scoped to just
+        // the current item (selectedList), not the whole list.
         ? unwrapList(runtime.editor.document, selectedList, { splitListIds: ids(4) }, context)
-        : setListStyle(runtime.editor.document, selectedList, { style, checkable }, context);
+        // Applying a genuinely different style/type is a whole-list decision
+        // regardless of how deep the cursor is nested.
+        : setListStyle(runtime.editor.document, { ...selectedList, listId: rootId }, { style, checkable }, context);
       runtime.executeOperations(operations, { preserveSelectionById: true });
       return;
     }
     const selectedBlocks = blockScope();
     const count = selectedBlocks.kind === "block-range" ? selectedBlocks.blockIds.length : 1;
+    // Nesting reconstruction (see createList) can need up to one extra list
+    // per block, on top of one list per originally-flat contiguous group —
+    // over-provision generously rather than compute the exact worst case.
     runtime.executeOperations(createList(runtime.editor.document, selectedBlocks, {
-      listIds: ids(Math.max(1, count)), itemIds: ids(Math.max(1, count)), style, checkable,
+      listIds: ids(Math.max(1, count * 2)), itemIds: ids(Math.max(1, count)), style, checkable,
     }, context), { preserveSelectionById: true });
   };
 
@@ -502,8 +572,8 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
       >{labels[tool.id]}</button>)}
       <select
         aria-label="Block type"
+        value={currentBlockType}
         disabled={readOnly}
-        defaultValue="paragraph"
         onChange={(event) => transactBlock(setBlockTypeCommand(runtime.editor.document, blockScope(), {
           type: event.target.value === "paragraph" ? "paragraph" : event.target.value === "code_block" ? "code_block" : "heading",
           attrs: event.target.value.startsWith("heading-") ? { level: Number(event.target.value.slice(8)) } : {},
@@ -538,25 +608,25 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
         const tool = inlineToolDeclarations.find((entry) => entry.id === "link");
         if (tool) { executeMarkTool(runtime.editor, tool, "remove"); runtime.focus(); }
       }}>Unlink</button>
-      <button type="button" className="srte-tool-button" aria-label="Bulleted list" disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={() => toggleList("disc")}>Bullets</button>
-      <button type="button" className="srte-tool-button" aria-label="Numbered list" disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={() => toggleList("decimal")}>Numbering</button>
-      <button type="button" className="srte-tool-button" aria-label="Checklist" disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={() => toggleList("disc", true)}>Checklist</button>
-      <select aria-label="List preset" disabled={readOnly || currentListScope.kind !== "list-selection"} defaultValue="" onChange={(event) => {
+      <button type="button" className="srte-tool-button" aria-label="Bulleted list" aria-pressed={listStyleActive("disc")} disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={() => toggleList("disc")}>Bullets</button>
+      <button type="button" className="srte-tool-button" aria-label="Numbered list" aria-pressed={listStyleActive("decimal")} disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={() => toggleList("decimal")}>Numbering</button>
+      <button type="button" className="srte-tool-button" aria-label="Checklist" aria-pressed={listStyleActive("disc", true)} disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={() => toggleList("disc", true)}>Checklist</button>
+      <select aria-label="List preset" title="List type / preset" disabled={readOnly || currentListParts.length !== 1} value={currentListPreset} onChange={(event) => {
         const preset = event.target.value;
-        if (!preset || currentListScope.kind !== "list-selection") return;
-        runtime.executeOperations(setListPreset(runtime.editor.document, currentListScope, { preset }, blockContext()), { preserveSelectionById: true });
+        if (!preset || currentListParts.length !== 1) return;
+        // A preset choice applies to the whole list, regardless of how deep
+        // the cursor is nested — see outermostListId.
+        const rootId = outermostListId(currentListParts[0].listId);
+        runtime.executeOperations(setListPreset(runtime.editor.document, { ...currentListParts[0], listId: rootId }, { preset }, blockContext()), { preserveSelectionById: true });
       }}>
         <option value="">List preset</option>
-        <option value="bullet-disc">Bullet · disc</option>
-        <option value="bullet-circle">Bullet · circle</option>
-        <option value="bullet-square">Bullet · square</option>
-        <option value="ordered-decimal">Number · decimal</option>
-        <option value="ordered-upper-alpha">Number · upper alpha</option>
-        <option value="ordered-upper-roman">Number · upper roman</option>
+        {SMART_LIST_PRESETS.map((preset) => <option key={preset.id} value={preset.id}>
+          {preset.kind === "bullet" ? `Bullet · ${preset.label}` : `Number · ${preset.label}`}
+        </option>)}
       </select>
       <button type="button" className="srte-tool-button" aria-label="Check selected items" aria-pressed={currentListScope.kind === "list-selection" && currentListScope.items.every((item) => findNode(runtime.editor.document, item.itemId)?.attrs?.checked === true)} disabled={readOnly || currentList?.attrs?.checkable !== true} onMouseDown={(event) => event.preventDefault()} onClick={toggleCheckedItems}>Check</button>
       <button type="button" className="srte-tool-button" aria-label="Indent list item" disabled={readOnly || !canIndent} onMouseDown={(event) => event.preventDefault()} onClick={() => runList("indent")}>Indent</button>
-      <button type="button" className="srte-tool-button" aria-label="Outdent list item" disabled={readOnly || currentListScope.kind !== "list-selection"} onMouseDown={(event) => event.preventDefault()} onClick={() => runList("outdent")}>Outdent</button>
+      <button type="button" className="srte-tool-button" aria-label="Outdent list item" disabled={readOnly || currentListParts.length === 0} onMouseDown={(event) => event.preventDefault()} onClick={() => runList("outdent")}>Outdent</button>
       <button type="button" className="srte-tool-button" aria-label="Move item up" disabled={readOnly || !canMoveUp} onMouseDown={(event) => event.preventDefault()} onClick={() => runList("up")}>Item ↑</button>
       <button type="button" className="srte-tool-button" aria-label="Move item down" disabled={readOnly || !canMoveDown} onMouseDown={(event) => event.preventDefault()} onClick={() => runList("down")}>Item ↓</button>
       <button type="button" className="srte-tool-button" aria-label="Restart numbering" disabled={readOnly || !orderedList} onMouseDown={(event) => event.preventDefault()} onClick={restartNumbering}>Restart</button>

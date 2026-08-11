@@ -1,12 +1,19 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
 import type { DomTableCommand } from "../adapters/domTableCommandBridge.js";
-import { compareRetainedAndCanonicalTable, tableShadowLogRecord } from "./tableShadowComparator.js";
+import { compareRetainedAndCanonicalTable, compareRetainedAndCanonicalTableInsert, tableShadowLogRecord } from "./tableShadowComparator.js";
 
 const flat = (rows: number, columns: number) => `<table><tbody>${Array.from({ length: rows }, (_, row) => `<tr>${Array.from({ length: columns }, (_, column) => `<td><p>v${row}-${column}</p></td>`).join("")}</tr>`).join("")}</tbody></table>`;
 const merged = `<table><tbody><tr><td rowspan="2"><p>A</p></td><td><p>B</p></td></tr><tr><td><p>C</p></td></tr></tbody></table>`;
 
 describe("Phase 6 retained table shadow corpus", () => {
+  it("replays table.insert with a semantic selection checkpoint", () => {
+    const result = compareRetainedAndCanonicalTableInsert("<p>anchor</p>", 2, 2, false);
+    expect(result.classification).toBe("expected-normalization");
+    expect(result.selectionCompared).toBe(true);
+    expect(result.selectionEquivalent).toBe(true);
+  });
+
   it("reports no unexplained semantic/data-loss result in 2,100 scenarios (seed 0x7AB1E006)", () => {
     let seed = 0x7AB1E006;
     const random = (max: number) => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed % max; };

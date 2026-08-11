@@ -443,6 +443,15 @@ test.describe("Phase 3 canonical list vertical slice", () => {
 
   test("handles Enter start/mid/end and restores structural history", async ({ page }) => {
     await page.goto("/?canonical=1&lists=1");
+    // The canonical harness is mounted by a React effect. Under full WebKit
+    // load, page.goto can resolve before that effect has focused the editable
+    // root; an immediate Enter then goes to the page instead of the seeded
+    // list item and the test observes the unchanged three-item list. Wait for
+    // the harness and focus explicitly so this test exercises list Enter,
+    // rather than a mount-order race.
+    await page.waitForFunction(() => Boolean(window.__smartCanonical));
+    await expect(page.locator(surface)).toBeVisible();
+    await page.locator(surface).focus();
     await page.keyboard.press("Enter");
     await expect(page.locator(`${surface} > ul > li`)).toHaveCount(4);
     await page.keyboard.type("X");
@@ -494,6 +503,7 @@ test.describe("Phase 3 canonical list vertical slice", () => {
     const checkbox = item.locator('[data-smart-ui="check-control"]');
     await expect(checkbox).toHaveAttribute("role", "checkbox");
     await expect(checkbox).toHaveAttribute("aria-checked", "false");
+    await checkbox.focus();
     await page.keyboard.press("Space");
     await expect(checkbox).toHaveAttribute("aria-checked", "true");
     await page.keyboard.press(process.platform === "darwin" ? "Meta+z" : "Control+z");

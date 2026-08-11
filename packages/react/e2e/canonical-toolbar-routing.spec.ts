@@ -48,6 +48,18 @@ const chooseMedia = async (page: Page, kind: "image" | "video" | "audio", name: 
 };
 
 test.describe("canonical toolbar routing", () => {
+  test("routes checklist state through the canonical renderer projection", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    const surface = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
+    await selectFirstText(page);
+    await page.getByRole("button", { name: "Bulleted list" }).click();
+    await page.getByRole("button", { name: "Numbered list" }).click();
+    await page.getByRole("button", { name: "Checklist" }).click();
+    await expect(surface.locator('ul[data-smart-checkable="true"]')).toHaveCount(1);
+    await page.getByRole("button", { name: "Check selected items" }).click();
+    await expect(surface.locator('[role="checkbox"]')).toHaveAttribute("aria-checked", "true");
+  });
+
   test("routes lists, links, tables, atoms, resize, import, and export through retained state", async ({ page }) => {
     let linkPrompt = 0;
     page.on("dialog", (dialog) => {
@@ -94,6 +106,7 @@ test.describe("canonical toolbar routing", () => {
     await expect(image).toHaveAttribute("src", /^https:\/\/media\.playground\.test\//);
     await expect(image).toBeVisible();
     await image.click();
+    await expect(page.getByRole("button", { name: "Grow selected atom" })).toBeEnabled();
     await page.getByRole("button", { name: "Grow selected atom" }).click();
     await expect(image).toHaveAttribute("width", "180");
     await page.getByRole("button", { name: "Insert video" }).click();
@@ -171,6 +184,11 @@ test.describe("canonical toolbar routing", () => {
     await page.getByRole("button", { name: "Merge cells" }).click();
     await expect(table.locator("tr").first().locator("td,th")).toHaveCount(1);
     await expect(table.locator("tr").first().locator("td,th").first()).toHaveAttribute("colspan", "2");
+    await expect.poll(() => page.evaluate(() => window.__smartProductCanonical?.editor.selection.type)).toBe("cell");
+    // Empty source cells contain editable placeholder paragraphs. A merge
+    // must retain one editable line, not stack one placeholder per source
+    // cell (which multiplies the merged row height).
+    await expect(table.locator("tr").first().locator("td,th").first().locator(":scope > p")).toHaveCount(1);
     await expect(page.getByRole("button", { name: "Split cell" })).toBeEnabled();
     await page.getByRole("button", { name: "Split cell" }).click();
     await expect(table.locator("tr").first().locator("td,th")).toHaveCount(2);

@@ -10,6 +10,7 @@ import {
 
 type Point = { row: number; column: number };
 export type DomTableCommand =
+  | { id: "table.remove"; input?: Record<string, never> }
   | { id: "table.row.add" | "table.row.remove"; input: { index: number } }
   | { id: "table.column.add" | "table.column.remove"; input: { index: number } }
   | { id: "table.cell.merge"; input: { start: Point; end: Point } }
@@ -134,6 +135,7 @@ const replaceDomTable = (table: HTMLTableElement, document: SmartDocument): HTML
 };
 
 export const executeDomTableCommand = (element: HTMLTableElement, command: DomTableCommand): HTMLTableElement | null => {
+  if (command.id === "table.remove") return null;
   const parsed = canonicalTable(element);
   if (!parsed) return null;
   const { document, table } = parsed;

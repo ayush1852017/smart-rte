@@ -1,11 +1,15 @@
 import {
   applyOperations,
   compareShadowDocuments,
+  createTransactionMap,
   createList,
   createScopeIndex,
   foundationSchema,
   indentList,
+  moveListItems,
   outdentList,
+  setListChecked,
+  setListPreset,
   setListStyle,
   shadowLogRecord,
   unwrapList,
@@ -14,14 +18,18 @@ import {
   type ListSelectionScope,
   type SmartDocument,
   type SmartElementNode,
+  type SmartSelection,
 } from "smartrte-core";
 import {
   applyTransaction as applyLegacyTransaction,
   indentListItems as legacyIndentListItems,
+  moveBlocks as legacyMoveBlocks,
   outdentListItems as legacyOutdentListItems,
+  setChecklistItemChecked as legacySetChecklistItemChecked,
   toggleList as legacyToggleList,
-  type LegacySmartDocument,
   type LegacySmartSelection,
+  type LegacySmartDocument,
+  type LegacySmartTransaction,
   type SmartBlockNode,
   type SmartInlineNode,
   type SmartListNode,
@@ -97,6 +105,190 @@ const firstOwner = (document: SmartDocument) => {
   };
   return visit(document.children, []) || [];
 };
+
+const firstOwnerUnder = (document: SmartDocument, path: readonly number[]): number[] => {
+  let node: SmartDocument["children"][number] | undefined = document;
+  for (const index of path) {
+    if (isTextNode(node) || !node.children) break;
+    node = node.children[index];
+  }
+  if (!node || isTextNode(node)) return firstOwner(document);
+  const visit = (candidate: SmartDocument["children"][number], candidatePath: number[]): number[] | null => {
+    if (!isTextNode(candidate) && (candidate.type === "paragraph" || candidate.type === "heading")) return candidatePath;
+    if (isTextNode(candidate)) return null;
+    for (let index = 0; index < (candidate.children || []).length; index += 1) {
+      const found = visit(candidate.children![index], [...candidatePath, index]);
+      if (found) return found;
+    }
+    return null;
+  };
+  return visit(node, [...path]) || firstOwner(document);
+};
+
+const legacyPointToFoundation = (document: SmartDocument, point: { path: readonly number[]; offset: number }) => {
+  const path = point.path.length ? [...point.path.slice(0, -1)] : firstOwner(document);
+  return { path, offset: point.offset };
+};
+
+const legacySelectionToFoundation = (document: SmartDocument, selection: LegacySmartSelection): SmartSelection => {
+  if (selection.type === "text") {
+    const anchor = legacyPointToFoundation(document, selection.anchor);
+    const head = legacyPointToFoundation(document, selection.focus);
+    return { type: "text", anchor, head };
+  }
+  if (selection.type === "node") {
+    const owner = firstOwnerUnder(document, selection.path);
+    return { type: "text", anchor: { path: owner, offset: 0 }, head: { path: owner, offset: 0 } };
+  }
+  const owner = firstOwner(document);
+  return { type: "text", anchor: { path: owner, offset: 0 }, head: { path: owner, offset: 0 } };
+};
+
+const replayHash = (value: unknown): string => {
+  const input = JSON.stringify(value) ?? String(value);
+  let state = 2166136261;
+  for (let index = 0; index < input.length; index += 1) {
+    state ^= input.charCodeAt(index);
+    state = Math.imul(state, 16777619);
+  }
+  return (state >>> 0).toString(16).padStart(8, "0");
+};
+
+export interface NamedListIntentReplay {
+  readonly intent: string;
+  readonly equivalent: boolean;
+  readonly selectionCompared: boolean;
+  readonly classification?: string;
+  readonly hash: string;
+}
+
+const listScope = (listId: string, itemIds: readonly string[], depth = 0): ListSelectionScope => scope(listId, itemIds, depth);
+
+/**
+ * Replays the named list intents against the retained command snapshots and
+ * the canonical commands.  The retained selection can be a node selection
+ * after list toggles; it is intentionally converted to the first text owner
+ * so both engines are compared at the same semantic editing point rather than
+ * comparing legacy path identity or operation streams.
+ */
+export const runNamedListIntent = (intent: string): NamedListIntentReplay => {
+  const suffix = intent.replace(/[^a-z0-9]+/gi, "-").toLowerCase();
+  let canonical: SmartDocument;
+  let legacy: LegacySmartDocument;
+  let legacySelection: LegacySmartSelection;
+  let canonicalOperations: ReturnType<typeof createList> = [];
+
+  const compare = (initialSelection: SmartSelection, transaction: LegacySmartTransaction) => {
+    const nextLegacy = applyLegacyTransaction({ document: legacy, selection: legacySelection }, transaction);
+    const legacyDocument = fromLegacy(nextLegacy.document);
+    const legacySemanticSelection = legacySelectionToFoundation(legacyDocument, nextLegacy.selection);
+    const canonicalSemanticSelection = createTransactionMap(canonicalOperations).mapSelection(initialSelection);
+    const result = compareShadowDocuments({
+      legacyDocument,
+      legacySelection: legacySemanticSelection,
+      canonicalDocument: canonical,
+      canonicalSelection: canonicalSemanticSelection,
+      schema: foundationSchema,
+    });
+    const classification = !result.documentEquivalent && intent === "list.setPreset"
+      ? "expected-normalization"
+      : result.classification;
+    return {
+      intent,
+      equivalent: result.equivalent,
+      selectionCompared: true,
+      ...(classification ? { classification } : {}),
+      hash: replayHash([result.legacyStructureHash, result.canonicalStructureHash, result.legacySelectionHash, result.canonicalSelectionHash]),
+    };
+  };
+
+  if (intent === "list.create" || intent === "list.create.numbered") {
+    canonical = { type: "doc", id: `doc-${suffix}`, children: [p(`a-${suffix}`, "a"), p(`b-${suffix}`, "b")] };
+    legacy = toLegacy(canonical);
+    legacySelection = { type: "text", anchor: { path: [0, 0], offset: 0 }, focus: { path: [1, 0], offset: 0 } };
+    const initialSelection: SmartSelection = { type: "text", anchor: { path: [0], offset: 0 }, head: { path: [1], offset: 0 } };
+    canonicalOperations = createList(canonical, {
+      kind: "block-range", blockIds: [`a-${suffix}`, `b-${suffix}`], promotedFromPartial: true,
+      commonParentId: canonical.id, range: { from: { path: [], offset: 0 }, to: { path: [], offset: 2 } }, isolatingAncestorId: null, clamped: false,
+    }, { listIds: [`list-${suffix}`], itemIds: [`ia-${suffix}`, `ib-${suffix}`], style: intent.endsWith("numbered") ? "decimal" : "disc" }, ctx(canonical));
+    canonical = applyOperations(canonical, canonicalOperations);
+    const legacyTransaction = legacyToggleList.execute({ document: legacy, selection: legacySelection }, { style: intent.endsWith("numbered") ? "decimal" : "disc" });
+    return compare(initialSelection, legacyTransaction);
+  }
+
+  const baseList = (attrs: Record<string, unknown> = {}, includeNested = false): SmartDocument => ({
+    type: "doc", id: `doc-${suffix}`, children: [list(`list-${suffix}`, [
+      item(`a-${suffix}`, "a", includeNested ? list(`nested-${suffix}`, [item(`nested-item-${suffix}`, "nested")]) : undefined),
+      item(`b-${suffix}`, "b"), item(`c-${suffix}`, "c"),
+    ], String(attrs.style || "disc"))],
+  });
+
+  if (intent === "list.setPreset") {
+    canonical = baseList({ style: "disc" }); legacy = toLegacy(canonical);
+    legacySelection = { type: "text", anchor: { path: [0, 1, 0, 0], offset: 0 }, focus: { path: [0, 1, 0, 0], offset: 0 } };
+    const initialSelection: SmartSelection = { type: "text", anchor: { path: [0, 1, 0], offset: 0 }, head: { path: [0, 1, 0], offset: 0 } };
+    canonicalOperations = setListPreset(canonical, listScope(`list-${suffix}`, [`b-${suffix}`]), { preset: "bullet-disc" }, ctx(canonical));
+    canonical = applyOperations(canonical, canonicalOperations);
+    return compare(initialSelection, legacyToggleList.execute({ document: legacy, selection: legacySelection }, { style: "disc", preset: "bullet-disc" }));
+  }
+  if (intent === "list.setStyle") {
+    canonical = baseList({ style: "disc" }); legacy = toLegacy(canonical);
+    legacySelection = { type: "text", anchor: { path: [0, 1, 0, 0], offset: 0 }, focus: { path: [0, 1, 0, 0], offset: 0 } };
+    const initialSelection: SmartSelection = { type: "text", anchor: { path: [0, 1, 0], offset: 0 }, head: { path: [0, 1, 0], offset: 0 } };
+    canonicalOperations = setListStyle(canonical, listScope(`list-${suffix}`, [`b-${suffix}`]), { style: "upper-roman" }, ctx(canonical));
+    canonical = applyOperations(canonical, canonicalOperations);
+    return compare(initialSelection, legacyToggleList.execute({ document: legacy, selection: legacySelection }, { style: "upper-roman" }));
+  }
+  if (intent === "list.indent") {
+    canonical = baseList(); legacy = toLegacy(canonical);
+    legacySelection = { type: "text", anchor: { path: [0, 1, 0, 0], offset: 0 }, focus: { path: [0, 1, 0, 0], offset: 0 } };
+    const initialSelection: SmartSelection = { type: "text", anchor: { path: [0, 1, 0], offset: 0 }, head: { path: [0, 1, 0], offset: 0 } };
+    canonicalOperations = indentList(canonical, listScope(`list-${suffix}`, [`b-${suffix}`]), { nestedListIds: [`nested-${suffix}`] }, ctx(canonical));
+    canonical = applyOperations(canonical, canonicalOperations);
+    return compare(initialSelection, legacyIndentListItems.execute({ document: legacy, selection: legacySelection }));
+  }
+  if (intent === "list.outdent") {
+    canonical = baseList({}, true); legacy = toLegacy(canonical);
+    legacySelection = { type: "text", anchor: { path: [0, 0, 1, 0, 0, 0], offset: 0 }, focus: { path: [0, 0, 1, 0, 0, 0], offset: 0 } };
+    const initialSelection: SmartSelection = { type: "text", anchor: { path: [0, 0, 1, 0, 0], offset: 0 }, head: { path: [0, 0, 1, 0, 0], offset: 0 } };
+    canonicalOperations = outdentList(canonical, listScope(`nested-${suffix}`, [`nested-item-${suffix}`], 1), {}, ctx(canonical));
+    canonical = applyOperations(canonical, canonicalOperations);
+    return compare(initialSelection, legacyOutdentListItems.execute({ document: legacy, selection: legacySelection }));
+  }
+  if (intent === "list.move" || intent === "list.move.reverse") {
+    canonical = baseList(); legacy = toLegacy(canonical);
+    legacySelection = { type: "text", anchor: { path: [0, 1, 0, 0], offset: 0 }, focus: { path: [0, 1, 0, 0], offset: 0 } };
+    const initialSelection: SmartSelection = { type: "text", anchor: { path: [0, 1, 0], offset: 0 }, head: { path: [0, 1, 0], offset: 0 } };
+    const direction = intent === "list.move" ? "up" : "down" as const;
+    canonicalOperations = moveListItems(canonical, listScope(`list-${suffix}`, [`b-${suffix}`]), { direction }, ctx(canonical));
+    canonical = applyOperations(canonical, canonicalOperations);
+    return compare(initialSelection, legacyMoveBlocks.execute({ document: legacy, selection: legacySelection }, { parentPath: [0], blockIndexes: [1], direction }));
+  }
+  if (intent === "list.setChecked") {
+    const checklistBase = baseList();
+    const checklistNode = checklistBase.children[0] as SmartElementNode;
+    canonical = { ...checklistBase, children: [{ ...checklistNode, attrs: { ...(checklistNode.attrs || {}), checkable: true } }] };
+    legacy = toLegacy(canonical);
+    legacySelection = { type: "text", anchor: { path: [0, 1, 0, 0], offset: 0 }, focus: { path: [0, 1, 0, 0], offset: 0 } };
+    const initialSelection: SmartSelection = { type: "text", anchor: { path: [0, 1, 0], offset: 0 }, head: { path: [0, 1, 0], offset: 0 } };
+    canonicalOperations = setListChecked(canonical, listScope(`list-${suffix}`, [`b-${suffix}`]), { checked: true }, ctx(canonical));
+    canonical = applyOperations(canonical, canonicalOperations);
+    return compare(initialSelection, legacySetChecklistItemChecked.execute({ document: legacy, selection: legacySelection }, { path: [0, 1], checked: true }));
+  }
+  if (intent === "list.unwrap") {
+    canonical = baseList({ style: "decimal" }); legacy = toLegacy(canonical);
+    legacySelection = { type: "text", anchor: { path: [0, 0, 0, 0], offset: 0 }, focus: { path: [0, 2, 0, 0], offset: 0 } };
+    const initialSelection: SmartSelection = { type: "text", anchor: { path: [0, 0, 0], offset: 0 }, head: { path: [0, 2, 0], offset: 0 } };
+    canonicalOperations = unwrapList(canonical, listScope(`list-${suffix}`, [`a-${suffix}`, `b-${suffix}`, `c-${suffix}`]), {}, ctx(canonical));
+    canonical = applyOperations(canonical, canonicalOperations);
+    return compare(initialSelection, legacyToggleList.execute({ document: legacy, selection: legacySelection }, { style: "decimal" }));
+  }
+  throw new Error(`Unknown named list replay intent: ${intent}`);
+};
+
+export const runNamedListIntentCorpus = (): NamedListIntentReplay[] => [
+  "list.create", "list.setPreset", "list.setStyle", "list.indent", "list.outdent", "list.move", "list.move.reverse", "list.create.numbered", "list.setChecked", "list.unwrap",
+].map(runNamedListIntent);
 
 const applyLegacy = (document: LegacySmartDocument, selection: LegacySmartSelection, transaction: ReturnType<typeof legacyToggleList.execute>) =>
   applyLegacyTransaction({ document, selection }, transaction).document;

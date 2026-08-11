@@ -49,7 +49,7 @@
     "test": "vitest run --passWithNoTests",
     "storybook": "storybook dev -p 6006",
     "build-storybook": "storybook build",
-    "e2e": "playwright test --pass-with-no-tests"
+    "e2e": "pnpm --filter smartrte-core build && pnpm build && playwright test --pass-with-no-tests"
   },
   "publishConfig": {
     "access": "public"
