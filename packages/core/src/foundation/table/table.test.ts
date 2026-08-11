@@ -135,6 +135,34 @@ describe("pure table commands", () => {
     expect(mergeTableCellsCommand(headerModel, { ...whole, tableId: "plain" }, {}, ctx(headerModel))).toEqual([]);
   });
 
+  it("does not stack placeholder paragraphs when merging empty cells", () => {
+    const empty = doc({ type: "table", id: "empty", children: [
+      row("empty-row", [cell("empty-a", ""), cell("empty-b", ""), cell("empty-c", "")]),
+    ] });
+    const tableValue = currentTable(empty);
+    const selected = { ...scope(tableValue, 0, 0, 0, 2), tableId: tableValue.id };
+    const merged = applyOperations(empty, mergeTableCellsCommand(empty, selected, {}, ctx(empty)));
+    const anchor = occupancyGridFor(currentTable(merged)).at(0, 0)!;
+    expect(anchor.node.children).toHaveLength(1);
+    expect(isText(anchor.node.children![0] as SmartElementNode)).toBe("");
+  });
+
+  it("keeps row height once when horizontally merging two, three, or four one-line cells", () => {
+    [2, 3, 4].forEach((count) => {
+      const cells = Array.from({ length: count }, (_, index) => cell(`height-${count}-${index}`, String(index + 1)));
+      const model = doc({ type: "table", id: `height-${count}`, children: [{ ...row(`height-row-${count}`, cells), attrs: { height: 48 } }] });
+      const tableValue = currentTable(model);
+      const selected = { ...scope(tableValue, 0, 0, 0, count - 1), tableId: tableValue.id };
+      const merged = applyOperations(model, mergeTableCellsCommand(model, selected, {}, ctx(model)));
+      const mergedTable = currentTable(merged);
+      expect(mergedTable.children?.[0]).toMatchObject({ attrs: { height: 48 } });
+      const anchor = occupancyGridFor(mergedTable).at(0, 0)!;
+      expect(anchor.node.children).toHaveLength(1);
+      expect(isText(anchor.node.children![0] as SmartElementNode)).toBe(Array.from({ length: count }, (_, index) => String(index + 1)).join(""));
+      expect(validateTableGeometry(mergedTable)).toEqual([]);
+    });
+  });
+
   it("keeps coordinated column movement valid and refuses to split a colspan implicitly", () => {
     const model = doc({ type: "table", id: "move", attrs: { columnWidths: [80, 120] }, children: [
       row("mr0", [cell("ma", "A"), cell("mb", "B")]), row("mr1", [cell("mc", "C"), cell("md", "D")]),

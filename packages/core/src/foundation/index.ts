@@ -15,6 +15,7 @@ export * from "./operations.js";
 export * from "./mapping.js";
 export * from "./transactions.js";
 export * from "./normalization.js";
+export * from "./boundaries.js";
 export * from "./history.js";
 export * from "./editor.js";
 export * from "./modelDom.js";

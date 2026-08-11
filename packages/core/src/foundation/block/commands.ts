@@ -29,6 +29,38 @@ const locate = (nodeId: string, ctx: BlockCommandContext): LocatedBlock => {
   return { node, pos: { path: [...resolved.pos.path], offset: resolved.pos.offset } };
 };
 
+const semanticRole = (node: SmartElementNode, ctx: BlockCommandContext) =>
+  ctx.schema.nodes[node.type]?.semanticRole || node.type;
+
+const ancestorWithRole = (
+  nodeId: string,
+  role: "list" | "blockquote",
+  ctx: BlockCommandContext,
+): SmartElementNode | null => {
+  const resolved = ctx.positions.positionOf(nodeId);
+  if (!resolved) return null;
+  for (let index = resolved.ancestors.length - 1; index >= 0; index -= 1) {
+    const candidate = resolved.ancestors[index];
+    if (semanticRole(candidate, ctx) === role) return candidate;
+  }
+  return null;
+};
+
+const ancestorTargets = (
+  scope: ResolvedScope,
+  role: "list" | "blockquote",
+  ctx: BlockCommandContext,
+) => {
+  const targets = new Map<string, LocatedBlock>();
+  selectedBlockIds(scope).forEach((nodeId) => {
+    const ancestor = ancestorWithRole(nodeId, role, ctx);
+    if (!ancestor || targets.has(ancestor.id)) return;
+    targets.set(ancestor.id, locate(ancestor.id, ctx));
+  });
+  return [...targets.values()].sort((left, right) =>
+    right.pos.path.length - left.pos.path.length || right.pos.offset - left.pos.offset);
+};
+
 const typeAttrs = (node: SmartElementNode, type: SetBlockTypeParams["type"], attrs: Attrs | undefined): Attrs => {
   const next = { ...(node.attrs || {}) } as Record<string, unknown>;
   delete next.level;
@@ -91,12 +123,25 @@ const groupedBlocks = (scope: ResolvedScope, ctx: BlockCommandContext) => {
 
 export const wrapBlocks: BlockCommand<WrapBlocksParams> = (_document, scope, params, ctx) => {
   const groups = groupedBlocks(scope, ctx);
-  if (params.wrapperIds.length < groups.length) throw new Error(`block.wrap requires ${groups.length} caller-provided wrapper ID(s).`);
-  return groups.flatMap((group, groupIndex) => {
+  const listTargets = ancestorTargets(scope, "list", ctx);
+  const nonListGroups = groups.filter((group) => !ancestorWithRole(group[0].node.id, "list", ctx));
+  const targetCount = listTargets.length + nonListGroups.length;
+  if (params.wrapperIds.length < targetCount) throw new Error(`block.wrap requires ${targetCount} caller-provided wrapper ID(s).`);
+  let wrapperCursor = 0;
+  const listOperations = listTargets.map(({ node, pos }) => {
+    const wrapper: SmartElementNode = {
+      type: params.type,
+      id: params.wrapperIds[wrapperCursor++],
+      ...(params.attrs && Object.keys(params.attrs).length ? { attrs: cleanAttrs(params.attrs) } : {}),
+      children: [cloneNode(node)],
+    };
+    return { type: "replaceNode" as const, pos, before: node, after: wrapper };
+  });
+  const blockOperations = nonListGroups.flatMap((group) => {
     const first = group[0];
     const wrapper: SmartElementNode = {
       type: params.type,
-      id: params.wrapperIds[groupIndex],
+      id: params.wrapperIds[wrapperCursor++],
       ...(params.attrs && Object.keys(params.attrs).length ? { attrs: cleanAttrs(params.attrs) } : {}),
       children: group.map((entry) => cloneNode(entry.node)),
     };
@@ -108,11 +153,23 @@ export const wrapBlocks: BlockCommand<WrapBlocksParams> = (_document, scope, par
     }));
     return operations;
   });
+  return [...listOperations, ...blockOperations];
 };
 
-export const unwrapBlocks: BlockCommand<UnwrapBlocksParams> = (_document, scope, params, ctx) =>
-  groupedBlocks(scope, ctx).flatMap((group) => group.slice().reverse().flatMap(({ node, pos }) => {
-    if (node.type !== (params.type || "blockquote")) return [];
+export const unwrapBlocks: BlockCommand<UnwrapBlocksParams> = (_document, scope, params, ctx) => {
+  const wrapperType = params.type || "blockquote";
+  const wrappers = new Map<string, LocatedBlock>();
+  selectedBlockIds(scope).forEach((nodeId) => {
+    const selected = locate(nodeId, ctx);
+    const target = selected.node.type === wrapperType
+      ? selected.node
+      : ancestorWithRole(nodeId, wrapperType === "blockquote" ? "blockquote" : wrapperType, ctx);
+    if (!target || wrappers.has(target.id)) return;
+    wrappers.set(target.id, locate(target.id, ctx));
+  });
+  return [...wrappers.values()].sort((left, right) =>
+    right.pos.path.length - left.pos.path.length || right.pos.offset - left.pos.offset).flatMap(({ node, pos }) => {
+    if (node.type !== wrapperType) return [];
     const children = (node.children || []).filter((child): child is SmartElementNode => !isTextNode(child));
     if (!children.length) return [];
     const operations: SmartOperation[] = [{ type: "replaceNode", pos, before: node, after: cloneNode(children[0]) }];
@@ -122,7 +179,8 @@ export const unwrapBlocks: BlockCommand<UnwrapBlocksParams> = (_document, scope,
       node: cloneNode(child),
     }));
     return operations;
-  }));
+  });
+};
 
 export const setBlockAttributes: BlockCommand<SetBlockAttributesParams> = (_document, scope, params, ctx) =>
   selectedBlockIds(scope).flatMap((nodeId) => {

@@ -379,6 +379,13 @@ export const repair = (
         ? child
         : { type: "paragraph", id: createNodeId(), children: [child] });
     }
+    // A quote is a block container, so an empty imported quote still needs a
+    // real editable owner.  Renderer-only <br> projections cannot provide a
+    // canonical position for Enter, deletion, or selection mapping.
+    if (source.type === "blockquote" && children.length === 0) {
+      children = [emptyParagraph()];
+      repairs.push({ path, code: "empty-blockquote", message: "Inserted an empty paragraph into the blockquote." });
+    }
     let repaired: SmartElementNode = { type: source.type, id, ...(Object.keys(attrs).length ? { attrs } : {}), ...(spec.content ? { children } : {}) };
     if (source.type === "table") {
       const geometry = repairTableGeometry(repaired);

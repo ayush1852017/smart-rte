@@ -72,7 +72,7 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
     this.recordWrite(ownerId);
   }
 
-  private syncNodeAttributes(element: HTMLElement, node: SmartElementNode): void {
+  private syncNodeAttributes(element: HTMLElement, node: SmartElementNode, listDepth = 0): void {
     if (node.attrs?.align) element.style.textAlign = String(node.attrs.align);
     else if (element.style.textAlign) element.style.removeProperty("text-align");
     if (node.attrs?.indentLevel) element.style.marginInlineStart = `${Number(node.attrs.indentLevel) * 2}em`;
@@ -90,10 +90,26 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
     if (node.type === "list") {
       const preset = typeof node.attrs?.preset === "string" ? node.attrs.preset : null;
       const style = typeof node.attrs?.style === "string" ? node.attrs.style : null;
-      if (preset) this.setAttribute(element, "data-smart-list-preset", preset, node.id);
-      else this.removeAttribute(element, "data-smart-list-preset", node.id);
-      if (style) this.setAttribute(element, "data-smart-list-style", style, node.id);
-      else this.removeAttribute(element, "data-smart-list-style", node.id);
+      if (preset) {
+        this.setAttribute(element, "data-smart-list-preset", preset, node.id);
+        this.setAttribute(element, "data-srte-list-preset", preset, node.id);
+      } else {
+        this.removeAttribute(element, "data-smart-list-preset", node.id);
+        this.removeAttribute(element, "data-srte-list-preset", node.id);
+      }
+      if (style) {
+        this.setAttribute(element, "data-smart-list-style", style, node.id);
+        this.setAttribute(element, "data-srte-list-style", style, node.id);
+      } else {
+        this.removeAttribute(element, "data-smart-list-style", node.id);
+        this.removeAttribute(element, "data-srte-list-style", node.id);
+      }
+      // The preset marker rules are depth-specific.  The format serializer
+      // already emits this value; the live renderer must project it too or
+      // every non-default preset falls back to the browser's plain disc/
+      // decimal marker.
+      this.setAttribute(element, "data-smart-list-depth", String(listDepth), node.id);
+      this.setAttribute(element, "data-srte-list-depth", String(listDepth), node.id);
       if (style && element.style.listStyleType !== style) {
         element.style.listStyleType = style;
         this.recordWrite(node.id);
@@ -122,7 +138,10 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
           element.prepend(control);
           this.recordWrite(node.id);
         }
-        this.setAttribute(control, "aria-checked", node.attrs?.checked === true ? "true" : "false", node.id);
+        const checked = node.attrs?.checked === true;
+        this.setAttribute(control, "aria-checked", checked ? "true" : "false", node.id);
+        this.setAttribute(control, "data-checked", checked ? "true" : "false", node.id);
+        this.setAttribute(control, "aria-label", checked ? "Mark incomplete" : "Mark complete", node.id);
         this.setAttribute(element, "data-srte-checked", node.attrs?.checked === true ? "true" : "false", node.id);
         this.removeAttribute(element, "role", node.id);
         this.removeAttribute(element, "aria-checked", node.id);
@@ -157,6 +176,19 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
       if (Number.isFinite(height) && height > 0) element.style.height = `${height}px`;
       else element.style.removeProperty("height");
     } else if (node.type === "table_cell") {
+      // Row height is canonical state on table_row.  A cell-level height can
+      // survive a DOM subtree reuse (for example after a legacy resize or a
+      // merge) and makes the browser count the same row height once per
+      // covered cell.  Clear that stale presentation at the renderer
+      // boundary; it is not part of the cell model and must never win over
+      // the row's height.
+      ["height", "min-height", "max-height"].forEach((property) => {
+        if (element.style.getPropertyValue(property)) {
+          element.style.removeProperty(property);
+          this.recordWrite(node.id);
+        }
+      });
+      this.removeAttribute(element, "height", node.id);
       const rowspan = Math.max(1, Number(node.attrs?.rowspan) || 1);
       const colspan = Math.max(1, Number(node.attrs?.colspan) || 1);
       if (rowspan > 1) this.setAttribute(element, "rowspan", String(rowspan), node.id); else this.removeAttribute(element, "rowspan", node.id);
@@ -265,7 +297,7 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
     });
   }
 
-  private createNode(node: SmartNode, path: readonly number[]): Node {
+  private createNode(node: SmartNode, path: readonly number[], listDepth = 0): Node {
     if (isTextNode(node)) {
       this.recordWrite();
       return renderMarkedText(node, this.root.ownerDocument);
@@ -274,7 +306,7 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
     this.recordWrite(node.id);
     element.setAttribute(SMART_NODE_ID_ATTRIBUTE, node.id);
     element.setAttribute("data-smart-type", node.type);
-    this.syncNodeAttributes(element, node);
+    this.syncNodeAttributes(element, node, listDepth);
     this.installMediaDiagnostics(element, node);
     if (node.type === "hard_break") {
       element.setAttribute("data-smart-atomic", "true");
@@ -283,7 +315,8 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
       element.setAttribute("data-smart-atomic", "true");
       if (node.type === "unknown") element.textContent = `[Unsupported: ${String(node.attrs?.originalType || "unknown")}]`;
     } else {
-      node.children?.forEach((child, index) => element.appendChild(this.createNode(child, [...path, index])));
+      const childListDepth = node.type === "list" ? listDepth + 1 : listDepth;
+      node.children?.forEach((child, index) => element.appendChild(this.createNode(child, [...path, index], childListDepth)));
       if (node.type === "list") (node.children || []).forEach((child, index) => {
         if (!isTextNode(child)) {
           const childElement = this.modelChildren(element)[index];
@@ -332,14 +365,21 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
     }
   }
 
-  private diffElement(element: HTMLElement, before: SmartElementNode, after: SmartElementNode, path: readonly number[]): boolean {
+  private diffElement(element: HTMLElement, before: SmartElementNode, after: SmartElementNode, path: readonly number[], listDepth = 0): boolean {
     this.modelById.set(after.id, after);
     this.mapping.track(after, path, element);
     if (after.id === this.compositionOwner) return false;
     this.setAttribute(element, SMART_NODE_ID_ATTRIBUTE, after.id, after.id);
     this.setAttribute(element, "data-smart-type", after.type, after.id);
-    this.syncNodeAttributes(element, after);
+    this.syncNodeAttributes(element, after, listDepth);
     this.installMediaDiagnostics(element, after);
+    // Atomic nodes render their payload as presentation (for example, a
+    // formula's accessible source text), not as model children.  Once a
+    // stable-ID sibling is reused, recursing into that DOM subtree would
+    // mistake the presentation text for an unmodelled child and remove it.
+    // Keep the atom opaque after syncing its attributes; its model lifecycle
+    // is handled by the parent diff and its dedicated attribute renderer.
+    if (after.type === "unknown" || after.attrs?.atomic === true || atomTypes.has(after.type)) return false;
     const beforeChildren = before.children || [];
     const afterChildren = after.children || [];
     // Remove the visual-only empty line before inserting real model children.
@@ -360,6 +400,22 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
       const domChildren = this.modelChildren(element);
       let dom = domChildren[index] || null;
       let old = previous;
+      // A sibling move can leave the DOM node already at this target index
+      // even though `previous` describes the node that occupied the index in
+      // the old model. Reconcile by stable node ID in that case. Treating the
+      // old positional node as the identity here recreates the moved element,
+      // drops its native caret, and can make the browser selection point at a
+      // detached range while the model has already moved on.
+      if (!isTextNode(next) && dom instanceof HTMLElement
+        && dom.getAttribute(SMART_NODE_ID_ATTRIBUTE) === next.id) {
+        // When the same ID remains at the same logical index, `previous` is
+        // the immediately-rendered version and is fresher than the historical
+        // ID cache. The cache is only needed for a node whose positional
+        // predecessor has a different ID (the actual sibling-move case).
+        old = Boolean(previous && !isTextNode(previous) && previous.id === next.id)
+          ? previous
+          : this.modelById.get(next.id) || next;
+      }
       if (!isTextNode(next)) {
         const existing = this.mapping.nodeToDom(next.id);
         if (existing && existing.parentNode === element && existing !== dom) {
@@ -382,16 +438,19 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
             this.recordWrite(after.id);
           }
         } else {
-          const replacement = this.createNode(next, [...path, index]);
+          const childListDepth = after.type === "list" ? listDepth + 1 : listDepth;
+          const replacement = this.createNode(next, [...path, index], childListDepth);
           if (dom) element.replaceChild(replacement, dom);
           else element.appendChild(replacement);
           this.recordWrite(after.id);
           structural = true;
         }
       } else if (dom?.nodeType === 1 && old && !isTextNode(old) && old.id === next.id && (dom as Element).tagName.toLowerCase() === tagForNode(next)) {
-        structural = this.diffElement(dom as HTMLElement, old, next, [...path, index]) || structural;
+        const childListDepth = after.type === "list" ? listDepth + 1 : listDepth;
+        structural = this.diffElement(dom as HTMLElement, old, next, [...path, index], childListDepth) || structural;
       } else {
-        const replacement = this.createNode(next, [...path, index]);
+        const childListDepth = after.type === "list" ? listDepth + 1 : listDepth;
+        const replacement = this.createNode(next, [...path, index], childListDepth);
         const previousSurvives = Boolean(previous && afterChildren.slice(index + 1).includes(previous));
         if (dom && previousSurvives) element.insertBefore(replacement, dom);
         else if (dom) element.replaceChild(replacement, dom);
@@ -505,6 +564,27 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
     return output;
   }
 
+  /**
+   * Checklist controls are renderer projections whose state depends on both
+   * the list parent and the item attributes.  A list-type transition can keep
+   * the item object reference unchanged, so the normal subtree identity skip
+   * must not leave a stale checkbox projection behind.  Reconcile these
+   * projections from the current model after every render; attribute writes
+   * remain idempotent.
+   */
+  private syncListProjections(document: SmartDocument): void {
+    const visit = (node: SmartNode, listDepth = 0): void => {
+      if (isTextNode(node)) return;
+      if (node.type === "list" || node.type === "list_item") {
+        const element = this.mapping.nodeToDom(node.id);
+        if (element) this.syncNodeAttributes(element, node, listDepth);
+      }
+      const childListDepth = node.type === "list" ? listDepth + 1 : listDepth;
+      node.children?.forEach((child) => visit(child, childListDepth));
+    };
+    visit(document);
+  }
+
   private announceSelectedLevel(before: SmartDocument, after: SmartDocument, selection: SmartSelection): void {
     const previous = this.listItemDepths(before);
     const next = this.listItemDepths(after);
@@ -531,10 +611,7 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
       document.children.forEach((node, index) => this.root.appendChild(this.createNode(node, [index])));
       this.current = document;
       this.mapping.rebuild(this.root, document);
-      this.root.querySelectorAll<HTMLElement>('[data-smart-type="list_item"]').forEach((element) => {
-        const model = this.mapping.domToNode(element)?.node;
-        if (model && !isTextNode(model)) this.syncNodeAttributes(element, model);
-      });
+      this.syncListProjections(document);
       this.syncTableAccessibility();
       this.modelById.set(document.id, document);
       this.restoreSelection(selection);
@@ -552,10 +629,7 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
     this.modelById.set(document.id, document);
     this.current = document;
     if (structural) this.mapping.rebuild(this.root, document);
-    this.root.querySelectorAll<HTMLElement>('[data-smart-type="list_item"]').forEach((element) => {
-      const model = this.mapping.domToNode(element)?.node;
-      if (model && !isTextNode(model)) this.syncNodeAttributes(element, model);
-    });
+    this.syncListProjections(document);
     if (structural) this.syncTableAccessibility();
     this.restoreSelection(selection);
     this.syncCellSelectionProjection(selection);

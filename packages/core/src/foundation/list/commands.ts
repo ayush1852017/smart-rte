@@ -28,6 +28,7 @@ import type {
   UnwrapListParams,
 } from "./types.js";
 import { moveContiguousSiblings } from "../structural/move.js";
+import { isFoundationSmartListPreset } from "./presets.js";
 
 interface LocatedNode {
   node: SmartElementNode;
@@ -96,13 +97,94 @@ const checkIds = (ids: readonly string[] | undefined, count: number, label: stri
   return ids;
 };
 
+/** How many list ancestors sit above this list — 0 for a top-level list, 1 for
+ * a list nested one level inside a list_item, and so on. Used to stamp the
+ * original nesting depth onto content unwrapped out of a list, so a later
+ * list.create over that content (and other unwrapped content) can rebuild it. */
+const listAncestorDepth = (list: SmartElementNode, ctx: CommandContext): number => {
+  let depth = 0;
+  let current: SmartElementNode = list;
+  for (;;) {
+    const resolved = ctx.positions.positionOf(current.id);
+    if (!resolved || resolved.parent.type !== "list_item") return depth;
+    const outer = ctx.positions.positionOf(resolved.parent.id)?.parent;
+    if (!outer || outer.type !== "list") return depth;
+    depth += 1;
+    current = outer;
+  }
+};
+
+const withDepthStamp = (node: SmartElementNode, depth: number): SmartElementNode =>
+  depth <= 0 || typeof node.attrs?.indentLevel === "number" ? node : withAttrs(node, { ...attrsOf(node), indentLevel: depth });
+
 /** Explicit style is the current-level override; preset supplies other levels. */
 export const effectiveListStyle = (list: SmartElementNode): string | undefined =>
   typeof list.attrs?.style === "string" ? list.attrs.style
     : typeof list.attrs?.preset === "string" ? list.attrs.preset
       : undefined;
 
+const withoutIndentLevel = (node: SmartElementNode): SmartElementNode =>
+  typeof node.attrs?.indentLevel === "number" ? withAttrs(node, { ...attrsOf(node), indentLevel: undefined }) : node;
+
+/** Clamps each block's indentLevel to at most one deeper than the block
+ * immediately before it (mirroring indentList's "only nest under the
+ * immediately preceding sibling" rule), so a selection built from a mix of
+ * never-nested content and content previously unwrapped out of a list
+ * (see withDepthStamp) always yields a structurally valid outline. */
+const clampedDepths = (nodes: readonly SmartElementNode[]): number[] => {
+  let previous = -1;
+  return nodes.map((node) => {
+    const raw = Math.max(0, Number(node.attrs?.indentLevel) || 0);
+    const depth = Math.min(raw, previous + 1);
+    previous = depth;
+    return depth;
+  });
+};
+
+interface DepthedEntry { readonly id: string; readonly node: SmartElementNode; readonly pos: SmartPos; }
+
+/** Rebuilds a run of blocks at a common depth into list_items, recursing into
+ * a nested list for any run of consecutively deeper blocks that follows one
+ * of them — the reconstruction counterpart to withDepthStamp. */
+const buildListItems = (
+  entries: readonly DepthedEntry[],
+  depths: readonly number[],
+  base: number,
+  nextItemId: () => string,
+  nextListId: () => string,
+  listAttrs: Record<string, unknown>,
+): SmartElementNode[] => {
+  const items: SmartElementNode[] = [];
+  let index = 0;
+  while (index < entries.length) {
+    const entry = entries[index];
+    // Consume this item's own ID before descending into any deeper run, so
+    // IDs are assigned in document order rather than the deepest/last entry
+    // grabbing an earlier ID than an entry that appears before it.
+    const itemId = nextItemId();
+    const content = withoutIndentLevel(cloneNode(entry.node));
+    index += 1;
+    const deepStart = index;
+    while (index < entries.length && depths[index] > base) index += 1;
+    const children: SmartNode[] = [content];
+    if (index > deepStart) children.push({
+      type: "list",
+      id: nextListId(),
+      attrs: listAttrs,
+      children: buildListItems(entries.slice(deepStart, index), depths.slice(deepStart, index), base + 1, nextItemId, nextListId, listAttrs),
+    });
+    items.push({
+      type: "list_item",
+      id: itemId,
+      ...(typeof entry.node.attrs?.htmlStyle === "string" ? { attrs: { htmlStyle: entry.node.attrs.htmlStyle } } : {}),
+      children,
+    });
+  }
+  return items;
+};
+
 export const createList: ListCommand<CreateListParams> = (document, scope, params, ctx) => {
+  if (params.preset !== undefined && !isFoundationSmartListPreset(params.preset)) return [];
   const ids = blockIds(scope);
   if (!ids.length) return [];
   const located = ids.map((id) => ({ id, ...locate(document, id, ctx) }));
@@ -118,25 +200,28 @@ export const createList: ListCommand<CreateListParams> = (document, scope, param
       entries: Array.from({ length: run.end - run.start + 1 }, (_, index) => byOffset.get(run.start + index)!),
     }));
   }).sort((left, right) => right.entries[0].pos.offset - left.entries[0].pos.offset);
-  const listIds = checkIds(params.listIds, groups.length, "list.create");
   const itemIds = checkIds(params.itemIds, located.length, "list.create");
   let itemCursor = 0;
-  return groups.flatMap((group, groupIndex) => {
+  let listCursor = 0;
+  // A reconstructed group may need more than one list node (one per nesting
+  // transition), which isn't known until the content's depths are read. The
+  // caller over-provisions listIds; this consumes only what's needed and
+  // fails clearly, matching indentList's per-step checkIds pattern, if it
+  // genuinely runs out.
+  const nextListId = (): string => checkIds(params.listIds, listCursor + 1, "list.create")[listCursor++];
+  const listAttrs = {
+    ...(params.preset !== undefined ? { preset: params.preset } : {}),
+    ...(params.style !== undefined ? { style: params.style } : {}),
+    ...(params.start !== undefined ? { start: params.start } : {}),
+    ...(params.checkable !== undefined ? { checkable: params.checkable } : {}),
+  };
+  return groups.flatMap((group) => {
+    const depths = clampedDepths(group.entries.map((entry) => entry.node));
     const list: SmartElementNode = {
       type: "list",
-      id: listIds[groupIndex],
-      attrs: {
-        ...(params.preset !== undefined ? { preset: params.preset } : {}),
-        ...(params.style !== undefined ? { style: params.style } : {}),
-        ...(params.start !== undefined ? { start: params.start } : {}),
-        ...(params.checkable !== undefined ? { checkable: params.checkable } : {}),
-      },
-      children: group.entries.map((entry) => ({
-        type: "list_item",
-        id: itemIds[itemCursor++],
-        ...(typeof entry.node.attrs?.htmlStyle === "string" ? { attrs: { htmlStyle: entry.node.attrs.htmlStyle } } : {}),
-        children: [cloneNode(entry.node)],
-      })),
+      id: nextListId(),
+      attrs: listAttrs,
+      children: buildListItems(group.entries, depths, 0, () => itemIds[itemCursor++], nextListId, listAttrs),
     };
     const first = group.entries[0];
     const operations: SmartOperation[] = [{ type: "replaceNode", pos: first.pos, before: first.node, after: list }];
@@ -153,6 +238,7 @@ const unwrapOne = (
   list: LocatedNode,
   selectedIndexes: readonly number[],
   splitId: string | undefined,
+  depth: number,
 ): SmartOperation[] => {
   if (!selectedIndexes.length) return [];
   const selected = new Set(selectedIndexes);
@@ -164,7 +250,17 @@ const unwrapOne = (
   const afterItems = children.slice(end + 1);
   const unwrapped = children.slice(start, end + 1).flatMap((node) => {
     if (isTextNode(node)) throw new Error("List children must be list items.");
-    return (node.children || []).filter((child) => !isTextNode(child) && child.type !== "list").map(cloneNode);
+    // Unwrapping removes the list-item wrapper, not its descendants. Nested
+    // lists become sibling block content at the new level; dropping them here
+    // loses user content and leaves a later mixed-scope selection with no list
+    // part to act on. The top-level unwrapped children are stamped with the
+    // list's nesting depth so a later list.create can rebuild it; a nested
+    // list carried along unchanged still encodes its own relative depth via
+    // its own item structure, so it is left alone.
+    return (node.children || []).map((child) => {
+      const cloned = cloneNode(child);
+      return isTextNode(cloned) || cloned.type === "list" ? cloned : withDepthStamp(cloned, depth);
+    });
   });
   const sequence: SmartNode[] = [];
   if (beforeItems.length) sequence.push(withChildren(list.node, beforeItems));
@@ -187,7 +283,7 @@ export const unwrapList: ListCommand<UnwrapListParams> = (document, scope, param
       const indexes = directItemIndexes(list.node, entry);
       const middle = indexes.length && indexes[0] > 0 && indexes[indexes.length - 1] < (list.node.children?.length || 0) - 1;
       const splitId = middle ? params.splitListIds?.[splitCursor++] : undefined;
-      return unwrapOne(list, indexes, splitId);
+      return unwrapOne(list, indexes, splitId, listAncestorDepth(list.node, ctx));
     });
 };
 
@@ -243,7 +339,7 @@ export const outdentList: ListCommand<OutdentListParams> = (document, scope, par
     const parentItemResolved = ctx.positions.positionOf(nested.node.id)?.parent;
     if (!parentItemResolved || parentItemResolved.type !== "list_item") {
       const middle = indexes[0] > 0 && indexes[indexes.length - 1] < (nested.node.children?.length || 0) - 1;
-      return unwrapOne(nested, indexes, middle ? params.splitListIds?.[splitCursor++] : undefined);
+      return unwrapOne(nested, indexes, middle ? params.splitListIds?.[splitCursor++] : undefined, listAncestorDepth(nested.node, ctx));
     }
     const parentItem = parentItemResolved;
     const parentListResolved = ctx.positions.positionOf(parentItem.id)?.parent;
@@ -272,14 +368,37 @@ const replaceLists = (
 ): SmartOperation[] => listScopes(scope).map((entry) => ({ entry, list: locate(document, entry.listId, ctx) }))
   .map(({ entry, list }) => ({ type: "replaceNode" as const, pos: list.pos, before: list.node, after: change(list.node, entry) }));
 
+// Marker CSS is keyed on `[data-srte-list-preset][data-srte-list-depth]` on
+// each list element individually — depth alone does not select a marker
+// without a matching preset on that same nested list. A style/preset change
+// must therefore cascade into every nested list, not just the selected one,
+// or descendant items keep rendering their old marker family.
+const withNestedListsRestyled = (
+  list: SmartElementNode,
+  restyle: (nested: SmartElementNode) => SmartElementNode,
+): SmartElementNode => withChildren(restyle(list), (list.children || []).map((item) => {
+  if (isTextNode(item) || item.type !== "list_item") return item;
+  return withChildren(item, (item.children || []).map((child) =>
+    !isTextNode(child) && child.type === "list" ? withNestedListsRestyled(child, restyle) : child));
+}));
+
 export const setListPreset: ListCommand<SetListPresetParams> = (document, scope, params, ctx) =>
-  replaceLists(document, scope, ctx, (list) => withAttrs(list, { ...attrsOf(list), preset: params.preset, style: undefined }));
+  (params.preset !== undefined && !isFoundationSmartListPreset(params.preset)
+    ? []
+    : replaceLists(document, scope, ctx, (list) => withNestedListsRestyled(list, (nested) =>
+        withAttrs(nested, { ...attrsOf(nested), preset: params.preset, style: undefined }))));
 
 export const setListStyle: ListCommand<SetListStyleParams> = (document, scope, params, ctx) =>
-  replaceLists(document, scope, ctx, (list) => withAttrs(list, {
-    ...attrsOf(list), style: params.style,
-    ...(params.checkable !== undefined ? { checkable: params.checkable } : {}),
-  }));
+  replaceLists(document, scope, ctx, (list) => {
+    // A concrete style is a state transition, not an additional marker. A
+    // stale preset makes serializers and CSS consumers see two competing list
+    // definitions after numbered → bulleted/checklist changes. Style/preset
+    // cascade to nested lists (see withNestedListsRestyled); `checkable` does
+    // not — converting an outer list to a checklist should not silently make
+    // every nested sublist checkable too.
+    const restyled = withNestedListsRestyled(list, (nested) => withAttrs(nested, { ...attrsOf(nested), preset: undefined, style: params.style }));
+    return params.checkable !== undefined ? withAttrs(restyled, { ...attrsOf(restyled), checkable: params.checkable }) : restyled;
+  });
 
 export const setListChecked: ListCommand<SetListCheckedParams> = (document, scope, params, ctx) =>
   replaceLists(document, scope, ctx, (list, entry) => {

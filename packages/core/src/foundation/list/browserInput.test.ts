@@ -79,4 +79,59 @@ describe("Phase 3 browser-input routing", () => {
     expect(root.querySelector('[data-smart-ui="check-control"]')?.getAttribute("role")).toBe("checkbox");
     expect(root.querySelector('[data-smart-ui="check-control"]')?.getAttribute("aria-checked")).toBe("true");
   });
+
+  it("inserts a space in checklist text instead of toggling the item", () => {
+    const checkable: SmartDocument = { type: "doc", id: "doc", children: [{
+      type: "list", id: "checks", attrs: { checkable: true, style: "disc" }, children: [
+        { type: "list_item", id: "check", attrs: { checked: false }, children: [p("check-p", "Buymilk")] },
+      ],
+    }] };
+    const selection = caret([0, 0, 0], 3);
+    const editor = createFoundationEditor({ document: checkable, selection });
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const renderer = createSubtreeRenderer(root);
+    const pipeline = createInputPipeline(editor, renderer, root);
+
+    const keydown = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: " " });
+    root.dispatchEvent(keydown);
+    expect(keydown.defaultPrevented).toBe(false);
+
+    const input = new InputEvent("beforeinput", {
+      bubbles: true,
+      cancelable: true,
+      inputType: "insertText",
+      data: " ",
+    });
+    root.dispatchEvent(input);
+    expect(input.defaultPrevented).toBe(true);
+    const listNode = editor.document.children[0] as SmartElementNode;
+    const itemNode = listNode.children?.[0] as SmartElementNode;
+    expect(itemNode).toMatchObject({
+      attrs: { checked: false },
+      children: [{ children: [{ text: "Buy milk" }] }],
+    });
+    pipeline.destroy();
+  });
+
+  it("toggles a checklist from Space when its projected checkbox is focused", () => {
+    const checkable: SmartDocument = { type: "doc", id: "doc", children: [{
+      type: "list", id: "checks", attrs: { checkable: true, style: "disc" }, children: [
+        { type: "list_item", id: "check", attrs: { checked: false }, children: [p("check-p", "Buy milk")] },
+      ],
+    }] };
+    const editor = createFoundationEditor({ document: checkable, selection: caret([0, 0, 0], 0) });
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const renderer = createSubtreeRenderer(root);
+    const pipeline = createInputPipeline(editor, renderer, root);
+    const checkbox = root.querySelector<HTMLElement>('[data-smart-ui="check-control"]');
+    expect(checkbox).not.toBeNull();
+    checkbox?.focus();
+    const keydown = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: " " });
+    root.dispatchEvent(keydown);
+    expect(keydown.defaultPrevented).toBe(true);
+    expect((editor.document.children[0] as SmartElementNode).children?.[0]).toMatchObject({ attrs: { checked: true } });
+    pipeline.destroy();
+  });
 });

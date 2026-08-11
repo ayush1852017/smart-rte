@@ -1,7 +1,7 @@
 import { cloneNode, isTextNode } from "../identity.js";
 import { moveContiguousSiblings } from "../structural/move.js";
 import type { BlockRangeScope, ResolvedScope, TableGridScope } from "../scope/types.js";
-import type { Attrs, SmartDocument, SmartElementNode, SmartOperation, SmartPos } from "../types.js";
+import type { Attrs, SmartDocument, SmartElementNode, SmartNode, SmartOperation, SmartPos } from "../types.js";
 import { occupancyGridFor } from "./grid.js";
 import type {
   CellAttributesParams, ColumnParams, ColumnWidthParams, HeaderParams, InsertTableParams,
@@ -22,6 +22,49 @@ const emptyCell = (cellId: string, paragraphId: string, header = false): SmartEl
   type: "table_cell", id: cellId, attrs: { rowspan: 1, colspan: 1, header },
   children: [{ type: "paragraph", id: paragraphId, children: [] }],
 });
+
+/**
+ * Cell placeholders are empty paragraphs inserted to keep a cell editable.
+ * They must not become stacked lines when several cells are merged. Atomic
+ * content remains meaningful even when it has no text descendants.
+ */
+const hasMeaningfulContent = (node: SmartNode, ctx: TableCommandContext): boolean => {
+  if (isTextNode(node)) return node.text.length > 0;
+  if (ctx.schema.nodes[node.type]?.atomic) return true;
+  return (node.children || []).some((child) => hasMeaningfulContent(child, ctx));
+};
+
+/**
+ * A normal one-line table cell is represented by one paragraph.  Keeping one
+ * paragraph per source cell after a horizontal merge makes the browser lay
+ * out the merged row as N stacked lines (and therefore N times as tall) even
+ * though the row had one line before the merge.  Concatenate that simple
+ * inline content into the anchor paragraph; cells containing real structure
+ * (lists, quotes, multiple blocks, atoms in block position, etc.) retain their
+ * block boundaries and are appended normally.
+ *
+ * This is content assembly, not a renderer height cap: all text and marks are
+ * retained, while row height remains a row-level property.
+ */
+const mergedSimpleInlineContent = (
+  cells: readonly GridCellLike[],
+  ctx: TableCommandContext,
+): SmartNode[] | null => {
+  const meaningful = cells
+    .map((cell) => (cell.node.children || []).filter((child) => hasMeaningfulContent(child, ctx)))
+    .filter((children) => children.length > 0);
+  if (!meaningful.length || meaningful.some((children) => children.length !== 1)) return null;
+  const blocks = meaningful.map((children) => children[0]);
+  if (blocks.some((block) => isTextNode(block) || !["paragraph", "heading"].includes(block.type))) return null;
+  if (new Set(blocks.map((block) => block.type)).size !== 1) return null;
+  const first = blocks[0] as SmartElementNode;
+  return [{ ...cloneNode(first), children: blocks.flatMap((block) => {
+    if (isTextNode(block)) return [];
+    return (block.children || []).map(cloneNode);
+  }) }];
+};
+
+interface GridCellLike { readonly node: SmartElementNode }
 
 const locateNode = (nodeId: string, ctx: TableCommandContext) => {
   const resolved = ctx.positions.positionOf(nodeId);
@@ -194,7 +237,17 @@ export const mergeTableCellsCommand: TableCommand<Record<string, never>> = (_doc
   const merged: SmartElementNode = {
     ...anchor.node,
     attrs: { ...(anchor.node.attrs || {}), rowspan: rect.bottom - rect.top, colspan: rect.right - rect.left },
-    children: selected.flatMap((cell) => (cell.node.children || []).map(cloneNode)),
+    children: (() => {
+      const content = mergedSimpleInlineContent(selected, ctx) || selected.flatMap((cell) => {
+        const children = cell.node.children || [];
+        // Preserve all blocks from a non-empty cell, including intentional
+        // blank lines. Only an entirely empty source cell is discarded.
+        return children.some((child) => hasMeaningfulContent(child, ctx)) ? children.map(cloneNode) : [];
+      });
+      // A merged region made entirely of empty cells still needs one editable
+      // block, but never one placeholder block per source cell.
+      return content.length ? content : anchor.node.children?.[0] ? [cloneNode(anchor.node.children[0])] : [];
+    })(),
   };
   const placements = placementsOf(target.table).flatMap((placement): Placement[] => {
     if (!ids.has(placement.cell.id)) return [placement];

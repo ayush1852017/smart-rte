@@ -2,12 +2,14 @@ import { createNodeId, isTextNode } from "./identity.js";
 import { popRedo, popUndo, recordHistory, createHistory, rebaseHistoryNodeAttributes } from "./history.js";
 import { runNormalization, type NormalizationRun } from "./normalization.js";
 import { applyOperations } from "./operations.js";
+import { createTransactionMap } from "./mapping.js";
 import { resolvePos } from "./positions.js";
 import { foundationSchema, repair, validate } from "./schema.js";
 import { applyTransactionAtomic } from "./transactions.js";
 import { FoundationScopeIndex } from "./scope/resolveScope.js";
 import { migrateNewlineTextToHardBreaks } from "./marks/hardBreak.js";
 import { canonicalMarkOrder, createMarkNormalizer, marksAtInsertion } from "./marks/index.js";
+import { createEditableBoundaryNormalizer, editableBoundaryOperations } from "./boundaries.js";
 import type {
   Attrs,
   NormalizerRegistration,
@@ -42,6 +44,9 @@ export class TransactionBuilder {
   readonly operations: SmartOperation[] = [];
   selectionAfter: SmartSelection;
   storedMarksAfter?: SmartMark[];
+  /** True when the caller intentionally set the post-transaction marks. */
+  /** @internal Transaction assembly uses this to distinguish an explicit clear from the default. */
+  storedMarksExplicit = false;
 
   constructor(readonly selectionBefore: SmartSelection, storedMarks?: SmartMark[]) {
     this.selectionAfter = structuredClone(selectionBefore);
@@ -108,6 +113,7 @@ export class TransactionBuilder {
   }
 
   setStoredMarks(marks: SmartMark[] | undefined) {
+    this.storedMarksExplicit = true;
     this.storedMarksAfter = structuredClone(marks);
   }
 }
@@ -131,6 +137,25 @@ export interface ReplaceFoundationStateOptions {
   resetHistory?: boolean;
 }
 
+const mapSelectionThroughBoundaryOperations = (
+  selection: SmartSelection,
+  operations: readonly SmartOperation[],
+): SmartSelection => {
+  if (!operations.length) return selection;
+  const map = createTransactionMap(operations);
+  // A node selection's head is the boundary immediately after the selected
+  // node. When a caret paragraph is inserted at that boundary, biasing the
+  // head forward would skip the new line and make ArrowRight manufacture a
+  // second paragraph. Keep both node-selection endpoints on the original
+  // side of the inserted boundary.
+  if (selection.type === "node") return {
+    ...selection,
+    anchor: map.map(selection.anchor, -1),
+    head: map.map(selection.head, -1),
+  };
+  return map.mapSelection(selection);
+};
+
 export class FoundationEditor {
   readonly schema: SmartSchema;
   private current: FoundationEditorState;
@@ -149,18 +174,21 @@ export class FoundationEditor {
       : { type: "doc", id: createNodeId(), children: [options.document] };
     const migrated = migrateNewlineTextToHardBreaks(candidate as FoundationEditorState["document"]);
     const repaired = repair(migrated.document, this.schema);
-    const errors = validate(repaired.doc, this.schema);
+    const boundaryOperations = editableBoundaryOperations(repaired.doc, this.schema);
+    const boundedDocument = boundaryOperations.length ? applyOperations(repaired.doc, boundaryOperations) : repaired.doc;
+    const boundedSelection = mapSelectionThroughBoundaryOperations(options.selection, boundaryOperations);
+    const errors = validate(boundedDocument, this.schema);
     if (errors.length) throw new Error(`Initial document is invalid: ${errors[0].message}`);
-    resolvePos(repaired.doc, options.selection.anchor);
-    resolvePos(repaired.doc, options.selection.head);
+    resolvePos(boundedDocument, boundedSelection.anchor);
+    resolvePos(boundedDocument, boundedSelection.head);
     this.current = {
       schemaVersion: this.schema.version,
       revision: options.revision ?? 0,
-      document: repaired.doc,
-      selection: structuredClone(options.selection),
+      document: boundedDocument,
+      selection: structuredClone(boundedSelection),
       ...(options.storedMarks?.length ? { storedMarks: canonicalMarkOrder(options.storedMarks) } : {}),
     };
-    this.normalizers = [createMarkNormalizer(), ...(options.normalizers || [])];
+    this.normalizers = [createEditableBoundaryNormalizer(), createMarkNormalizer(), ...(options.normalizers || [])];
     this.historyOptions = {
       historyLimit: options.historyLimit,
       historyByteLimit: options.historyByteLimit,
@@ -204,16 +232,19 @@ export class FoundationEditor {
   replaceState(envelope: PersistedEditorDocument, options: ReplaceFoundationStateOptions): SmartTransaction {
     const migrated = migrateNewlineTextToHardBreaks(envelope.document);
     const repaired = repair(migrated.document, this.schema);
-    const errors = validate(repaired.doc, this.schema);
+    const boundaryOperations = editableBoundaryOperations(repaired.doc, this.schema);
+    const boundedDocument = boundaryOperations.length ? applyOperations(repaired.doc, boundaryOperations) : repaired.doc;
+    const boundedSelection = mapSelectionThroughBoundaryOperations(options.selection, boundaryOperations);
+    const errors = validate(boundedDocument, this.schema);
     if (errors.length) throw new Error(`Replacement document is invalid: ${errors[0].message}`);
-    resolvePos(repaired.doc, options.selection.anchor);
-    resolvePos(repaired.doc, options.selection.head);
+    resolvePos(boundedDocument, boundedSelection.anchor);
+    resolvePos(boundedDocument, boundedSelection.head);
     const before = this.current;
     this.current = {
       schemaVersion: this.schema.version,
       revision: envelope.revision,
-      document: repaired.doc,
-      selection: structuredClone(options.selection),
+      document: boundedDocument,
+      selection: structuredClone(boundedSelection),
       ...(options.storedMarks?.length ? { storedMarks: canonicalMarkOrder(options.storedMarks) } : {}),
     };
     if (options.resetHistory !== false) {
@@ -228,7 +259,7 @@ export class FoundationEditor {
       baseRevision: before.revision,
       operations: [],
       selectionBefore: structuredClone(before.selection),
-      selectionAfter: structuredClone(options.selection),
+      selectionAfter: structuredClone(boundedSelection),
       ...(before.storedMarks ? { storedMarksBefore: structuredClone(before.storedMarks) } : {}),
       ...(options.storedMarks?.length ? { storedMarksAfter: canonicalMarkOrder(options.storedMarks) } : {}),
       metadata: { source: "api", timestamp: Date.now(), addToHistory: false },
@@ -261,7 +292,7 @@ export class FoundationEditor {
     } finally {
       this.activeBuilder = null;
     }
-    if (builder.operations.length && !builder.operations.every((operation) =>
+    if (builder.operations.length && !builder.storedMarksExplicit && !builder.operations.every((operation) =>
       operation.type === "insertText" && (!this.current.storedMarks?.length
         || JSON.stringify(canonicalMarkOrder(operation.marks)) === JSON.stringify(canonicalMarkOrder(this.current.storedMarks))))) {
       builder.setStoredMarks(undefined);
@@ -306,7 +337,14 @@ export class FoundationEditor {
       normalizers: this.normalizers,
     });
     this.lastNormalization = normalization;
-    const transaction = { ...structuredClone(input), operations: [...structuredClone(input.operations), ...normalization.operations] };
+    const normalizedSelection = normalization.operations.length
+      ? createTransactionMap(normalization.operations).mapSelection(input.selectionAfter)
+      : input.selectionAfter;
+    const transaction = {
+      ...structuredClone(input),
+      operations: [...structuredClone(input.operations), ...normalization.operations],
+      selectionAfter: normalizedSelection,
+    };
     const envelope = applyTransactionAtomic(this.current, transaction, this.schema);
     this.current = {
       ...envelope,

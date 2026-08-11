@@ -20,7 +20,7 @@ const item = (id: string, text = "", extra: SmartElementNode[] = []): SmartEleme
 const list = (id: string, items: SmartElementNode[]): SmartElementNode => ({ type: "list", id, attrs: { style: "disc" }, children: items });
 const doc = (...children: SmartElementNode[]): SmartDocument => ({ type: "doc", id: "doc", children });
 const ctx = (document: SmartDocument): CommandContext => ({ schema: foundationSchema, positions: createScopeIndex().positions(document, foundationSchema) });
-const enterIds = { itemId: "new-item", blockId: "new-block", emptyBlockId: "empty-block" };
+const enterIds = { itemId: "new-item", blockId: "new-block", emptyBlockId: "empty-block", splitListId: "split-list" };
 const apply = (document: SmartDocument, result: { operations: Parameters<typeof applyOperations>[1] } | null) => {
   expect(result).not.toBeNull();
   const output = applyOperations(document, result!.operations);
@@ -71,6 +71,18 @@ describe("Phase 3 list Enter matrix", () => {
     const topResult = enterInList(topBefore, { path: [0, 0, 0], offset: 0 }, enterIds, ctx(topBefore));
     expect(topResult?.intent).toBe("unwrap");
     expect(apply(topBefore, topResult).children).toMatchObject([{ id: "empty-p" }, { id: "after" }]);
+  });
+
+  it("outdents a depth-two empty item before it can exit the root list", () => {
+    const before = doc(list("root", [item("parent", "P", [
+      list("middle", [item("middle-item", "M", [list("deep", [item("deep-empty")])])]),
+    ])]));
+    const result = enterInList(before, { path: [0, 0, 1, 0, 1, 0, 0], offset: 0 }, enterIds, ctx(before));
+    expect(result?.intent).toBe("outdent");
+    const after = apply(before, result);
+    expect(after.children[0]).toMatchObject({ children: [{ id: "parent", children: [
+      { id: "parent-p" }, { id: "middle", children: [{ id: "middle-item" }, { id: "deep-empty" }] },
+    ] }] });
   });
 });
 

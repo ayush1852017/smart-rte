@@ -8,6 +8,7 @@ import type { SmartDocument, SmartElementNode, SmartMark, SmartNode } from "../t
 import { occupancyGridFor } from "../table/grid.js";
 import { atomToHtml } from "../atom/formats.js";
 import { sanitizeAtomSource } from "../atom/security.js";
+import { foundationListStyleForPresetDepth, isFoundationSmartListPreset } from "./presets.js";
 
 type HtmlAttribute = { name: string; value: string };
 type HtmlNode = { nodeName: string; tagName?: string; attrs?: HtmlAttribute[]; childNodes?: HtmlNode[]; value?: string };
@@ -49,27 +50,11 @@ const orderedList = (node: SmartElementNode) => {
   return /^(?:decimal|lower-|upper-|ordered)/.test(marker) || node.attrs?.start !== undefined;
 };
 
-const presetStyles: Record<string, readonly string[]> = {
-  "ordered-decimal-paren": ["decimal", "lower-alpha", "lower-roman"],
-  "ordered-outline": ["decimal", "decimal", "decimal"],
-  "ordered-upper-alpha": ["upper-alpha", "lower-alpha", "lower-roman"],
-  "ordered-upper-roman": ["upper-roman", "upper-alpha", "decimal"],
-  "ordered-leading-zero": ["decimal-leading-zero", "lower-alpha", "lower-roman"],
-  "ordered-decimal": ["decimal", "lower-alpha", "lower-roman"],
-  "bullet-disc": ["disc", "circle", "square"],
-  "bullet-circle": ["circle", "square", "disc"],
-  "bullet-square": ["square", "circle", "disc"],
-  "bullet-diamond": ["disc", "circle", "square"],
-  "bullet-arrow": ["disc", "circle", "square"],
-  "bullet-star": ["disc", "circle", "square"],
-  "bullet-arrow-circle": ["disc", "circle", "square"],
-};
-
 const effectiveStyle = (node: SmartElementNode, depth: number): string | undefined => {
   if (typeof node.attrs?.style === "string") return node.attrs.style;
-  if (typeof node.attrs?.preset !== "string") return undefined;
-  const styles = presetStyles[node.attrs.preset];
-  return styles?.[Math.min(depth, styles.length - 1)];
+  return isFoundationSmartListPreset(node.attrs?.preset)
+    ? foundationListStyleForPresetDepth(node.attrs.preset, depth)
+    : undefined;
 };
 
 const blockAttributes = (node: SmartElementNode): string => {
@@ -366,7 +351,8 @@ const parseBlock = (node: HtmlNode): SmartElementNode | null => {
   }
   if (tag === "ul" || tag === "ol") {
     const listAttrs: Record<string, unknown> = {};
-    const preset = attr(node, "data-smart-list-preset") || attr(node, "data-srte-list-preset");
+    const requestedPreset = attr(node, "data-smart-list-preset") || attr(node, "data-srte-list-preset");
+    const preset = isFoundationSmartListPreset(requestedPreset) ? requestedPreset : undefined;
     const explicitStyle = attr(node, "data-smart-list-style");
     const style = explicitStyle || (!preset ? styleValue(node, "list-style-type") : undefined) || (!preset ? (tag === "ol" ? "decimal" : "disc") : undefined);
     const start = Number(attr(node, "start"));

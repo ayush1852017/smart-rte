@@ -21,6 +21,11 @@ export interface ListEnterIds {
   readonly itemId: string;
   readonly blockId: string;
   readonly emptyBlockId: string;
+  /**
+   * The list id used for the suffix when an empty middle item exits a list.
+   * It is caller-supplied so structural input remains deterministic.
+   */
+  readonly splitListId: string;
 }
 
 interface ItemContext {
@@ -174,8 +179,12 @@ export const enterInList = (
       selectionTarget: { ownerId: context.owner.id, offset: 0 },
       intent: "outdent",
     };
+    const listChildren = context.list.children || [];
+    const splitsAfterItem = context.itemIndex > 0 && context.itemIndex < listChildren.length - 1;
     return {
-      operations: unwrapList(document, scope, {}, ctx),
+      operations: unwrapList(document, scope, splitsAfterItem
+        ? { splitListIds: [ids.splitListId] }
+        : {}, ctx),
       selectionTarget: { ownerId: context.owner.id, offset: 0 },
       intent: "unwrap",
     };

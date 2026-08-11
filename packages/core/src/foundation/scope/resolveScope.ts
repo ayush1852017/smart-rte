@@ -607,6 +607,24 @@ const touchedListItems = (context: ResolutionContext) => {
     const item = nearestAncestor(context.to.entry, isListItem);
     return item ? [item] : [];
   }
+  // A ranged selection wholly inside one nested list must resolve to that
+  // list, not to every ancestor list item whose content interval contains the
+  // descendant.  Ancestor intervals intentionally include nested content for
+  // block promotion, but list-type commands act on the nearest list whose
+  // items the user actually selected.  When the endpoints belong to
+  // different list levels we retain the broader traversal below so a range
+  // that genuinely crosses a parent/child boundary still promotes to the
+  // containing list.
+  const fromItem = nearestAncestor(context.from.entry, isListItem);
+  const toItem = nearestAncestor(context.to.entry, isListItem);
+  const fromList = fromItem ? nearestAncestor(fromItem.parent ?? fromItem, isList) : null;
+  const toList = toItem ? nearestAncestor(toItem.parent ?? toItem, isList) : null;
+  if (fromList && fromList === toList) {
+    return context.index.entries.filter((entry) => isListItem(entry)
+      && isAncestor(fromList, entry)
+      && overlaps(entry, context.from.rank, context.to.rank)
+      && !(entry === toItem && endpointAtContentStart(context.to, entry)));
+  }
   return context.index.entries.filter((entry) => isListItem(entry) && overlaps(entry, context.from.rank, context.to.rank));
 };
 
@@ -618,6 +636,22 @@ const listDepth = (item: Entry, list: Entry) => {
     cursor = cursor.parent;
   }
   return depth;
+};
+
+/**
+ * A range ending at the first editable position of a list item has not
+ * entered that item yet. Entry content ranges include the item's wrapper and
+ * first block, so a raw rank overlap would otherwise promote the endpoint
+ * item as well (and can turn a one-item deletion into a whole-list deletion).
+ */
+const firstContentEntry = (entry: Entry): Entry => {
+  if (entry.inlineOwner || entry.atomic || !entry.children.length) return entry;
+  return firstContentEntry(entry.children[0]);
+};
+
+const endpointAtContentStart = (endpoint: Endpoint, entry: Entry): boolean => {
+  const first = firstContentEntry(entry);
+  return endpoint.entry === first && endpoint.resolved.pos.offset === 0;
 };
 
 const listPart = (context: ResolutionContext, list: Entry, items: Entry[]): ListSelectionScope => {

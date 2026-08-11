@@ -73,6 +73,21 @@ describe("Phase 5 pure block commands", () => {
     expect(unwrapped.children).toMatchObject([{ type: "blockquote", id: "inner", children: [{ id: "p" }] }]);
   });
 
+  it("wraps a selected multi-item list once, then unwraps the same list and IDs", () => {
+    const list: SmartElementNode = { type: "list", id: "list", children: [
+      { type: "list_item", id: "item-a", children: [paragraph("p-a", "A")] },
+      { type: "list_item", id: "item-b", children: [paragraph("p-b", "B")] },
+    ] };
+    const before = documentOf(list);
+    const selected = blockScope("p-a", "p-b");
+    const quoted = applyOperations(before, wrapBlocks(before, selected, { type: "blockquote", wrapperIds: ["quote"] }, context(before)));
+    expect(quoted.children).toEqual([{
+      type: "blockquote", id: "quote", children: [before.children[0]],
+    }]);
+    const unwrapped = applyOperations(quoted, unwrapBlocks(quoted, selected, {}, context(quoted)));
+    expect(unwrapped).toEqual(before);
+  });
+
   it("uses attributes for alignment and indentation and moves a contiguous run", () => {
     const before = documentOf(paragraph("a", "A"), paragraph("b", "B"), paragraph("c", "C"), paragraph("d", "D"));
     let model = applyOperations(before, setBlockAttributes(before, blockScope("b", "c"), { attrs: { align: "center" } }, context(before)));

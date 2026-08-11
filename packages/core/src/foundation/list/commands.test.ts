@@ -77,6 +77,96 @@ describe("Phase 3 pure list commands", () => {
     ]);
   });
 
+  it("preserves nested descendants when unwrapping a depth-zero item", () => {
+    const nested = list("nested-descendants", [item("nested-child", "Child")]);
+    const before = frozen(doc(list("unwrap-descendants", [
+      item("before", "Before"),
+      item("selected", "Selected", [nested]),
+      item("after", "After"),
+    ])));
+    const operations = unwrapList(before, scope("unwrap-descendants", ["selected"]), { splitListIds: ["unwrap-after"] }, ctxFor(before));
+    const after = applyOperations(before, operations);
+    expect(after.children).toMatchObject([
+      { type: "list", id: "unwrap-descendants", children: [{ id: "before" }] },
+      { type: "paragraph", id: "selected-p" },
+      { type: "list", id: "nested-descendants", children: [{ id: "nested-child" }] },
+      { type: "list", id: "unwrap-after", children: [{ id: "after" }] },
+    ]);
+    expect(validate(after, foundationSchema)).toEqual([]);
+  });
+
+  it("preserves nesting depth across an unwrap-then-relist round trip", () => {
+    const before = doc(list("outer", [
+      item("a", "Parent", [list("inner", [item("b", "Child")])]),
+    ]));
+    // Unwrap just the depth-1 item — this is what the toolbar's toggle-off
+    // button does for a single item, and the case withDepthStamp targets.
+    const afterUnwrap = applyOperations(before, unwrapList(before, scope("inner", ["b"]), {}, ctxFor(before)));
+    const parentItem = (afterUnwrap.children[0] as SmartElementNode).children?.[0] as SmartElementNode;
+    expect(parentItem.children).toMatchObject([
+      { id: "a-p" },
+      { id: "b-p", attrs: { indentLevel: 1 } },
+    ]);
+    expect(validate(afterUnwrap, foundationSchema)).toEqual([]);
+
+    // Re-select both now-sibling paragraphs and rebuild a list from them.
+    const relistScope = {
+      kind: "block-range" as const,
+      blockIds: ["a-p", "b-p"],
+      promotedFromPartial: true,
+      commonParentId: "a",
+      range: { from: { path: [], offset: 0 }, to: { path: [], offset: 2 } },
+      isolatingAncestorId: null,
+      clamped: false,
+    };
+    const relisted = applyOperations(afterUnwrap, createList(afterUnwrap, relistScope, {
+      listIds: ["new-outer", "new-inner", "spare"], itemIds: ["new-a", "new-b"], style: "disc",
+    }, ctxFor(afterUnwrap)));
+    const rebuiltParentItem = (relisted.children[0] as SmartElementNode).children?.[0] as SmartElementNode;
+    expect(rebuiltParentItem.children).toMatchObject([{
+      type: "list", children: [{
+        type: "list_item", id: "new-a", children: [
+          { id: "a-p" },
+          { type: "list", children: [{ type: "list_item", id: "new-b", children: [{ id: "b-p" }] }] },
+        ],
+      }],
+    }]);
+    // Nesting depth came back; the reconstructed paragraph no longer carries
+    // the transient indentLevel hint used to encode it.
+    const rebuiltOuter = rebuiltParentItem.children?.[0] as SmartElementNode;
+    const rebuiltInner = (rebuiltOuter.children?.[0] as SmartElementNode).children?.[1] as SmartElementNode;
+    const rebuiltLeaf = (rebuiltInner.children?.[0] as SmartElementNode).children?.[0] as SmartElementNode;
+    expect(rebuiltLeaf.attrs?.indentLevel).toBeUndefined();
+    expect(validate(relisted, foundationSchema)).toEqual([]);
+  });
+
+  it("clamps a depth jump greater than one when rebuilding a list", () => {
+    const before = doc(p("x", "Top"), p("y", "Deep"));
+    const deep = { ...before.children[1] as SmartElementNode, attrs: { indentLevel: 5 } };
+    const withIndent = { ...before, children: [before.children[0], deep] };
+    const relistScope = {
+      kind: "block-range" as const,
+      blockIds: ["x", "y"],
+      promotedFromPartial: true,
+      commonParentId: "doc",
+      range: { from: { path: [], offset: 0 }, to: { path: [], offset: 2 } },
+      isolatingAncestorId: null,
+      clamped: false,
+    };
+    const relisted = applyOperations(withIndent, createList(withIndent, relistScope, {
+      listIds: ["l1", "l2", "l3"], itemIds: ["i-x", "i-y"], style: "disc",
+    }, ctxFor(withIndent)));
+    // "y" asked for depth 5 with no predecessor deeper than 0 — it can only
+    // nest one level past "x", exactly like indentList's own predecessor rule.
+    expect(relisted.children[0]).toMatchObject({ children: [{
+      id: "i-x", children: [
+        { id: "x" },
+        { type: "list", children: [{ id: "i-y", children: [{ id: "y" }] }] },
+      ],
+    }] });
+    expect(validate(relisted, foundationSchema)).toEqual([]);
+  });
+
   it("indents a whole subtree and outdents it back", () => {
     const child = list("child", [item("b-child", "BC")], { style: "circle" });
     const before = frozen(doc(list("l", [item("a", "A"), item("b", "B", [child]), item("c", "C")])));
@@ -117,7 +207,7 @@ describe("Phase 3 pure list commands", () => {
     expect((model.children[0] as SmartElementNode).attrs).toEqual({ checkable: true, preset: "ordered-outline" });
     model = applyOperations(model, setListStyle(model, scope("l", ["a", "b"]), { style: "upper-roman" }, ctxFor(model)));
     model = applyOperations(model, setListChecked(model, scope("l", ["a"]), { checked: true }, ctxFor(model)));
-    expect(model.children[0]).toMatchObject({ attrs: { preset: "ordered-outline", style: "upper-roman" }, children: [
+    expect(model.children[0]).toMatchObject({ attrs: { checkable: true, style: "upper-roman" }, children: [
       { id: "a", attrs: { checked: true }, children: [{}, { id: "nested", children: [{ id: "child" }] }] },
       { id: "b" },
     ] });
@@ -129,6 +219,79 @@ describe("Phase 3 pure list commands", () => {
     model = applyOperations(model, continueListNumbering(model, scope("l", ["a"]), {}, ctxFor(model)));
     expect((model.children[0] as SmartElementNode).attrs?.start).toBeUndefined();
     expect(validate(model, foundationSchema)).toEqual([]);
+  });
+
+  it("replaces the active list marker across numbered, bulleted, checklist, and numbered transitions", () => {
+    const before = doc(list("transition-list", [item("transition-item", "item")], { preset: "ordered-outline" }));
+    let model = applyOperations(before, setListStyle(before, scope("transition-list", ["transition-item"]), { style: "disc", checkable: false }, ctxFor(before)));
+    expect(model.children[0]).toMatchObject({ attrs: { style: "disc", checkable: false } });
+    expect((model.children[0] as SmartElementNode).attrs?.preset).toBeUndefined();
+
+    model = applyOperations(model, setListStyle(model, scope("transition-list", ["transition-item"]), { style: "disc", checkable: true }, ctxFor(model)));
+    expect(model.children[0]).toMatchObject({ attrs: { style: "disc", checkable: true } });
+    expect((model.children[0] as SmartElementNode).attrs?.preset).toBeUndefined();
+
+    model = applyOperations(model, setListPreset(model, scope("transition-list", ["transition-item"]), { preset: "ordered-outline" }, ctxFor(model)));
+    expect(model.children[0]).toMatchObject({ attrs: { preset: "ordered-outline" } });
+    expect((model.children[0] as SmartElementNode).attrs?.style).toBeUndefined();
+  });
+
+  it("applies every canonical toolbar preset through the same pure command", () => {
+    const presets = [
+      "bullet-disc", "bullet-diamond", "bullet-square", "bullet-arrow", "bullet-star", "bullet-arrow-circle",
+      "ordered-decimal", "ordered-decimal-paren", "ordered-outline", "ordered-upper-alpha", "ordered-upper-roman", "ordered-leading-zero",
+    ] as const;
+    presets.forEach((preset) => {
+      const before = doc(list(`preset-${preset}`, [item(`item-${preset}`, "item")], { preset: "bullet-disc" }));
+      const after = applyOperations(before, setListPreset(
+        before,
+        scope(`preset-${preset}`, [`item-${preset}`]),
+        { preset },
+        ctxFor(before),
+      ));
+      expect(after.children[0]).toMatchObject({ type: "list", attrs: { preset } });
+      expect((after.children[0] as SmartElementNode).attrs?.style).toBeUndefined();
+      expect(validate(after, foundationSchema)).toEqual([]);
+    });
+  });
+
+  it("cascades preset and style changes into nested lists so their markers stay consistent", () => {
+    const grandchild = list("grandchild", [item("gc-item", "gc")], { preset: "bullet-disc" });
+    const child = list("child", [item("c-item", "c", [grandchild])], { preset: "bullet-disc" });
+    const before = doc(list("l", [item("a", "A", [child])], { preset: "bullet-disc" }));
+
+    const afterPreset = applyOperations(before, setListPreset(before, scope("l", ["a"]), { preset: "ordered-upper-roman" }, ctxFor(before)));
+    const outerAfterPreset = afterPreset.children[0] as SmartElementNode;
+    const childAfterPreset = (outerAfterPreset.children?.[0] as SmartElementNode).children?.[1] as SmartElementNode;
+    const grandchildAfterPreset = (childAfterPreset.children?.[0] as SmartElementNode).children?.[1] as SmartElementNode;
+    expect(outerAfterPreset.attrs).toMatchObject({ preset: "ordered-upper-roman" });
+    expect(childAfterPreset.attrs).toMatchObject({ preset: "ordered-upper-roman" });
+    expect(grandchildAfterPreset.attrs).toMatchObject({ preset: "ordered-upper-roman" });
+    // Node identity survives the cascade; only attrs changed.
+    expect(childAfterPreset.id).toBe("child");
+    expect(grandchildAfterPreset.id).toBe("grandchild");
+    expect(validate(afterPreset, foundationSchema)).toEqual([]);
+
+    const afterStyle = applyOperations(before, setListStyle(before, scope("l", ["a"]), { style: "circle", checkable: true }, ctxFor(before)));
+    const outerAfterStyle = afterStyle.children[0] as SmartElementNode;
+    const childAfterStyle = (outerAfterStyle.children?.[0] as SmartElementNode).children?.[1] as SmartElementNode;
+    expect(outerAfterStyle.attrs).toMatchObject({ style: "circle", checkable: true });
+    expect(childAfterStyle.attrs).toMatchObject({ style: "circle" });
+    // checkable is a semantic decision about the selected list, not a marker
+    // — it must not silently make every nested sublist checkable too.
+    expect(childAfterStyle.attrs?.checkable).toBeUndefined();
+  });
+
+  it("rejects a preset ID that is outside the canonical catalog", () => {
+    const before = doc(list("invalid-preset-list", [item("invalid-preset-item", "item")], { style: "disc" }));
+    expect(setListPreset(
+      before,
+      scope("invalid-preset-list", ["invalid-preset-item"]),
+      { preset: "bullet-circle" },
+      ctxFor(before),
+    )).toEqual([]);
+    const invalidDocument = doc(list("invalid-preset-list", [item("invalid-preset-item", "item")], { preset: "bullet-circle" }));
+    expect(validate(invalidDocument, foundationSchema).some((issue) => issue.code === "invalid-attribute")).toBe(true);
   });
 
   it("keeps mixed-scope create and indent policies explicit", () => {
@@ -164,5 +327,19 @@ describe("Phase 3 pure list commands", () => {
       fragment: plainFragment, position: "after", itemIds: ["plain-item"],
     }, ctxFor(base)));
     expect(withPlain.children[0]).toMatchObject({ children: [{ id: "a" }, { id: "plain-item", children: [{ id: "plain" }] }, { id: "b" }] });
+  });
+
+  it("keeps outdent legal after indent reaches a nested list boundary", () => {
+    const before = doc(list("l", [item("a", "A"), item("b", "B")]));
+    const indented = applyOperations(before, indentList(before, scope("l", ["b"]), { nestedListIds: ["nested"] }, ctxFor(before)));
+    const outer = indented.children[0] as SmartElementNode;
+    const nested = (outer.children?.[0] as SmartElementNode).children?.find((node) => !("text" in node) && node.type === "list") as SmartElementNode;
+    expect(nested?.children?.map((node) => "id" in node ? node.id : "text")).toEqual(["b"]);
+
+    const outdentOperations = outdentList(indented, scope("nested", ["b"], [1]), { splitListIds: ["split"] }, ctxFor(indented));
+    expect(outdentOperations).not.toHaveLength(0);
+    const restored = applyOperations(indented, outdentOperations);
+    expect(restored.children[0]).toMatchObject({ children: [{ id: "a" }, { id: "b" }] });
+    expect(validate(restored, foundationSchema)).toEqual([]);
   });
 });

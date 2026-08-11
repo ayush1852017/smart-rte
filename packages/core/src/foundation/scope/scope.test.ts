@@ -190,6 +190,9 @@ describe("Phase 2 inline, block, container, list, and atom scopes", () => {
     expect(resolveScope(document, selection({ path: [0, 0, 1, 0, 0], offset: 0 }), { want: "list-selection" }, schema)).toMatchObject({
       kind: "list-selection", listId: "inner", items: [{ itemId: "i2", depth: 0, hasChildList: false }],
     });
+    expect(resolveScope(document, selection({ path: [0, 0, 1, 0, 0], offset: 0 }, { path: [0, 0, 1, 0, 0], offset: 2 }), { want: "list-selection" }, schema)).toMatchObject({
+      kind: "list-selection", listId: "inner", items: [{ itemId: "i2", depth: 0, hasChildList: false }],
+    });
     expect(resolveScope(document, selection({ path: [0, 0, 0], offset: 0 }, { path: [0, 0, 1, 0, 0], offset: 3 }), { want: "list-selection" }, schema)).toMatchObject({
       kind: "list-selection",
       listId: "outer",
@@ -207,6 +210,16 @@ describe("Phase 2 inline, block, container, list, and atom scopes", () => {
         { kind: "list-selection", listId: "outer", items: [{ itemId: "i3", depth: 0, hasChildList: false }] },
         { kind: "block-range", blockIds: ["plain-after"] },
       ],
+    });
+  });
+
+  it("does not include a list item whose first content position is the range endpoint", () => {
+    const document: SmartDocument = { type: "doc", id: "endpoint-doc", children: [{ type: "list", id: "endpoint-list", children: [
+      { type: "list_item", id: "endpoint-first", children: [p("endpoint-first-p", "first")] },
+      { type: "list_item", id: "endpoint-second", children: [p("endpoint-second-p", "second")] },
+    ] }] };
+    expect(resolveScope(document, selection({ path: [0, 0, 0], offset: 0 }, { path: [0, 1, 0], offset: 0 }), { want: "list-selection" }, schema)).toMatchObject({
+      kind: "list-selection", listId: "endpoint-list", items: [{ itemId: "endpoint-first" }],
     });
   });
 
