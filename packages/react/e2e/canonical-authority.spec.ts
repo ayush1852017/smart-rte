@@ -1140,6 +1140,85 @@ test.describe("Phase 8b canonical product authority", () => {
     expect(result.innerMarker).not.toBe("normal");
   });
 
+  test("Tab hoists an indented item's own nested children to siblings instead of moving the whole subtree", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    await page.evaluate(() => {
+      const runtime = (window as typeof window & { __smartProductCanonical?: any }).__smartProductCanonical!;
+      runtime.replaceValue({
+        schemaVersion: runtime.editor.schema.version,
+        revision: runtime.editor.state.revision + 1,
+        document: { type: "doc", id: "tab-hoist-doc", children: [{
+          type: "list", id: "tab-hoist-mid", attrs: { style: "decimal" }, children: [
+            { type: "list_item", id: "tab-hoist-sibling", children: [{ type: "paragraph", id: "tab-hoist-sibling-p", children: [{ type: "text", text: "Sibling" }] }] },
+            {
+              type: "list_item", id: "tab-hoist-target", children: [
+                { type: "paragraph", id: "tab-hoist-target-p", children: [{ type: "text", text: "Target" }] },
+                {
+                  type: "list", id: "tab-hoist-deep", attrs: { style: "decimal" }, children: [
+                    { type: "list_item", id: "tab-hoist-child-1", children: [{ type: "paragraph", id: "tab-hoist-child-1-p", children: [{ type: "text", text: "ChildOne" }] }] },
+                    { type: "list_item", id: "tab-hoist-child-2", children: [{ type: "paragraph", id: "tab-hoist-child-2-p", children: [{ type: "text", text: "ChildTwo" }] }] },
+                  ],
+                },
+              ],
+            },
+          ],
+        }] },
+      });
+      const position = runtime.editor.positions.positionOf("tab-hoist-target-p");
+      const point = { path: [...position.pos.path, 0], offset: 3 };
+      const selection = { type: "text", anchor: point, head: point };
+      runtime.editor.setSelection(selection, { source: "api" });
+      runtime.renderer.render(runtime.editor.document, selection);
+    });
+    await page.locator('[contenteditable="true"]').press("Tab");
+    const result = await page.evaluate(() => {
+      const runtime = (window as typeof window & { __smartProductCanonical?: any }).__smartProductCanonical!;
+      const outer = runtime.editor.document.children[0];
+      const sibling = outer.children[0];
+      const nested = sibling.children[1];
+      return {
+        siblingChildCount: sibling.children.length,
+        nestedItemIds: nested?.children?.map((n: any) => n.id),
+        targetItemChildCount: nested?.children?.[0]?.children?.length,
+      };
+    });
+    expect(result.siblingChildCount).toBe(2);
+    expect(result.nestedItemIds).toEqual(["tab-hoist-target", "tab-hoist-child-1", "tab-hoist-child-2"]);
+    // The moved item itself no longer carries its former nested list.
+    expect(result.targetItemChildCount).toBe(1);
+  });
+
+  test("keeps keyboard focus inside the editor when Tab has no legal indent to apply", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    await page.evaluate(() => {
+      const runtime = (window as typeof window & { __smartProductCanonical?: any }).__smartProductCanonical!;
+      runtime.replaceValue({
+        schemaVersion: runtime.editor.schema.version,
+        revision: runtime.editor.state.revision + 1,
+        document: { type: "doc", id: "tab-focus-doc", children: [{
+          type: "list", id: "tab-focus-list", attrs: { style: "decimal" }, children: [
+            { type: "list_item", id: "tab-focus-only", children: [{ type: "paragraph", id: "tab-focus-only-p", children: [{ type: "text", text: "First and only" }] }] },
+          ],
+        }] },
+      });
+      const position = runtime.editor.positions.positionOf("tab-focus-only-p");
+      const point = { path: [...position.pos.path, 0], offset: 3 };
+      const selection = { type: "text", anchor: point, head: point };
+      runtime.editor.setSelection(selection, { source: "api" });
+      runtime.renderer.render(runtime.editor.document, selection);
+    });
+    const editor = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
+    await editor.focus();
+    // The first item of a list has no predecessor to nest under, so indent
+    // correctly declines — but Tab must still be absorbed by the editor
+    // rather than falling through to native focus navigation.
+    await page.keyboard.press("Tab");
+    await expect(editor).toBeFocused();
+    // Editing still works immediately afterward — focus genuinely never left.
+    await page.keyboard.type("!");
+    await expect(page.locator('p:has-text("Fir!st and only")')).toBeVisible();
+  });
+
   test("keeps outdent enabled when the selected item reaches maximum legal indent", async ({ page }) => {
     await page.goto("/?canonicalAuthority=1&blocks=1");
     await page.evaluate(() => {

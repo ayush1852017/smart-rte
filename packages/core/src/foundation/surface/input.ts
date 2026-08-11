@@ -1239,13 +1239,18 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
       const item = listItemAt(this.editor.document, active);
       const description = this.editor.resolveScope({ want: "describe" });
       if (item && "inTable" in description && !description.inTable) {
+        // Tab inside a list item is always ours to handle, even when there is
+        // no legal indent/outdent (e.g. the first item, or already at the max
+        // legal depth) — preventDefault unconditionally here, or the browser
+        // falls through to its native Tab-to-next-focusable-element behavior
+        // and keyboard focus silently leaves the editor entirely.
+        event.preventDefault();
         const scope = this.editor.resolveScope({ want: "list-selection" });
         if ("kind" in scope) {
           const operations = event.shiftKey
             ? outdentList(this.editor.document, scope, { splitListIds: [createNodeId()] }, this.commandContext())
             : indentList(this.editor.document, scope, { nestedListIds: [createNodeId()] }, this.commandContext());
           if (operations.length) {
-            event.preventDefault();
             this.commitStructuralResult({ operations, selectionTarget: { ownerId: ownerAt(this.editor, active).id, offset: active.offset }, intent: event.shiftKey ? "outdent" : "indent" }, "keyboard");
           }
         }

@@ -77,6 +77,27 @@ describe("Phase 3 pure list commands", () => {
     ]);
   });
 
+  it("continues ordered-list numbering across a middle unwrap split instead of restarting at 1", () => {
+    const before = doc(list("ol", [item("a", "A"), item("b", "B"), item("c", "C"), item("d", "D")], { style: "decimal" }));
+    const after = applyOperations(before, unwrapList(before, scope("ol", ["b"]), { splitListIds: ["ol-after"] }, ctxFor(before)));
+    expect(after.children).toMatchObject([
+      { type: "list", id: "ol", attrs: { style: "decimal" }, children: [{ id: "a" }] },
+      { type: "paragraph", id: "b-p" },
+      // "c" and "d" continue as items 3 and 4, not restart at 1 and 2.
+      { type: "list", id: "ol-after", attrs: { style: "decimal", start: 3 }, children: [{ id: "c" }, { id: "d" }] },
+    ]);
+    expect(validate(after, foundationSchema)).toEqual([]);
+
+    // Continuation composes with an already-restarted list, not just the default start of 1.
+    const restarted = doc(list("ol2", [item("a", "A"), item("b", "B"), item("c", "C")], { style: "decimal", start: 10 }));
+    const afterRestart = applyOperations(restarted, unwrapList(restarted, scope("ol2", ["b"]), { splitListIds: ["ol2-after"] }, ctxFor(restarted)));
+    expect(afterRestart.children).toMatchObject([
+      { type: "list", id: "ol2", attrs: { start: 10 }, children: [{ id: "a" }] },
+      { type: "paragraph", id: "b-p" },
+      { type: "list", id: "ol2-after", attrs: { start: 12 }, children: [{ id: "c" }] },
+    ]);
+  });
+
   it("preserves nested descendants when unwrapping a depth-zero item", () => {
     const nested = list("nested-descendants", [item("nested-child", "Child")]);
     const before = frozen(doc(list("unwrap-descendants", [
@@ -167,18 +188,43 @@ describe("Phase 3 pure list commands", () => {
     expect(validate(relisted, foundationSchema)).toEqual([]);
   });
 
-  it("indents a whole subtree and outdents it back", () => {
+  it("indents only the selected line, hoisting its own nested children to siblings", () => {
+    // Indent is a decision about the selected line, not its whole subtree: a
+    // moved item's own nested list unwraps one level rather than moving
+    // deeper along with it, so nested content doesn't silently end up one
+    // level deeper than the user was working at.
     const child = list("child", [item("b-child", "BC")], { style: "circle" });
     const before = frozen(doc(list("l", [item("a", "A"), item("b", "B", [child]), item("c", "C")])));
     const indentedOps = indentList(before, scope("l", ["b"]), { nestedListIds: ["nested"] }, ctxFor(before));
     const indented = applyOperations(before, indentedOps);
     expect(indented.children[0]).toMatchObject({ children: [
-      { id: "a", children: [{ id: "a-p" }, { type: "list", id: "nested", children: [{ id: "b", children: [{ id: "b-p" }, { id: "child" }] }] }] },
+      { id: "a", children: [{ id: "a-p" }, { type: "list", id: "nested", children: [
+        { id: "b", children: [{ id: "b-p" }] },
+        { id: "b-child", children: [{ id: "b-child-p" }] },
+      ] }] },
       { id: "c" },
     ] });
-    const nestedScope = scope("nested", ["b"], [1]);
-    const outdented = applyOperations(indented, outdentList(indented, nestedScope, {}, ctxFor(indented)));
-    expect(outdented).toEqual(before);
+    // "b" no longer carries its own nested list — it and "b-child" are now
+    // independent siblings, matching the pre-indent flattened view.
+    const bItem = (((indented.children[0] as SmartElementNode).children?.[0] as SmartElementNode)
+      .children?.[1] as SmartElementNode).children?.[0] as SmartElementNode;
+    expect(bItem.children).toHaveLength(1);
+    expect(validate(indented, foundationSchema)).toEqual([]);
+
+    // A child with its own nested structure keeps that structure intact when
+    // hoisted — only the directly-indented item's own list unwraps.
+    const grandchild = list("grandchild", [item("b-grandchild", "GC")], { style: "circle" });
+    const deepChild = list("deep-child", [item("b-deep-child", "DC", [grandchild])], { style: "circle" });
+    const deepBefore = doc(list("dl", [item("da", "A"), item("db", "B", [deepChild]), item("dc", "C")]));
+    const deepIndented = applyOperations(deepBefore, indentList(deepBefore, scope("dl", ["db"]), { nestedListIds: ["deep-nested"] }, ctxFor(deepBefore)));
+    expect(deepIndented.children[0]).toMatchObject({ children: [
+      { id: "da", children: [{ id: "da-p" }, { type: "list", id: "deep-nested", children: [
+        { id: "db", children: [{ id: "db-p" }] },
+        { id: "b-deep-child", children: [{ id: "b-deep-child-p" }, { type: "list", id: "grandchild", children: [{ id: "b-grandchild" }] }] },
+      ] }] },
+      { id: "dc" },
+    ] });
+    expect(validate(deepIndented, foundationSchema)).toEqual([]);
   });
 
   it("does not indent the first item", () => {

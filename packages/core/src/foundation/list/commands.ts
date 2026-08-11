@@ -268,7 +268,13 @@ const unwrapOne = (
   if (afterItems.length) {
     const afterId = beforeItems.length ? splitId : list.node.id;
     if (!afterId) throw new Error("list.unwrap middle split requires a caller-provided splitListId.");
-    sequence.push({ ...list.node, id: afterId, children: afterItems });
+    // A middle unwrap splits an ordered list into two list nodes — without
+    // this, the trailing portion silently restarts its own numbering at 1
+    // instead of continuing from where the original list left off.
+    // Harmless to set on an unordered list; `start` is simply unused there.
+    const priorStart = typeof list.node.attrs?.start === "number" ? list.node.attrs.start : 1;
+    const continuedStart = priorStart + end + 1;
+    sequence.push(withAttrs({ ...list.node, id: afterId, children: afterItems }, { ...attrsOf(list.node), start: continuedStart }));
   }
   if (selected.size !== end - start + 1) throw new Error("Invalid selected list item indexes.");
   return replacementSequence(list.node, list.pos, sequence);
@@ -302,6 +308,22 @@ const compatibleNestedList = (parent: SmartElementNode, candidate: SmartElementN
   return parentOrdered === candidateOrdered && parent.attrs?.checkable === candidate.attrs?.checkable;
 };
 
+/** Indent is a decision about the selected line(s), not their whole subtree.
+ * A moved item's own nested list is unwrapped one level rather than carried
+ * along — its direct children become siblings of the moved item at its new
+ * position, in the same order, instead of silently ending up one level
+ * deeper than before. Only the moved item's own nested list unwraps; each
+ * hoisted child keeps whatever nested structure it independently has. */
+const flattenMovedItem = (node: SmartNode): SmartElementNode[] => {
+  if (isTextNode(node)) throw new Error("List children must be list items.");
+  const item = node;
+  const nested = nestedListChild(item);
+  if (!nested) return [item];
+  const withoutNested = withChildren(item, (item.children || []).filter((_, index) => index !== nested.index));
+  const hoisted = (nested.node.children || []).filter((child): child is SmartElementNode => !isTextNode(child));
+  return [withoutNested, ...hoisted];
+};
+
 export const indentList: ListCommand<IndentListParams> = (document, scope, params, ctx) => {
   let idCursor = 0;
   return listScopes(scope).flatMap((entry) => {
@@ -313,7 +335,7 @@ export const indentList: ListCommand<IndentListParams> = (document, scope, param
     const children = [...(located.node.children || [])];
     const previous = children[start - 1];
     if (!previous || isTextNode(previous)) throw new Error("List item predecessor is invalid.");
-    const moved = children.slice(start, end + 1);
+    const moved = children.slice(start, end + 1).flatMap(flattenMovedItem);
     const candidate = nestedListChild(previous);
     const nested = candidate && compatibleNestedList(located.node, candidate.node) ? candidate : null;
     let nextPrevious: SmartElementNode;
