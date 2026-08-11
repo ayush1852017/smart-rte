@@ -39,3 +39,14 @@ they are the live default path, and deletion is triggered after flag
 promotion. Their retained existence is the rollback mechanism required by
 Gate 1, not a pre-promotion failure. Post-promotion deletion remains mandatory
 and is the event that closes the repository-wide exception.
+
+## Deletion-sequence export guard
+
+Before each rollback bridge is removed, run
+`packages/react/src/adapters/phase8bExportGuard.test.ts` and retain its result
+with the deletion commit. The guard calls the DOCX and PDF format adapters
+directly, without mounting `ClassicEditor` or importing any rollback bridge:
+DOCX is exported and imported through Mammoth, while PDF print HTML is emitted
+and parsed back for its declared lossy text structure. The guard must pass both
+before and after the four bridge-removal commits so format exports cannot be
+silently lost during adapter cleanup.
