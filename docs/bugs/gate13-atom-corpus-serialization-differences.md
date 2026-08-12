@@ -1,32 +1,32 @@
-# Gate 13: atom corpus shows 5 of 7 scenarios diverging between retained and canonical — never previously reported in writing
+# Gate 13: atom corpus showed 5 of 7 scenarios diverging — 2 were a test-harness bug, 1 was a real, now-corrected divergence
 
-**Status:** Needs re-verification — the divergences themselves are classified as non-semantic (`equivalent-serialization`/`expected-normalization`), but this metric does not appear to have been called out or reviewed in any prior written Gate 13/14 report, despite being emitted by the same replay run those reports are based on.
+**Status:** Fixed. A hard CI assertion now pins the exact expected shape in both the Node-side 2,100-case corpus and the 7-scenario browser replay.
 **Area:** atom / test infra (retained-vs-canonical replay)
-**First reported:** 2026-08-12 (this re-audit — flagging that it existed unreported, not that it's new)
+**First reported:** 2026-08-12 (this re-audit — flagging that it existed unreported); investigated and fixed same day.
 
 ## Symptom
 
-The same replay harness that produces the "42 comparable intents" table also emits a separate `atomCorpus` result: of 7 atom scenarios compared between retained and canonical, only 2 are fully equivalent. The other 5 diverge — 3 classified `equivalent-serialization`, 2 classified `expected-normalization`.
-
-## Reproduction
-
-Automated: `pnpm --filter smartrte-react exec playwright test e2e/canonical-authority.spec.ts -g "retained/canonical command replay"`, read the `gate-13-browser-replay` test annotation's `atomCorpus` field. Confirmed identical across all three browsers in the 2026-08-12 re-audit: `{"scenarios":7,"equivalent":2,"divergences":{"equivalent-serialization":3,"expected-normalization":2}}`.
-
-**Not yet done:** identifying *which* of the 7 atom scenarios are the 5 divergent ones, or whether this ratio (5/7 diverging) has been stable or changed over time — no prior written report discusses this metric at all, so there's no historical baseline to compare against.
+The same replay harness that produces the "42 comparable intents" table also emits a separate `atomCorpus` result: of 7 atom scenarios compared between retained and canonical, only 2 were reported fully equivalent. The other 5 diverged — 3 classified `equivalent-serialization` (i.e. unexplained), 2 classified `expected-normalization`.
 
 ## Root cause
 
-Not investigated. The classifications themselves (`equivalent-serialization`, `expected-normalization`) suggest non-semantic differences of the same general kind as the main 11-intent table, but this hasn't been confirmed by actually reading the per-scenario diffs.
+Two separate things, found by diffing the actual per-scenario legacy/canonical HTML output (not just the classification counts):
+
+1. **Test-harness bug, not a product bug.** `atomShadowComparator.ts`'s `canonical()` helper built its `<div>` fixture with `ownerDocument.createElement("div")` but never attached it to `document.body`. jsdom's `Selection.addRange()` silently no-ops on a range whose container isn't connected to the document, so `domSelection.rangeCount` was `0` by the time `executeDomCanonicalAtomInsert` (`packages/react/src/adapters/domInlineAtomCommandBridge.ts`) checked it, and the insert bridge returned `null` immediately — for every scenario that goes through that path, regardless of input. This produced two false divergences (`formula.insert`, `image.insert`) and, more importantly, meant the two "expected" security-rejection scenarios (`image.reject-javascript`, `image.reject-html-data`) were never actually exercising `insertAtom`'s URL validation — they only *looked* correct because the same harness bug made every insert fail unconditionally, insert or reject alike.
+2. **One real, previously-unclassified divergence.** `image.update`: the retained/legacy image-resize path drops the `alt` attribute when only `width`/`height` change; canonical's `updateAtom` correctly preserves it. Canonical is more correct here (no data loss), but nothing had reviewed or labeled this difference before.
 
 ## Fix
 
-None — not attempted in this pass.
+- `packages/react/src/test-harness/atomShadowComparator.ts`: `canonical()` now appends its fixture `root` to `ownerDocument.body` before touching `Selection`, and removes it in a `finally` block. This alone fixed `formula.insert` and `image.insert` to genuinely match, and made the two reject-scenarios exercise real validation instead of accidentally-correct no-ops.
+- Added `correction: "canonical-preserves-alt-on-resize"` to the `image.update` scenario definition so it's an explicitly reviewed, named correction like the other two, instead of falling into the generic `equivalent-serialization` bucket.
+- Net result: of 7 scenarios, 4 are genuinely equivalent and 3 diverge, all three now named and reviewed (`unsafe-resource-url-rejected`, `unsafe-data-mime-rejected`, `canonical-preserves-alt-on-resize`). Zero unexplained (`equivalent-serialization`) divergences remain.
 
 ## Regression coverage
 
-The replay harness itself, same as the other Gate 13 files — but note this specific metric isn't asserted on (`expect(result.listCorpus.divergences).toEqual({})` exists in the test; no equivalent hard assertion was found for `atomCorpus` divergences during this audit, meaning a regression here could currently pass CI silently).
+- `packages/react/src/test-harness/atomShadowComparator.test.ts` (2,100-case Node corpus): now asserts `divergences["equivalent-serialization"]` is `undefined`, `divergences["expected-normalization"]` is exactly `900`, and `corrections` equals exactly the three named keys at 300 each — any new unexplained divergence fails this test.
+- `packages/react/e2e/canonical-authority.spec.ts` ("runs the retained/canonical command replay"): now asserts `result.atomCorpus.scenarios === 7`, `.equivalent === 4`, and `.divergences` equals exactly `{ "expected-normalization": 3 }` — the gap where this metric wasn't asserted on at all is closed.
 
 ## Related/similar issues
 
-- [gate13-block-quote-code-selection-mapping-difference](gate13-block-quote-code-selection-mapping-difference.md), [gate13-table-normalization-differences](gate13-table-normalization-differences.md), [gate13-list-command-selection-and-style-differences](gate13-list-command-selection-and-style-differences.md) — the other Gate 13 clusters, all of which at least have some written history; this one has none.
-- **Recommendation, not yet actioned**: before the promotion decision, someone should identify which 5 of 7 atom scenarios diverge and get them classified/reviewed the same way the 11 main intents were, since "never reviewed" is a weaker state than "reviewed and accepted."
+- [gate13-block-quote-code-selection-mapping-difference](gate13-block-quote-code-selection-mapping-difference.md), [gate13-table-normalization-differences](gate13-table-normalization-differences.md), [gate13-list-command-selection-and-style-differences](gate13-list-command-selection-and-style-differences.md) — the other Gate 13 clusters.
+- If a future jsdom-based shadow comparator is added for another DOM-authoritative bridge, check whether its fixture root is connected to `document` before trusting a `Selection`/`Range`-dependent codepath to exercise real behavior — this exact bug shape (detached root → silently-failing `addRange` → misleadingly "safe" no-op) could recur.

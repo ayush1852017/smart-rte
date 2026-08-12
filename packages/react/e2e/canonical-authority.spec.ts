@@ -473,6 +473,9 @@ test.describe("Phase 8b canonical product authority", () => {
     expect(result.listCorpus.scenarios).toBe(5);
     expect(result.listCorpus.equivalent).toBe(5);
     expect(result.listCorpus.divergences).toEqual({});
+    expect(result.atomCorpus.scenarios).toBe(7);
+    expect(result.atomCorpus.equivalent).toBe(4);
+    expect(result.atomCorpus.divergences).toEqual({ "expected-normalization": 3 });
     // This route is evidence collection, not a waiver mechanism.  Known
     // retained/canonical differences remain visible in the annotation and in
     // the delta report; Gate 14 is closed only when this list is empty.

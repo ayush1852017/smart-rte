@@ -18,7 +18,7 @@ type Scenario = { intent: string; legacyId: string; input?: Record<string, unkno
 const scenarios: readonly Scenario[] = [
   { intent: "formula.insert", legacyId: "formula.insert", input: { value: "x^2", displayText: "x²" } },
   { intent: "image.insert", legacyId: "image.insert-inline", input: { src: "https://example.test/a.png", alt: "A" } },
-  { intent: "image.update", legacyId: "image.update-inline", source: '<p>A<img src="https://example.test/a.png" alt="A">B</p>', input: { path: [0, 1], width: 120, height: 60 } },
+  { intent: "image.update", legacyId: "image.update-inline", source: '<p>A<img src="https://example.test/a.png" alt="A">B</p>', input: { path: [0, 1], width: 120, height: 60 }, correction: "canonical-preserves-alt-on-resize" },
   { intent: "formula.delete", legacyId: "formula.delete", source: '<p>A<span data-formula="x">x</span>B</p>', input: { path: [0, 1] } },
   { intent: "image.delete", legacyId: "image.delete-inline", source: '<p>A<img src="https://example.test/a.png" alt="A">B</p>', input: { path: [0, 1] } },
   { intent: "image.reject-javascript", legacyId: "image.insert-inline", input: { src: "javascript:alert(1)", alt: "A" }, correction: "unsafe-resource-url-rejected" },
@@ -27,14 +27,22 @@ const scenarios: readonly Scenario[] = [
 
 const canonical = (scenario: Scenario, ownerDocument: Document): string | null => {
   const root = ownerDocument.createElement("div"); root.innerHTML = scenario.source || "<p>fixture</p>";
-  const paragraph = root.querySelector("p")!;
-  const selection = ownerDocument.defaultView!.getSelection()!;
-  const range = ownerDocument.createRange(); range.setStart(paragraph.firstChild || paragraph, 0); range.collapse(true); selection.removeAllRanges(); selection.addRange(range);
-  if (scenario.intent === "formula.insert") executeDomFormulaInsert(root, { value: String(scenario.input?.value), displayText: String(scenario.input?.displayText) }, selection);
-  else if (scenario.intent === "image.insert" || scenario.intent.startsWith("image.reject")) executeDomInlineImageCommand(root, scenario.input as never, selection);
-  else if (scenario.intent === "image.update") executeDomInlineImageUpdate(root, root.querySelector("img")!, { width: 120, height: 60 });
-  else executeDomInlineAtomDelete(root, root.querySelector(scenario.intent.startsWith("formula") ? "[data-formula]" : "img")!);
-  return root.innerHTML;
+  // The root must be connected to the document for jsdom's Selection.addRange
+  // to register a range (it silently no-ops on detached nodes), which the
+  // canonical DOM-authoritative insert bridges require to find their owner.
+  ownerDocument.body.appendChild(root);
+  try {
+    const paragraph = root.querySelector("p")!;
+    const selection = ownerDocument.defaultView!.getSelection()!;
+    const range = ownerDocument.createRange(); range.setStart(paragraph.firstChild || paragraph, 0); range.collapse(true); selection.removeAllRanges(); selection.addRange(range);
+    if (scenario.intent === "formula.insert") executeDomFormulaInsert(root, { value: String(scenario.input?.value), displayText: String(scenario.input?.displayText) }, selection);
+    else if (scenario.intent === "image.insert" || scenario.intent.startsWith("image.reject")) executeDomInlineImageCommand(root, scenario.input as never, selection);
+    else if (scenario.intent === "image.update") executeDomInlineImageUpdate(root, root.querySelector("img")!, { width: 120, height: 60 });
+    else executeDomInlineAtomDelete(root, root.querySelector(scenario.intent.startsWith("formula") ? "[data-formula]" : "img")!);
+    return root.innerHTML;
+  } finally {
+    root.remove();
+  }
 };
 
 export const runAtomShadowCorpus = (count = 2_100, ownerDocument: Document = document): AtomShadowSummary => {
