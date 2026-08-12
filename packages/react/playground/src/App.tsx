@@ -71,9 +71,6 @@ function App() {
       <ClassicEditor
         canonicalAuthority={canonicalAuthority}
         defaultValue={defaultValue}
-        // The retained replay uses the existing optional font-family route so
-        // that this intent is compared against a real legacy capability.
-        preserveFontFamily={params.has("sessionReplay") && !canonicalAuthority}
         mediaProvider={mediaProvider}
         value={!canonicalAuthority && params.has("sessionReplayAtom") ? replayAtomValue : !canonicalAuthority && params.has("sessionReplay") ? "<p>seed</p>" : undefined}
         theme={theme}
