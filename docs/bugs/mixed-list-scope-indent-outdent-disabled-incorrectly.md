@@ -12,6 +12,8 @@ A selection spanning nested list items and a sibling plain block (e.g. after a p
 
 Reproduced from a screenshot-driven repro sequence spanning nested list items and a sibling item, then outdenting twice — after the second outdent, one selected item was unwrapped to a plain paragraph while the other selected items remained in a nested list, producing a real mixed scope (a `list-selection` part plus a `block-range` part), not a disabled/invalid selection.
 
+**Verification caveat, added 2026-08-12, resolved 2026-08-12:** this entry was backfilled from `docs/PHASE_8B_MIXED_SCOPE_DROPDOWN_CHECKLIST_PRESET.md`, a historical report from an earlier work session, and could not be confirmed against the current owner's own original screenshots at the time it was written. **Owner has since manually re-checked against the actual reported scenario and confirmed it matches and works correctly on the current build.**
+
 The first exact repro attempt also exposed a **second, independent command-layer defect** that initially masked this bug: the depth-zero `unwrapOne` path was dropping nested-list descendants while unwrapping a list item, which made the resulting scope look like a plain block range with no list part at all (rather than a genuine mixed scope) — hiding the real toolbar bug behind a content-loss bug. That descendant-loss issue was fixed first (nested lists now become sibling block content instead of being dropped), which was necessary before the toolbar bug beneath it could even be observed correctly.
 
 ## Root cause

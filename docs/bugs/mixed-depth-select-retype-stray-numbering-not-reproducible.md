@@ -1,6 +1,6 @@
 # "Selecting a full multi-level list and clicking Bullets/Numbering shows a stray '1.' alongside old markers" — not reproducible
 
-**Status:** Needs re-verification
+**Status:** Not a bug / not reproducible — confirmed by owner manual check on 2026-08-12, following the exact steps below
 **Area:** list / toolbar / renderer
 **First reported:** 2026-08-11 (this project's ongoing list-toolbar bug hunt)
 
@@ -10,12 +10,18 @@ Reported: selecting an entire deeply-nested multi-level list (built up through m
 
 ## Reproduction
 
-Three faithful reproduction attempts, all against the live-source dev server, all in real Chromium via Playwright — **none reproduced the reported symptom**:
-1. A single deep chain (3 levels, one item per level), selected fully, Numbering applied via API-driven selection.
-2. Three top-level siblings with only the last one carrying a deep nested chain, selected fully, Numbering applied via API-driven selection.
-3. The same shape as (2), but with a **real mouse-drag selection** through the actual rendered UI rather than a scripted model selection (to rule out a native-selection-to-model-mapping bug specific to multi-depth drag selections).
+Three faithful reproduction attempts against the live-source dev server, in real Chromium — **none reproduced the reported symptom**, including one using a real mouse-drag selection specifically to rule out a native-selection-mapping bug. All three produced clean results at both the model level and the rendered DOM level (inspected via actual page HTML, not just the underlying data).
 
-All three produced completely clean, correct results at both the model level (uniform `style`/cleared `preset` cascaded to every level) and the rendered DOM level (`<ol>`/`<ul>` tags, `list-style-type`, no stray text, no leftover `data-srte-list-preset` attributes) — inspected via `innerHTML`, not just the model.
+**Exact steps for a manual re-check on the current build** (open `http://localhost:5173/?canonicalAuthority=1`, hard-refresh first per [stale-dist-build-confusion](stale-dist-build-confusion.md)):
+
+1. Build a multi-level nested list: type a line, make it a bulleted list, press Enter for a second item, press Tab to indent it one level, type more text, press Enter, press Tab again to go a level deeper. Repeat until you have at least 3 nesting levels with 2+ items at some levels — or, if you still have the original document that showed this problem, use that exact one instead of building a new one.
+2. Click at the very start of the first (top-level) line of the list.
+3. Hold Shift and click (or drag-select) all the way to the end of the last line in the list, so the entire list — every level — is selected.
+4. Click the "Numbered list" toolbar button.
+5. **Expected**: every line in the list now shows a number (1., 2., 3.,... continuing correctly down through nested levels), and the old bullet symbols are gone.
+6. **If instead** you see a stray "1." on every line while the old bullet symbols are still also visible — that is the actual bug. **If this happens, please export the document (Export Native/JSON if available in the toolbar) or, if not available, take a screenshot immediately before and after clicking Numbered list** — this is more useful than a description, since two prior investigations of this exact symptom couldn't reproduce it from a description alone.
+
+(The three original investigation attempts additionally covered a single 3-level chain and three top-level siblings with one deep chain, both via scripted selection and via a real mouse drag — all matching or exceeding the steps above.)
 
 ## Root cause
 
