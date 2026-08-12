@@ -1,9 +1,8 @@
 import { assertContract, readSource, sourceHas } from "./contract-utils.mjs";
 
-const [pipeline, sanitizer, classic, runtime, harness, diagnostics] = await Promise.all([
+const [pipeline, sanitizer, runtime, harness, diagnostics] = await Promise.all([
   readSource("packages/core/src/foundation/clipboard/pipeline.ts"),
   readSource("packages/core/src/foundation/clipboard/sanitizer.ts"),
-  readSource("packages/react/src/components/ClassicEditor.tsx"),
   readSource("packages/react/src/canonicalClipboardRuntime.ts"),
   readSource("packages/react/src/test-harness/legacyClipboardEngine.ts"),
   readSource("packages/core/src/foundation/clipboard/diagnostics.ts"),
@@ -14,7 +13,6 @@ const normalizeIndex = pipeline.indexOf("normalizer.normalize(");
 if (sanitizeIndex < 0 || normalizeIndex < 0 || sanitizeIndex > normalizeIndex) failures.push("Clipboard sanitization is not structurally ordered before source normalization.");
 if (!sourceHas(sanitizer, /from\s+["']dompurify["']/) || !sourceHas(sanitizer, /sanitizeResourceUrl/)) failures.push("Clipboard HTML does not use DOMPurify and the shared URL policy.");
 if (sourceHas(sanitizer, /\bnew\s+URL\s*\(/) || sourceHas(sanitizer, /function\s+sanitize(?:Url|URL)/)) failures.push("Clipboard sanitizer contains a second URL policy.");
-if (sourceHas(classic, /\bonPaste\b|clipboardData|cleanPastedHtml|insertCleanHtml/)) failures.push("ClassicEditor still owns clipboard event handling or legacy cleaning.");
 if (!sourceHas(runtime, /parseClipboardPayload/) || !sourceHas(runtime, /addEventListener\(\s*["']paste["']/)) failures.push("Canonical clipboard runtime is not installed at the product boundary.");
 if (!sourceHas(harness, /legacyCleanPastedHtml\(/)) failures.push("Retained clipboard legacy harness is missing.");
 if (!sourceHas(diagnostics, /fixtureHash|detectedSource|structuralShape|repairs/)) failures.push("Privacy-safe clipboard diagnostics do not expose the required structural fields.");

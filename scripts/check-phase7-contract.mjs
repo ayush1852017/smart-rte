@@ -1,6 +1,6 @@
 import { assertContract, mapKeys, readSource, sourceHas } from "./contract-utils.mjs";
 
-const [schema, commands, security, lifecycle, persistence, renderer, input, composition, classic, atomBridge, imageBridge, canonical, harness] = await Promise.all([
+const [schema, commands, security, lifecycle, persistence, renderer, input, composition, atomBridge, imageBridge, canonical, harness] = await Promise.all([
   readSource("packages/core/src/foundation/atom/schema.ts"),
   readSource("packages/core/src/foundation/atom/commands.ts"),
   readSource("packages/core/src/foundation/atom/security.ts"),
@@ -9,7 +9,6 @@ const [schema, commands, security, lifecycle, persistence, renderer, input, comp
   readSource("packages/core/src/foundation/surface/renderer.ts"),
   readSource("packages/core/src/foundation/surface/input.ts"),
   readSource("packages/core/src/foundation/atom/composition.ts"),
-  readSource("packages/react/src/components/ClassicEditor.tsx"),
   readSource("packages/react/src/adapters/domInlineAtomCommandBridge.ts"),
   readSource("packages/react/src/adapters/domInlineImageCommandBridge.ts"),
   readSource("packages/react/src/components/CanonicalAuthorityEditor.tsx"),
@@ -30,8 +29,6 @@ if (!sourceHas(renderer, /contentEditable\s*=\s*["']false["']/) || !sourceHas(re
 if (!sourceHas(composition, /kind:\s*["']atom["']/) || !sourceHas(composition, /token\.kind\s*===\s*["']atom["']/)
   || !sourceHas(input, /unit\.kind\s*===\s*["']atom["']/)) failures.push("Composition is not atom-token aware.");
 if (sourceHas(`${atomBridge}\n${imageBridge}`, /smartrte-core\/legacy/)) failures.push("Product atom bridges still import legacy core.");
-if (sourceHas(classic, /createElement\(\s*["'](?:img|span)["']\s*\)|fallbackSpan/)) failures.push("ClassicEditor still contains direct atom insertion fallback.");
-if (!sourceHas(classic, /trust:\s*false/) || !sourceHas(classic, /strict:\s*["']error["']/)) failures.push("Formula rendering does not disable KaTeX trust.");
 if (!sourceHas(canonical, /insertBlockAtom\(|insertInlineFormula\(/)) failures.push("Canonical surface does not route atom insertion.");
 if (!sourceHas(harness, /executeRetainedLegacyAtom\s*=\s*\(/) || !sourceHas(harness, /smartrte-core\/legacy/)) failures.push("Retained atom legacy harness is missing.");
 

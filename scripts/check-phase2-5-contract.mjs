@@ -9,10 +9,9 @@ const paths = {
   operations: resolve(root, "packages/core/src/foundation/operations.ts"),
   surface: resolve(root, "packages/core/src/foundation/surface"),
   rootIndex: resolve(root, "packages/core/src/index.ts"),
-  classic: resolve(root, "packages/react/src/components/ClassicEditor.tsx"),
 };
-const [model, scope, resolver, operations, rootIndex, classic] = await Promise.all([
-  paths.model, paths.scope, paths.resolver, paths.operations, paths.rootIndex, paths.classic,
+const [model, scope, resolver, operations, rootIndex] = await Promise.all([
+  paths.model, paths.scope, paths.resolver, paths.operations, paths.rootIndex,
 ].map((path) => readFile(path, "utf8")));
 const violations = [];
 
@@ -31,9 +30,6 @@ if (!/same reference ⇒ unchanged subtree|reference identity/.test(operations))
   violations.push("reference identity memoization contract is not documented in apply code");
 }
 if (!/export \* from "\.\/foundation\/index\.js"/.test(rootIndex)) violations.push("Phase 3 root promotion no longer exports foundation contracts");
-if (/createInputPipeline|createSubtreeRenderer|FoundationInputPipeline/.test(classic)) {
-  violations.push("ClassicEditor was wired to the Phase 2.5 standalone surface");
-}
 
 const sourceFiles = [];
 const visit = async (directory) => {

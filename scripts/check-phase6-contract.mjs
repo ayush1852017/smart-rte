@@ -1,10 +1,9 @@
 import { assertContract, mapKeys, readSource, sourceHas } from "./contract-utils.mjs";
 
-const [grid, commands, resolver, classic, canonical, harness] = await Promise.all([
+const [grid, commands, resolver, canonical, harness] = await Promise.all([
   readSource("packages/core/src/foundation/table/grid.ts"),
   readSource("packages/core/src/foundation/table/commands.ts"),
   readSource("packages/core/src/foundation/scope/resolveScope.ts"),
-  readSource("packages/react/src/components/ClassicEditor.tsx"),
   readSource("packages/react/src/components/CanonicalAuthorityEditor.tsx"),
   readSource("packages/react/src/test-harness/legacyTableEngine.ts"),
 ]);
@@ -15,7 +14,6 @@ if (!sourceHas(commands, /import\s*\{\s*occupancyGridFor\s*\}\s*from\s+["']\.\/g
 const expected = ["table.insert", "table.remove", "table.insertRow", "table.removeRow", "table.insertColumn", "table.removeColumn", "table.mergeCells", "table.splitCell", "table.setHeader", "table.setCellAttributes", "table.setColumnWidth", "table.setRowHeight", "table.moveRow", "table.moveColumn"];
 const keys = mapKeys(commands, "tableCommands");
 for (const key of expected) if (!keys.includes(key)) failures.push(`tableCommands is missing ${key}.`);
-if (sourceHas(classic, /\.rowSpan\s*=|\.colSpan\s*=|createElement\(\s*["'](?:tr|td|th)["']\s*\)/)) failures.push("ClassicEditor still performs direct table structural DOM mutation.");
 if (!sourceHas(canonical, /insertTableCommand\(|runTable\(/)) failures.push("Canonical surface does not route table operations through foundation commands.");
 if (!sourceHas(harness, /executeRetainedLegacyTable\s*=\s*\(/) || !sourceHas(harness, /smartrte-core\/legacy/)) failures.push("Retained table legacy harness is missing.");
 

@@ -1,10 +1,9 @@
 import { assertContract, mapKeys, readSource, sourceHas, withoutComments } from "./contract-utils.mjs";
 
-const [types, commands, canonicalEditor, classic, shadow, harness, rootIndex, legacyIndex, corePackage] = await Promise.all([
+const [types, commands, canonicalEditor, shadow, harness, rootIndex, legacyIndex, corePackage] = await Promise.all([
   readSource("packages/core/src/foundation/list/types.ts"),
   readSource("packages/core/src/foundation/list/commands.ts"),
   readSource("packages/react/src/components/CanonicalAuthorityEditor.tsx"),
-  readSource("packages/react/src/components/ClassicEditor.tsx"),
   readSource("packages/core/src/foundation/list/shadow.ts"),
   readSource("packages/react/src/adapters/legacyListShadowComparator.ts"),
   readSource("packages/core/src/index.ts"),
@@ -29,9 +28,6 @@ const keys = mapKeys(commands, "listCommands");
 for (const key of requiredCommands) if (!keys.includes(key)) failures.push(`listCommands is missing ${key}.`);
 if (!sourceHas(canonicalEditor, /createList\(|indentList\(|outdentList\(|moveListItems\(/)) {
   failures.push("Canonical product toolbar does not call the foundation list commands.");
-}
-if (sourceHas(classic, /(?:nestSelectedListItems|outdentSelectedListItems|legacyToggleList|legacyIndentListItems|legacyOutdentListItems)/)) {
-  failures.push("ClassicEditor still contains a legacy list mutation call.");
 }
 if (!sourceHas(shadow, /normalizedStructureWithoutIds|semanticSelectionPosition|shadowLogRecord/)) {
   failures.push("List shadow comparator does not compare normalized structure and semantic selection.");

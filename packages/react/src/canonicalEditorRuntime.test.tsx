@@ -7,7 +7,6 @@ import { foundationSchema, parseCanonicalListHtml } from "smartrte-core/foundati
 import { canonicalAuthorityFlag } from "./canonicalAuthorityFlag.js";
 import { CanonicalEditorRuntime, type SmartEditorHandle } from "./canonicalEditorRuntime.js";
 import { CanonicalAuthorityEditor } from "./components/CanonicalAuthorityEditor.js";
-import { ClassicEditor } from "./components/ClassicEditorAuthority.js";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -84,28 +83,4 @@ describe("canonical authority lifecycle", () => {
     act(() => reactRoot.unmount());
   });
 
-  it("flips to the rollback renderer without losing the latest canonical document", () => {
-    const host = document.createElement("div");
-    document.body.appendChild(host);
-    const reactRoot = createRoot(host);
-    let runtime: CanonicalEditorRuntime | null = null;
-    canonicalAuthorityFlag.setGlobal(true);
-    act(() => reactRoot.render(<ClassicEditor defaultValue="<p>safe</p>" onRuntime={(value) => { runtime = value; }} />));
-    expect(host.querySelector('[data-smart-authority="canonical"]')).not.toBeNull();
-    act(() => runtime!.editor.typeText("!", { timestamp: 1 }));
-    const stableBlock = runtime!.editor.document.children[0];
-    const stableBlockId = "id" in stableBlock ? stableBlock.id : null;
-    act(() => canonicalAuthorityFlag.setGlobal(false));
-    expect(host.querySelector('[data-smart-authority="canonical"]')).toBeNull();
-    expect(host.querySelector('[contenteditable="true"]')?.textContent).toContain("!safe");
-    const rollbackRoot = host.querySelector('[contenteditable="true"]') as HTMLElement;
-    act(() => {
-      rollbackRoot.querySelector("p")!.textContent = "rollback edit";
-      rollbackRoot.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "t" }));
-    });
-    act(() => canonicalAuthorityFlag.setGlobal(true));
-    expect(host.querySelector('[data-smart-authority="canonical"] [contenteditable="true"]')?.textContent).toContain("rollback edit");
-    expect(runtime!.editor.document.children[0]).toMatchObject({ id: stableBlockId });
-    act(() => reactRoot.unmount());
-  });
 });

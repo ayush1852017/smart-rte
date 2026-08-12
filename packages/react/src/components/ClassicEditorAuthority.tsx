@@ -1,68 +1,57 @@
-import React, { forwardRef, useRef, useSyncExternalStore } from "react";
-import { foundationSchema, parseCanonicalListHtml, serializeCanonicalListHtml, type PersistedEditorDocument } from "smartrte-core/foundation";
-import { canonicalAuthorityFlag, type CanonicalAuthorityContext } from "../canonicalAuthorityFlag.js";
-import type { CanonicalEditorRuntime, SmartEditorChange, SmartEditorHandle } from "../canonicalEditorRuntime.js";
+import React, { forwardRef } from "react";
+import type { PersistedEditorDocument } from "smartrte-core/foundation";
+import type { CanonicalAuthorityContext } from "../canonicalAuthorityFlag.js";
+import type { SmartEditorChange, SmartEditorHandle } from "../canonicalEditorRuntime.js";
 import type { MediaProvider } from "../mediaProvider.js";
 import type { MediaPickerComponent } from "./MediaPicker.js";
 import { CanonicalAuthorityEditor, type CanonicalAuthorityEditorProps } from "./CanonicalAuthorityEditor.js";
-import { LegacyClassicEditor, type ClassicEditorProps as LegacyClassicEditorProps } from "./ClassicEditor.js";
 
-export type ClassicEditorProps = Omit<LegacyClassicEditorProps, "value" | "onChange"> & {
-  /** Initial-only under canonical authority. Use replaceValue for external changes. */
-  defaultValue?: string | PersistedEditorDocument;
-  /** Legacy HTML value. Ignored after canonical construction. */
+export type ClassicEditorProps = Omit<CanonicalAuthorityEditorProps, "onChange"> & {
+  /** Legacy HTML value. Superseded by defaultValue; retained for source compatibility. */
   value?: string;
   onChange?: ((change: SmartEditorChange) => void) | ((html: string) => void);
-  onHtmlChange?: (html: string) => void;
+  /**
+   * Retained rollback-switch surface for source compatibility. There is no
+   * legacy renderer left to switch to as of Phase 8b closeout (2026-08-12):
+   * canonical authority is unconditionally the only implementation, and
+   * these props are accepted but have no effect.
+   */
   canonicalAuthority?: boolean;
   authorityContext?: CanonicalAuthorityContext;
   mediaProvider?: MediaProvider;
   mediaPicker?: MediaPickerComponent;
   onRuntime?: CanonicalAuthorityEditorProps["onRuntime"];
+  // Legacy-only configuration, silently ignored under canonical authority
+  // (this was already true before Phase 8b closeout — canonical mode never
+  // read these). Kept accepted, not typed against the removed legacy
+  // component, purely so existing call sites keep compiling.
+  table?: unknown;
+  media?: unknown;
+  formula?: unknown;
+  features?: unknown;
+  plugins?: unknown;
+  formats?: unknown;
+  formatDefinitions?: unknown;
+  mediaManager?: unknown;
+  fonts?: unknown;
+  defaultFont?: unknown;
+  preserveFontFamily?: unknown;
+  preserveColors?: unknown;
+  preserveDocxStyles?: unknown;
+  theme?: unknown;
+  showFontSize?: unknown;
 };
 
 /**
- * Uncontrolled by default in canonical mode. The runtime flag supplies a
- * reversible legacy path during rollout; direct prop override has precedence.
+ * Canonical authority is unconditionally the only implementation as of
+ * Phase 8b closeout (2026-08-12) — the DOM-authoritative legacy rollback
+ * path (LegacyClassicEditor and its four rollback bridges) was retired
+ * once the Gate 13/14 replay and production-surface gates passed. This
+ * wrapper remains the stable public import path and continues to accept
+ * (and ignore) the legacy-only/rollback-switch props above so existing
+ * call sites keep compiling.
  */
 export const ClassicEditor = forwardRef<SmartEditorHandle, ClassicEditorProps>(function ClassicEditor(props, ref) {
-  useSyncExternalStore(
-    (listener) => canonicalAuthorityFlag.subscribe(listener),
-    () => canonicalAuthorityFlag.getVersion(),
-    () => canonicalAuthorityFlag.getVersion(),
-  );
-  const enabled = canonicalAuthorityFlag.enabled(props.authorityContext, props.canonicalAuthority);
-  const latestEnvelope = useRef<PersistedEditorDocument | undefined>(typeof props.defaultValue === "object" ? props.defaultValue : undefined);
-  const latestHtml = useRef<string | undefined>(typeof props.defaultValue === "string" ? props.defaultValue : props.value);
-  const runtime = useRef<CanonicalEditorRuntime | null>(null);
-  if (!enabled) {
-    if (runtime.current) {
-      // Capture once at the authority boundary, not once per keystroke. This is
-      // the ID-preserving rollback envelope; clean HTML remains the legacy view.
-      latestEnvelope.current = runtime.current.getValue();
-      latestHtml.current = serializeCanonicalListHtml(latestEnvelope.current.document, { clean: true });
-      runtime.current = null;
-    }
-    const { defaultValue, onHtmlChange, canonicalAuthority: _canonical, authorityContext: _context, onRuntime: _runtime, mediaProvider: _provider, mediaPicker: _picker, ...legacy } = props;
-    const value = latestEnvelope.current
-      // Internal rollback HTML retains stable IDs. External callbacks receive
-      // the clean representation below.
-      ? serializeCanonicalListHtml(latestEnvelope.current.document, { clean: false })
-      : latestHtml.current ?? (typeof props.value === "string" ? props.value : typeof defaultValue === "string" ? defaultValue : undefined);
-    return <LegacyClassicEditor {...legacy as LegacyClassicEditorProps} value={value} onChange={(html) => {
-      const document = parseCanonicalListHtml(html);
-      latestEnvelope.current = {
-        schemaVersion: foundationSchema.version,
-        revision: (latestEnvelope.current?.revision || 0) + 1,
-        document,
-      };
-      const cleanHtml = serializeCanonicalListHtml(document, { clean: true });
-      latestHtml.current = cleanHtml;
-      onHtmlChange?.(cleanHtml);
-      const callback = props.onChange as ((html: string) => void) | undefined;
-      callback?.(cleanHtml);
-    }} />;
-  }
   const { value, canonicalAuthority: _canonical, authorityContext: _context, table: _table, media: _media, formula: _formula,
     features: _features, plugins: _plugins, formats: _formats, formatDefinitions: _definitions, mediaManager: _manager,
     fonts: _fonts, defaultFont: _font, preserveFontFamily: _preserveFont, preserveColors: _preserveColors,
@@ -70,11 +59,9 @@ export const ClassicEditor = forwardRef<SmartEditorHandle, ClassicEditorProps>(f
   return <CanonicalAuthorityEditor
     {...canonical}
     ref={ref}
-    defaultValue={latestEnvelope.current ?? latestHtml.current ?? props.defaultValue ?? value}
+    defaultValue={props.defaultValue ?? (typeof value === "string" ? value : undefined) as string | PersistedEditorDocument | undefined}
     onChange={(change) => {
       (props.onChange as ((change: SmartEditorChange) => void) | undefined)?.(change);
     }}
-    onHtmlChange={(html) => { latestHtml.current = html; props.onHtmlChange?.(html); }}
-    onRuntime={(value) => { runtime.current = value; props.onRuntime?.(value); }}
   />;
 });

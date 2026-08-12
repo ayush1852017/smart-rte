@@ -26,8 +26,13 @@ for (const path of product) {
   catch (error) { if (error.status !== 1) throw error; }
   if (output.trim()) failures.push(`${path} contains a forbidden DOM-authority primitive:\n${output}`);
 }
+// Phase 8b closeout (2026-08-12): the rollback flag was promoted and the
+// DOM-authoritative legacy path (LegacyClassicEditor and its four rollback
+// bridges) was retired. The product export is now unconditionally canonical
+// — there is no remaining legacy renderer to route to or switch away from.
 const authority = withoutComments(read("packages/react/src/components/ClassicEditorAuthority.tsx"));
-if (!authority.includes("canonicalAuthorityFlag.enabled")) failures.push("Product export does not route through the runtime rollback flag.");
+if (!authority.includes("CanonicalAuthorityEditor")) failures.push("Product export does not render the canonical authority editor.");
+if (/LegacyClassicEditor|from ["']\.\/ClassicEditor\.js["']/.test(authority)) failures.push("Product export still references the retired legacy editor.");
 const runtime = withoutComments(read("packages/react/src/canonicalEditorRuntime.ts"));
 if (!runtime.includes("replaceState") || !runtime.includes("createCheckpoint")) failures.push("Retained runtime lacks explicit replacement/checkpoint ownership.");
 if (failures.length) {
