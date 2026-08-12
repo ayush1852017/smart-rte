@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import { compareLegacyCanonicalBlock } from "../../src/test-harness/blockShadowComparator";
 import { compareLegacyCanonicalInline } from "../../src/test-harness/inlineShadowComparator";
 import { runAtomShadowCorpus } from "../../src/test-harness/atomShadowComparator";
 import { compareRetainedAndCanonicalTable, compareRetainedAndCanonicalTableInsert } from "../../src/test-harness/tableShadowComparator";
@@ -33,19 +32,14 @@ export default function Gate13ReplaySurface() {
     if (started.current) return;
     started.current = true;
     const inlineTools = ["bold", "italic", "underline", "strikethrough", "inlineCode", "superscript", "subscript", "textColor", "backgroundColor", "fontSize", "fontFamily", "link"] as const;
-    const blockIntents = ["heading", "paragraph", "quote", "code", "align", "indent", "move"] as const;
     const intentResults: Gate13Result["intentResults"] = [];
     inlineTools.forEach((tool) => {
       const comparison = compareLegacyCanonicalInline({ html: "<p>replay text</p>", tool, anchor: 0, head: 6 });
       intentResults.push({ intent: `mark.${tool}`, equivalent: comparison.equivalent, selectionCompared: true, classification: comparison.classification, hash: comparison.structuralHash });
     });
-    blockIntents.forEach((intent) => {
-      const html = intent === "paragraph"
-        ? "<h3>one</h3><h3>two</h3><p>three</p>"
-        : "<p>one</p><p>two</p><p>three</p>";
-      const comparison = compareLegacyCanonicalBlock({ html, intent, anchor: 1, head: 1 });
-      intentResults.push({ intent: `block.${intent}`, equivalent: comparison.equivalent, selectionCompared: true, classification: comparison.classification, hash: comparison.structuralHash });
-    });
+    // block.* intents were retired with domBlockCommandBridge.ts (Phase 8b
+    // closeout, 2026-08-12) - there is no remaining DOM-authoritative bridge
+    // to compare canonical block commands against.
     const tableCommands = [
       { intent: "table.insertRow", command: { id: "table.row.add" as const, input: { index: 1 } } },
       { intent: "table.removeRow", command: { id: "table.row.remove" as const, input: { index: 1 } } },
