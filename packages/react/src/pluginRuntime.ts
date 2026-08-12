@@ -6,7 +6,6 @@ import {
   type SmartRtePlugin,
 } from "smartrte-core/legacy";
 import type { ReactNode } from "react";
-import type { EditorFormatDefinition } from "./formatRuntime.js";
 
 export type ReactEditorFeatureConfig = CoreFeatureConfig;
 
@@ -56,7 +55,6 @@ export interface ReactPluginUi {
   toolbar?: readonly ReactToolbarContribution[];
   shortcuts?: readonly ReactKeyboardShortcutContribution[];
   contextMenu?: readonly ReactContextMenuContribution[];
-  formats?: readonly EditorFormatDefinition[];
 }
 
 export type ReactEditorPlugin = SmartRtePlugin & {
@@ -83,7 +81,6 @@ export interface ReactEditorPluginRuntime {
   toolbar: readonly ReactToolbarContribution[];
   shortcuts: readonly ReactKeyboardShortcutContribution[];
   contextMenu: readonly ReactContextMenuContribution[];
-  formats: readonly EditorFormatDefinition[];
   hasFeature: (feature: CoreFeatureId) => boolean;
 }
 
@@ -145,21 +142,12 @@ export const createReactEditorPluginRuntime = (options: {
       validateContribution(plugin.id, contribution, "Context menu");
       return { ...contribution };
     })));
-  const formatIds = new Set<string>();
-  const formats = plugins.flatMap((plugin) =>
-    ((plugin as ReactEditorPlugin).react?.formats || []).map((format) => {
-      if (!format.id.trim()) throw new Error(`Plugin "${plugin.id}" has a format with an empty id.`);
-      if (formatIds.has(format.id)) throw new Error(`Duplicate plugin format "${format.id}".`);
-      formatIds.add(format.id);
-      return format;
-    }));
   return {
     plugins,
     featureIds,
     toolbar,
     shortcuts,
     contextMenu,
-    formats,
     hasFeature: (feature) => featureIds.has(feature),
   };
 };

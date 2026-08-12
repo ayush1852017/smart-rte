@@ -56,10 +56,8 @@ import { SMART_LIST_PRESETS } from "smartrte-core";
 import { ensureStyleSheet } from "../theme.js";
 import type { MediaKind, MediaProvider } from "../mediaProvider.js";
 import { DefaultMediaPicker, type MediaPickerComponent } from "./MediaPicker.js";
-import { serializeSmartDocument, smartDocumentFromHtml } from "../adapters/domSmartDocument.js";
-import { exportDocxDocument } from "../adapters/docxFormat.js";
-import { importStyledDocxDocument } from "../adapters/styledDocxFormat.js";
-import { importPdfDocument, printSmartDocumentAsPdf } from "../adapters/pdfFormat.js";
+import { exportDocxDocument, importStyledDocxDocument, importPdfDocument } from "smartrte-core/foundation";
+import { printSmartDocumentAsPdf } from "../adapters/pdfPrint.js";
 import {
   CanonicalEditorRuntime,
   type SmartEditorChange,
@@ -509,24 +507,14 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
     runtime.focus();
   };
 
-  const legacyDocument = () => {
-    const ownerDocument = rootRef.current?.ownerDocument;
-    if (!ownerDocument) return null;
-    return smartDocumentFromHtml(serializeCanonicalListHtml(runtime.editor.document, { clean: true }), ownerDocument);
-  };
-
   const runImport = async (file: File) => {
     if (/\.docx$/i.test(file.name) || file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
-      const ownerDocument = rootRef.current?.ownerDocument;
-      if (!ownerDocument) return;
-      const result = await importStyledDocxDocument(await file.arrayBuffer(), ownerDocument);
-      replaceCanonicalDocument(parseCanonicalListHtml(result.layoutHtml || serializeSmartDocument(result.document)));
+      const result = await importStyledDocxDocument(await file.arrayBuffer());
+      replaceCanonicalDocument(parseCanonicalListHtml(result.layoutHtml));
       return;
     }
     if (/\.pdf$/i.test(file.name) || file.type === "application/pdf") {
-      const ownerDocument = rootRef.current?.ownerDocument;
-      if (!ownerDocument) return;
-      const result = await importPdfDocument(await file.arrayBuffer(), ownerDocument);
+      const result = await importPdfDocument(await file.arrayBuffer());
       replaceCanonicalDocument(parseCanonicalListHtml(result.layoutHtml));
       return;
     }
@@ -543,16 +531,14 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
   };
 
   const runDocxExport = async () => {
-    const document = legacyDocument();
-    if (!document || !rootRef.current) return;
-    const blob = await exportDocxDocument(document);
+    if (!rootRef.current) return;
+    const blob = await exportDocxDocument(runtime.editor.document);
     downloadBlob(rootRef.current.ownerDocument, "smart-rte.docx", blob);
   };
 
   const runPdfExport = () => {
-    const document = legacyDocument();
     const view = rootRef.current?.ownerDocument.defaultView;
-    if (document && view) printSmartDocumentAsPdf(document, view);
+    if (view) printSmartDocumentAsPdf(runtime.editor.document, view);
   };
 
   return <section className={`srte-root srte-editor srte-canonical-authority${className ? ` ${className}` : ""}`} data-smart-authority="canonical">

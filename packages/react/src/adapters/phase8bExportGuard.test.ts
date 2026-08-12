@@ -1,37 +1,32 @@
-// @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
 import JSZip from "jszip";
-import { exportDocxDocument, importDocxDocumentWithMammoth } from "./docxFormat.js";
-import { buildPdfPrintDocument, printSmartDocumentAsPdf } from "./pdfFormat.js";
-import { smartDocumentFromHtml } from "./domSmartDocument.js";
-
-const readBlob = (blob: Blob) => new Promise<ArrayBuffer>((resolve, reject) => {
-  const reader = new FileReader();
-  reader.onerror = () => reject(reader.error);
-  reader.onload = () => resolve(reader.result as ArrayBuffer);
-  reader.readAsArrayBuffer(blob);
-});
+import { exportDocxDocument, importDocxDocumentWithMammoth, parseCanonicalListHtml, type SmartDocument } from "smartrte-core/foundation";
+import { printSmartDocumentAsPdf } from "./pdfPrint.js";
 
 /**
- * This guard deliberately calls the format adapters directly. It does not
- * mount ClassicEditor and does not import any ROLLBACK_ADAPTER bridge. The
- * export path therefore remains protected when the four rollback bridges are
- * removed after Phase 8b promotion.
+ * This guard deliberately calls the format codecs directly, without
+ * mounting any editor component. Originally written to prove DOCX/PDF
+ * export didn't depend on the (now-deleted) rollback bridges; now that
+ * canonical is the only implementation, it proves the same thing one
+ * level deeper - format export/import has zero framework dependency at
+ * all (packages/core, no React, no DOM environment beyond the default
+ * jsdom test environment this file normally runs under for Blob/
+ * print-window mocking).
  */
 describe("Phase 8b format export guard", () => {
-  const source = {
-    type: "doc" as const,
+  const source: SmartDocument = {
+    type: "doc", id: "doc",
     children: [
-      { type: "heading" as const, level: 2 as const, children: [{ type: "text" as const, text: "Export guard" }] },
-      { type: "paragraph" as const, children: [{ type: "text" as const, text: "DOCX and PDF must retain this text." }] },
+      { type: "heading", id: "h1", attrs: { level: 2 }, children: [{ type: "text", text: "Export guard" }] },
+      { type: "paragraph", id: "p1", children: [{ type: "text", text: "DOCX and PDF must retain this text." }] },
     ],
   };
 
-  it("DOCX export can be imported without a rollback bridge", async () => {
-    const buffer = await readBlob(await exportDocxDocument(source));
+  it("DOCX export can be imported without any editor mounted", async () => {
+    const buffer = await (await exportDocxDocument(source)).arrayBuffer();
     const zip = await JSZip.loadAsync(buffer);
     expect(zip.file("word/document.xml")).toBeTruthy();
-    const imported = await importDocxDocumentWithMammoth(buffer, document);
+    const imported = await importDocxDocumentWithMammoth(buffer);
     expect(imported.children).toEqual(expect.arrayContaining([
       expect.objectContaining({ type: "heading" }),
       expect.objectContaining({ type: "paragraph" }),
@@ -50,10 +45,10 @@ describe("Phase 8b format export guard", () => {
     const host = { open: vi.fn(() => popup) } as unknown as Window;
     expect(printSmartDocumentAsPdf(source, host)).toBe(true);
     const emitted = String((popup.document.write as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] || "");
-    expect(emitted).toContain("<h2>Export guard</h2>");
+    expect(emitted).toContain("Export guard</h2>");
     const body = emitted.match(/<body>([\s\S]*)<\/body>/)?.[1] || "";
-    const roundTripped = smartDocumentFromHtml(body, document);
-    expect(roundTripped.children.map((node) => node.type)).toEqual(["heading", "paragraph"]);
+    const roundTripped = parseCanonicalListHtml(body);
+    expect(roundTripped.children.map((node) => (node as { type: string }).type)).toEqual(["heading", "paragraph"]);
     expect(roundTripped.children.map((node) => (node as { children?: Array<{ type: string; text?: string }> }).children?.map((child) => child.type === "text" ? child.text : "").join(""))).toEqual([
       "Export guard", "DOCX and PDF must retain this text.",
     ]);

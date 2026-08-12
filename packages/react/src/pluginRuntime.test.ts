@@ -117,14 +117,6 @@ describe("React editor plugin runtime", () => {
               isActive: () => true,
             },
           ],
-          formats: [{
-            id: "custom-json",
-            label: "Custom JSON",
-            extension: "json",
-            canImport: false,
-            canExport: true,
-            exportDocument: () => ({ kind: "handled" }),
-          }],
         },
       }],
     });
@@ -135,6 +127,5 @@ describe("React editor plugin runtime", () => {
       readOnly: false,
       canExecute: () => true,
     })).toBe(true);
-    expect(runtime.formats.map(({ id }) => id)).toEqual(["custom-json"]);
   });
 });

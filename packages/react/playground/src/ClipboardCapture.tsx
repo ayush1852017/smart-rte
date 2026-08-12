@@ -1,6 +1,5 @@
 import { useMemo, useState, type ChangeEvent, type ClipboardEvent } from "react";
-import { importDocxDocumentWithMammoth } from "../../src/adapters/docxFormat.js";
-import { serializeSmartDocument } from "../../src/adapters/domSmartDocument.js";
+import { importDocxDocumentWithMammoth, serializeCanonicalListHtml } from "smartrte-core/foundation";
 
 interface CapturedClipboardFile {
   name: string;
@@ -101,8 +100,8 @@ export default function ClipboardCapture() {
     if (!file) return;
     setImportingDocx(true);
     try {
-      const imported = await importDocxDocumentWithMammoth(await file.arrayBuffer(), document);
-      const html = serializeSmartDocument(imported);
+      const imported = await importDocxDocumentWithMammoth(await file.arrayBuffer());
+      const html = serializeCanonicalListHtml(imported, { clean: true });
       const textContainer = document.createElement("div");
       textContainer.innerHTML = html;
       const plainText = textContainer.textContent || "";
