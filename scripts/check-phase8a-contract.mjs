@@ -3,7 +3,12 @@ import { assertContract, readSource, sourceHas } from "./contract-utils.mjs";
 const [pipeline, sanitizer, runtime, harness, diagnostics] = await Promise.all([
   readSource("packages/core/src/foundation/clipboard/pipeline.ts"),
   readSource("packages/core/src/foundation/clipboard/sanitizer.ts"),
-  readSource("packages/react/src/canonicalClipboardRuntime.ts"),
+  // Phase 8b closeout (2026-08-12): canonicalClipboardRuntime.ts (the
+  // legacy-DOM-bridge-specific paste handler) was retired alongside
+  // LegacyClassicEditor. Canonical's own paste handling has always been an
+  // independent implementation in the core input pipeline, not this file -
+  // repoint the product-boundary assertion there.
+  readSource("packages/core/src/foundation/surface/input.ts"),
   readSource("packages/react/src/test-harness/legacyClipboardEngine.ts"),
   readSource("packages/core/src/foundation/clipboard/diagnostics.ts"),
 ]);
