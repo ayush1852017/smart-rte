@@ -11,11 +11,12 @@ export interface CanonicalAuthorityFlagSnapshot {
 
 /**
  * Runtime rollback switch. Resolution order is direct component override,
- * document, tenant, then global. Development stays opt-in until the Phase 8b
- * replay and production-surface gates have passed.
+ * document, tenant, then global. Promoted on (canonical authority is the
+ * default) after the Phase 8b replay and production-surface gates passed;
+ * this remains a rollback switch, not a feature flag pending removal.
  */
 class CanonicalAuthorityFlag {
-  private globalEnabled = false;
+  private globalEnabled = true;
   private tenants = new Map<string, boolean>();
   private documents = new Map<string, boolean>();
   private listeners = new Set<() => void>();
