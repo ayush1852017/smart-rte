@@ -388,7 +388,7 @@ const parseBlock = (node: HtmlNode): SmartElementNode | null => {
     const inlineNodes = (node.childNodes || []).filter((child) => !child.tagName || !blockTags.includes(child.tagName));
     const directText = inlineNodes.flatMap((child) => textWithMarks(child));
     if (directText.length) children.push({ type: "paragraph", id: createNodeId(), children: directText });
-    elementChildren(node).forEach((child) => {
+    elementChildren(node).filter((child) => blockTags.includes(child.tagName || "")).forEach((child) => {
       const parsed = parseBlock(child);
       if (parsed) children.push(parsed);
     });

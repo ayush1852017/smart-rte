@@ -29,7 +29,7 @@ const fixtures = [
   ["generic-web-clipboard.clipboard.json", "plain-text"],
 ] as const satisfies readonly (readonly [string, ClipboardSource])[];
 const expectedCanonicalHashes: Record<string, string> = {
-  "word-macos-clipboard.clipboard.json": "c4346141",
+  "word-macos-clipboard.clipboard.json": "18c70f20",
   "google-docs-clipboard.clipboard.json": "53c031ef",
   "google-sheets-clipboard.clipboard.json": "7d90f1a7",
   "excel-clipboard.clipboard.json": "8f56ffb5",

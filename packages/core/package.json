@@ -47,8 +47,12 @@
   },
   "license": "MIT",
   "dependencies": {
+    "@xmldom/xmldom": "^0.9.11",
     "dompurify": "^3.2.6",
+    "jszip": "^3.10.1",
+    "mammoth": "^1.11.0",
     "parse5": "^7.2.1",
+    "pdfjs-dist": "^5.4.530",
     "rehype-stringify": "^10.0.1",
     "remark-gfm": "^4.0.1",
     "remark-parse": "^11.0.0",
