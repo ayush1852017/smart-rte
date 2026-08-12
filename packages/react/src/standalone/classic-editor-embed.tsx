@@ -92,7 +92,6 @@ function ClassicEditorHost(
     <div ref={containerRef} style={{ height: "100%", width: "100%" }}>
       <ClassicEditorComponent
         ref={editorRef}
-        canonicalAuthority
         defaultValue={props.value || "<p></p>"}
         onHtmlChange={(html) => {
           props.onChange?.(html);

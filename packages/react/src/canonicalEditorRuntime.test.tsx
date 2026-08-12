@@ -4,28 +4,16 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { foundationSchema, parseCanonicalListHtml } from "smartrte-core/foundation";
-import { canonicalAuthorityFlag } from "./canonicalAuthorityFlag.js";
 import { CanonicalEditorRuntime, type SmartEditorHandle } from "./canonicalEditorRuntime.js";
 import { CanonicalAuthorityEditor } from "./components/CanonicalAuthorityEditor.js";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 afterEach(() => {
-  canonicalAuthorityFlag.reset();
   document.body.replaceChildren();
 });
 
 describe("canonical authority lifecycle", () => {
-  it("resolves direct, document, tenant, and global rollback overrides deterministically", () => {
-    canonicalAuthorityFlag.setGlobal(true);
-    canonicalAuthorityFlag.setTenant("tenant", false);
-    canonicalAuthorityFlag.setDocument("doc", true);
-    expect(canonicalAuthorityFlag.enabled({ tenantId: "tenant", documentId: "doc" })).toBe(true);
-    expect(canonicalAuthorityFlag.enabled({ tenantId: "tenant" })).toBe(false);
-    expect(canonicalAuthorityFlag.enabled({ tenantId: "other" })).toBe(true);
-    expect(canonicalAuthorityFlag.enabled({ documentId: "doc" }, false)).toBe(false);
-  });
-
   it("uses one retained runtime through StrictMode effect replay and prop changes", () => {
     const host = document.createElement("div");
     document.body.appendChild(host);

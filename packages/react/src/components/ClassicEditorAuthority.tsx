@@ -1,6 +1,5 @@
 import React, { forwardRef } from "react";
 import type { PersistedEditorDocument } from "smartrte-core/foundation";
-import type { CanonicalAuthorityContext } from "../canonicalAuthorityFlag.js";
 import type { SmartEditorChange, SmartEditorHandle } from "../canonicalEditorRuntime.js";
 import type { MediaProvider } from "../mediaProvider.js";
 import type { MediaPickerComponent } from "./MediaPicker.js";
@@ -10,14 +9,6 @@ export type ClassicEditorProps = Omit<CanonicalAuthorityEditorProps, "onChange">
   /** Legacy HTML value. Superseded by defaultValue; retained for source compatibility. */
   value?: string;
   onChange?: ((change: SmartEditorChange) => void) | ((html: string) => void);
-  /**
-   * Retained rollback-switch surface for source compatibility. There is no
-   * legacy renderer left to switch to as of Phase 8b closeout (2026-08-12):
-   * canonical authority is unconditionally the only implementation, and
-   * these props are accepted but have no effect.
-   */
-  canonicalAuthority?: boolean;
-  authorityContext?: CanonicalAuthorityContext;
   mediaProvider?: MediaProvider;
   mediaPicker?: MediaPickerComponent;
   onRuntime?: CanonicalAuthorityEditorProps["onRuntime"];
@@ -45,14 +36,15 @@ export type ClassicEditorProps = Omit<CanonicalAuthorityEditorProps, "onChange">
 /**
  * Canonical authority is unconditionally the only implementation as of
  * Phase 8b closeout (2026-08-12) — the DOM-authoritative legacy rollback
- * path (LegacyClassicEditor and its four rollback bridges) was retired
- * once the Gate 13/14 replay and production-surface gates passed. This
- * wrapper remains the stable public import path and continues to accept
- * (and ignore) the legacy-only/rollback-switch props above so existing
- * call sites keep compiling.
+ * path (LegacyClassicEditor, its four rollback bridges, and the
+ * canonicalAuthorityFlag rollback switch itself) was retired once the
+ * Gate 13/14 replay and production-surface gates passed. This wrapper
+ * remains the stable public import path and continues to accept (and
+ * ignore) legacy-only configuration props below so existing call sites
+ * keep compiling.
  */
 export const ClassicEditor = forwardRef<SmartEditorHandle, ClassicEditorProps>(function ClassicEditor(props, ref) {
-  const { value, canonicalAuthority: _canonical, authorityContext: _context, table: _table, media: _media, formula: _formula,
+  const { value, table: _table, media: _media, formula: _formula,
     features: _features, plugins: _plugins, formats: _formats, formatDefinitions: _definitions, mediaManager: _manager,
     fonts: _fonts, defaultFont: _font, preserveFontFamily: _preserveFont, preserveColors: _preserveColors,
     preserveDocxStyles: _preserveDocx, theme: _theme, showFontSize: _showFontSize, ...canonical } = props;
