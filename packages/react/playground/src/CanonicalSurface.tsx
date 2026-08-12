@@ -15,7 +15,6 @@ import {
   type SmartSchema,
 } from "smartrte-core/foundation";
 import { runDualEngineListShadowCorpus } from "../../src/adapters/legacyListShadowComparator.js";
-import { runInlineShadowCorpus } from "../../src/test-harness/inlineShadowComparator.js";
 import { runAtomShadowCorpus } from "../../src/test-harness/atomShadowComparator.js";
 import { compareClipboardFixture } from "../../src/test-harness/clipboardShadowComparator.js";
 
@@ -28,7 +27,6 @@ declare global {
       lastInputPaintMs: number | null;
       blockCount: number;
       runShadowCorpus: (scenarios?: number) => ReturnType<typeof runDualEngineListShadowCorpus>;
-      runInlineShadowCorpus: (scenarios?: number) => ReturnType<typeof runInlineShadowCorpus>;
       runAtomShadowCorpus: (scenarios?: number) => ReturnType<typeof runAtomShadowCorpus>;
       compareClipboardFixture: (fixtureId: string, payload: RawClipboardPayload) => ReturnType<typeof compareClipboardFixture>;
       runAtomLifecycle: () => { completed: boolean; removedByUndo: boolean; staleDropped: boolean; historyDepth: number };
@@ -177,7 +175,6 @@ export default function CanonicalSurface() {
     window.__smartCanonical = {
       editor, renderer, pipeline, lastInputPaintMs: null, blockCount: count,
       runShadowCorpus: (scenarios = 1_000) => runDualEngineListShadowCorpus(scenarios),
-      runInlineShadowCorpus: (scenarios = 1_000) => runInlineShadowCorpus(scenarios),
       runAtomShadowCorpus: (scenarios = 700) => runAtomShadowCorpus(scenarios),
       compareClipboardFixture: (fixtureId, payload) => compareClipboardFixture(
         fixtureId,

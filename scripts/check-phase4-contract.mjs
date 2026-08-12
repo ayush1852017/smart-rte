@@ -1,10 +1,9 @@
 import { assertContract, mapKeys, readSource, sourceHas, withoutComments } from "./contract-utils.mjs";
 
-const [schema, commands, canonical, harness] = await Promise.all([
+const [schema, commands, canonical] = await Promise.all([
   readSource("packages/core/src/foundation/marks/schema.ts"),
   readSource("packages/core/src/foundation/marks/commands.ts"),
   readSource("packages/react/src/components/CanonicalAuthorityEditor.tsx"),
-  readSource("packages/react/src/test-harness/legacyInlineEngine.ts"),
 ]);
 const failures = [];
 const schemaSource = withoutComments(schema);
@@ -22,8 +21,7 @@ if (!sourceHas(commands, /export\s+const\s+(?:applyMarkCommand|removeMarkCommand
   failures.push("Generic mark command implementation is missing.");
 }
 if (!sourceHas(canonical, /executeMarkTool\(/)) failures.push("Canonical surface does not route marks through the generic mark engine.");
-if (!sourceHas(harness, /runLegacyInlineTool\(|legacyInlineToolIds/) || !sourceHas(harness, /smartrte-core\/legacy/)) failures.push("Retained inline legacy harness is missing.");
 
 if (assertContract("Phase 4 generic-mark", failures)) {
-  process.stdout.write(`Phase 4 contract: ${toolIds.length} declarations, generic mark command map, canonical routing, and retained harness passed.\n`);
+  process.stdout.write(`Phase 4 contract: ${toolIds.length} declarations, generic mark command map, and canonical routing passed.\n`);
 }

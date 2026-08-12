@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import { compareLegacyCanonicalInline } from "../../src/test-harness/inlineShadowComparator";
 import { runAtomShadowCorpus } from "../../src/test-harness/atomShadowComparator";
 import { compareRetainedAndCanonicalTable, compareRetainedAndCanonicalTableInsert } from "../../src/test-harness/tableShadowComparator";
 import { runDualEngineListShadowCorpus, runNamedListIntentCorpus } from "../../src/adapters/legacyListShadowComparator";
@@ -31,15 +30,11 @@ export default function Gate13ReplaySurface() {
   useEffect(() => {
     if (started.current) return;
     started.current = true;
-    const inlineTools = ["bold", "italic", "underline", "strikethrough", "inlineCode", "superscript", "subscript", "textColor", "backgroundColor", "fontSize", "fontFamily", "link"] as const;
     const intentResults: Gate13Result["intentResults"] = [];
-    inlineTools.forEach((tool) => {
-      const comparison = compareLegacyCanonicalInline({ html: "<p>replay text</p>", tool, anchor: 0, head: 6 });
-      intentResults.push({ intent: `mark.${tool}`, equivalent: comparison.equivalent, selectionCompared: true, classification: comparison.classification, hash: comparison.structuralHash });
-    });
-    // block.* intents were retired with domBlockCommandBridge.ts (Phase 8b
-    // closeout, 2026-08-12) - there is no remaining DOM-authoritative bridge
-    // to compare canonical block commands against.
+    // mark.* intents were retired with canonicalInlineCommandBridge.ts, and
+    // block.* intents with domBlockCommandBridge.ts (Phase 8b closeout,
+    // 2026-08-12) - there is no remaining DOM-authoritative bridge to
+    // compare canonical inline or block commands against.
     const tableCommands = [
       { intent: "table.insertRow", command: { id: "table.row.add" as const, input: { index: 1 } } },
       { intent: "table.removeRow", command: { id: "table.row.remove" as const, input: { index: 1 } } },

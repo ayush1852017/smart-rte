@@ -360,10 +360,11 @@ test.describe("Phase 8b canonical product authority", () => {
     const unexpected = failures.filter((entry) => !["expected-normalization", "visual-only", "selection-only"].includes((entry as { classification?: string }).classification || ""));
     console.info("Phase 8b retained/canonical browser replay", testInfo.project.name, JSON.stringify({ comparableIntents: result.comparableIntents, divergenceCount: failures.length, divergences: failures.map((entry) => ({ intent: (entry as { intent?: string }).intent, classification: (entry as { classification?: string }).classification, hash: (entry as { hash?: string }).hash })), listCorpus: result.listCorpus }));
     testInfo.annotations.push({ type: "gate-13-browser-replay", description: JSON.stringify({ browser: testInfo.project.name, comparableIntents: result.comparableIntents, failures: failures.map((entry) => ({ intent: (entry as { intent?: string }).intent, classification: (entry as { classification?: string }).classification, hash: (entry as { hash?: string }).hash })), listCorpus: result.listCorpus, atomCorpus: result.atomCorpus }) });
-    // 42 minus the 7 block.* intents, retired with domBlockCommandBridge.ts
-    // (Phase 8b closeout, 2026-08-12).
-    expect(result.comparableIntents).toBe(35);
-    expect(result.intentResults).toHaveLength(35);
+    // 42 minus the 7 block.* intents (domBlockCommandBridge.ts) minus the
+    // 12 mark.* intents (canonicalInlineCommandBridge.ts), both retired in
+    // Phase 8b closeout (2026-08-12).
+    expect(result.comparableIntents).toBe(23);
+    expect(result.intentResults).toHaveLength(23);
     expect(result.listCorpus.scenarios).toBe(5);
     expect(result.listCorpus.equivalent).toBe(5);
     expect(result.listCorpus.divergences).toEqual({});

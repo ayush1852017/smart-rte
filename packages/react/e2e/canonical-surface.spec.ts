@@ -281,22 +281,6 @@ test.describe("Phase 4 canonical inline formatting", () => {
     const result = await new AxeBuilder({ page }).include(surface).analyze();
     expect(result.violations).toEqual([]);
   });
-
-  test("replays 1,000 privacy-safe retained-legacy inline scenarios in this browser", async ({ page }, testInfo) => {
-    const summary = await page.evaluate(() => window.__smartCanonical!.runInlineShadowCorpus(1_000));
-    testInfo.annotations.push({ type: "inline-shadow-corpus", description: JSON.stringify({
-      browser: testInfo.project.name, scenarios: summary.scenarios, equivalent: summary.equivalent, divergences: summary.divergences,
-    }) });
-    console.log(`[phase4][${testInfo.project.name}] inline-shadow=${JSON.stringify({
-      scenarios: summary.scenarios,
-      equivalent: summary.equivalent,
-      divergences: summary.divergences,
-    })}`);
-    expect(summary.divergences.semantic).toBeUndefined();
-    expect(summary.divergences["data-loss"]).toBeUndefined();
-    expect(JSON.stringify(summary.logs)).not.toContain("formatting fixture");
-    expect(JSON.stringify(summary.logs)).not.toContain("linked text");
-  });
 });
 
 test.describe("Phase 7 atomic content engine", () => {
