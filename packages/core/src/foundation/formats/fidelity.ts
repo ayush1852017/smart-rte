@@ -50,7 +50,7 @@ export const builtInFormatFidelity: readonly FeatureFidelityContract[] = [
     formats: {
       html: capability("full", "Canonical marks round-trip."),
       markdown: capability("semantic", "Bold, italic, strike, code, and links round-trip; underline is lossy."),
-      docx: capability("semantic", "Bold/italic/underline/strike/superscript/subscript/color/background/font-size run properties export and round-trip through the mammoth importer (SS2.1, re-verified)."),
+      docx: capability("semantic", "All twelve marks are written as Word run properties on export. On import, mammoth's default HTML conversion recognizes and round-trips bold/italic/code/strike/superscript/subscript/link; underline/textColor/backgroundColor/fontSize/fontFamily are not mapped back without an explicit mammoth style map - text content survives, that specific formatting does not (SS2.1: verified per-mark via a dedicated round-trip fixture, not inferred)."),
       pdf: capability("lossy", "Visual emphasis is inferred from extracted font metadata."),
     },
   },

@@ -31,7 +31,7 @@ describe("Phase 7 atom formats", () => {
     expect(atomToPdf(media).value).toContain("v.mp4");
   });
 
-  it("uses a deliberately lossy rendered-image descriptor for DOCX formulas", () => {
-    expect(atomToDocx({ type: "formula", id: "f", attrs: { source: "x^2", notation: "latex" } })).toEqual({ kind: "image", source: "x^2", alt: "Rendered formula" });
+  it("describes DOCX formulas as literal LaTeX text, matching the actual exporter (not a rendered image)", () => {
+    expect(atomToDocx({ type: "formula", id: "f", attrs: { source: "x^2", notation: "latex" } })).toEqual({ kind: "text", source: "x^2" });
   });
 });

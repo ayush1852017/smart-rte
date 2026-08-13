@@ -180,4 +180,132 @@ describe("canonical DOCX format codec", () => {
     const fallback = await importStyledDocxDocument(buffer);
     expect(fallback.source).toBe("mammoth");
   });
+
+  // Phase 9 SS2.3: closes fixture-coverage gaps found while auditing the
+  // fidelity table against this codec specifically - marks beyond bold/link,
+  // blockquote/code_block, and table import were exercised at the XML-
+  // generation level (first test above) but never round-tripped through
+  // a real import, and checklist state loss was only verified by reading
+  // the exporter's source, not by an actual fixture.
+
+  it("round-trips every inline mark through DOCX export and import", async () => {
+    const marked: SmartDocument = {
+      type: "doc", id: "doc",
+      children: [{
+        type: "paragraph", id: "p1",
+        children: [
+          { type: "text", text: "under", marks: [{ type: "underline" }] },
+          { type: "text", text: "strike", marks: [{ type: "strike" }] },
+          { type: "text", text: "sup", marks: [{ type: "superscript" }] },
+          { type: "text", text: "sub", marks: [{ type: "subscript" }] },
+          { type: "text", text: "colored", marks: [{ type: "textColor", attrs: { value: "#ff0000" } }] },
+          { type: "text", text: "shaded", marks: [{ type: "backgroundColor", attrs: { value: "#00ff00" } }] },
+          { type: "text", text: "big", marks: [{ type: "fontSize", attrs: { valuePx: 24 } }] },
+        ],
+      }],
+    };
+    const xml = smartDocumentToDocxXml(marked);
+    expect(xml).toContain('<w:u w:val="single"/>');
+    expect(xml).toContain("<w:strike/>");
+    expect(xml).toContain('<w:vertAlign w:val="superscript"/>');
+    expect(xml).toContain('<w:vertAlign w:val="subscript"/>');
+    expect(xml).toContain('<w:color w:val="FF0000"/>');
+    expect(xml).toContain('<w:shd w:val="clear" w:color="auto" w:fill="00FF00"/>');
+    expect(xml).toContain('<w:sz w:val="36"/>');
+
+    const buffer = await blobArrayBuffer(await exportDocxDocument(marked));
+    const imported = await importDocxDocumentWithMammoth(buffer);
+    const runs = (imported.children[0] as { children: Array<{ text: string; marks?: Array<{ type: string }> }> }).children;
+    const markTypesFor = (text: string) => runs.find((run) => run.text === text)?.marks?.map((mark) => mark.type) || [];
+    // Precisely verified, not inferred: mammoth's default HTML conversion
+    // recognizes and round-trips strike/superscript/subscript as real marks
+    // (also bold/italic/code, not exercised here - see the main fixture
+    // test above); underline/color/background/font-size are Word run
+    // properties mammoth does not map back to HTML without an explicit
+    // style map - the text survives, the mark identity does not. This is
+    // exactly what makes docx/inline-marks "semantic" rather than "full."
+    expect(markTypesFor("strike")).toEqual(["strike"]);
+    expect(markTypesFor("sup")).toEqual(["superscript"]);
+    expect(markTypesFor("sub")).toEqual(["subscript"]);
+    expect(markTypesFor("under")).toEqual([]);
+    expect(markTypesFor("colored")).toEqual([]);
+    expect(markTypesFor("shaded")).toEqual([]);
+    expect(markTypesFor("big")).toEqual([]);
+    const allText = runs.map((run) => run.text).join("");
+    expect(allText).toContain("under");
+    expect(allText).toContain("colored");
+    expect(allText).toContain("shaded");
+    expect(allText).toContain("big");
+  });
+
+  it("round-trips blockquote and code_block through DOCX export and import", async () => {
+    const doc: SmartDocument = {
+      type: "doc", id: "doc",
+      children: [
+        { type: "blockquote", id: "q", children: [{ type: "paragraph", id: "qp", children: [{ type: "text", text: "Quoted line" }] }] },
+        { type: "code_block", id: "c", attrs: { language: "ts" }, children: [{ type: "text", text: "const x = 1;" }] },
+      ],
+    };
+    const xml = smartDocumentToDocxXml(doc);
+    expect(xml).toContain("Quoted line");
+    expect(xml).toContain('<w:ind w:left="720"/>');
+    expect(xml).toContain("const x = 1;");
+
+    const buffer = await blobArrayBuffer(await exportDocxDocument(doc));
+    const imported = await importDocxDocumentWithMammoth(buffer);
+    const text = imported.children.flatMap((node) => (node as { children?: Array<{ text?: string }> }).children?.map((child) => child.text) || []).join(" ");
+    expect(text).toContain("Quoted line");
+    expect(text).toContain("const x = 1;");
+  });
+
+  it("round-trips a table through DOCX export and import, not just export XML", async () => {
+    const doc: SmartDocument = {
+      type: "doc", id: "doc",
+      children: [{
+        type: "table", id: "t1", attrs: { columnWidths: [100, 100] },
+        children: [{
+          type: "table_row", id: "r1",
+          children: [
+            { type: "table_cell", id: "c1", attrs: { header: true }, children: [{ type: "paragraph", id: "p1", children: [{ type: "text", text: "Name" }] }] },
+            { type: "table_cell", id: "c2", attrs: { header: true }, children: [{ type: "paragraph", id: "p2", children: [{ type: "text", text: "Score" }] }] },
+          ],
+        }, {
+          type: "table_row", id: "r2",
+          children: [
+            { type: "table_cell", id: "c3", children: [{ type: "paragraph", id: "p3", children: [{ type: "text", text: "Ayush" }] }] },
+            { type: "table_cell", id: "c4", children: [{ type: "paragraph", id: "p4", children: [{ type: "text", text: "10" }] }] },
+          ],
+        }],
+      }],
+    };
+    const buffer = await blobArrayBuffer(await exportDocxDocument(doc));
+    const imported = await importDocxDocumentWithMammoth(buffer);
+    expect(imported.children[0]).toMatchObject({ type: "table" });
+    const text = JSON.stringify(imported);
+    expect(text).toContain("Name");
+    expect(text).toContain("Score");
+    expect(text).toContain("Ayush");
+    expect(text).toContain("10");
+  });
+
+  it("confirms checklist state does not survive DOCX export, matching the declared lossy fidelity", async () => {
+    const checklist: SmartDocument = {
+      type: "doc", id: "doc",
+      children: [{
+        type: "list", id: "l1", attrs: { checkable: true },
+        children: [{
+          type: "list_item", id: "li1", attrs: { checked: true },
+          children: [{ type: "paragraph", id: "p1", children: [{ type: "text", text: "Done task" }] }],
+        }],
+      }],
+    };
+    const xml = smartDocumentToDocxXml(checklist);
+    // No checkbox/checked-state markup anywhere - it degrades to a plain
+    // bulleted list, exactly as docs/foundation/formats/fidelity.ts declares.
+    expect(xml).not.toMatch(/check/i);
+    const buffer = await blobArrayBuffer(await exportDocxDocument(checklist));
+    const imported = await importDocxDocumentWithMammoth(buffer);
+    expect(JSON.stringify(imported)).not.toContain('"checked":true');
+    expect(JSON.stringify(imported)).toContain("Done task");
+  });
 });

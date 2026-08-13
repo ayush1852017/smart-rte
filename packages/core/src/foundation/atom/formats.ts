@@ -52,8 +52,15 @@ export const atomToMarkdown = (node: SmartElementNode): string => {
 };
 
 export interface AtomDocxRun { readonly kind: "image" | "text"; readonly source: string; readonly alt?: string }
+/**
+ * Matches packages/core/src/foundation/formats/docx/export.ts's actual
+ * behavior (SS2.1): formulas are written as literal LaTeX text inside an
+ * <m:oMath> zone, not translated to real OMML and not rendered as an
+ * image. Word will show the raw LaTeX string, not typeset math - this is
+ * `kind: "text"`, not `"image"`, to describe that honestly.
+ */
 export const atomToDocx = (node: SmartElementNode): AtomDocxRun => node.type === "formula" || node.type === "block_formula"
-  ? { kind: "image", source: String(node.attrs?.source || ""), alt: "Rendered formula" }
+  ? { kind: "text", source: String(node.attrs?.source || "") }
   : node.type === "image" || node.type === "block_image"
     ? { kind: "image", source: String(node.attrs?.src || ""), alt: String(node.attrs?.alt || "") }
     : { kind: "text", source: `[${node.type}: ${String(node.attrs?.src || "")}]` };
