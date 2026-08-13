@@ -5,11 +5,13 @@
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Vite + React + TS</title>
-    <link
-      rel="stylesheet"
-      href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css"
-    />
-    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+    <!--
+      KaTeX is a real bundled dependency as of Phase 9 SS2.4
+      (packages/core/src/foundation/surface/renderer.ts imports it directly,
+      and src/main.tsx imports its CSS). No CDN <script>/window global
+      needed - that was a leftover from before the actual rendering code
+      existed; removed per the standing "not a window global" requirement.
+    -->
   </head>
   <body>
     <div id="root"></div>

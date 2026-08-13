@@ -140,9 +140,17 @@ test.describe("Phase 2.5 canonical editing surface", () => {
         const secondAtom = harness.renderer.mapping.nodeToDom("inline-atom-2")!;
         const text = document.createTextNode("界"); secondAtom.parentNode!.insertBefore(text, secondAtom); return text;
       });
-      return { text: harness.renderer.mapping.nodeToDom("atom-owner")?.textContent, beforeWrites, afterWrites, betweenWrites, atoms: ["inline-atom", "inline-atom-2"].map((id) => harness.editor.positions.exists(id)) };
+      // Atoms (e.g. live-rendered KaTeX formulas) may contain rich internal
+      // markup whose own textContent no longer equals their raw source, so
+      // reconciliation is checked as surrounding-text-around-opaque-atoms
+      // rather than a flat textContent comparison against atom source.
+      const finalOwner = harness.renderer.mapping.nodeToDom("atom-owner")!;
+      const text = Array.from(finalOwner.childNodes).map((node) => (
+        node.nodeType === Node.TEXT_NODE ? (node as Text).data : `[${(node as Element).getAttribute("data-smart-id")}]`
+      )).join("");
+      return { text, beforeWrites, afterWrites, betweenWrites, atoms: ["inline-atom", "inline-atom-2"].map((id) => harness.editor.positions.exists(id)) };
     });
-    expect(result).toEqual({ text: "aनx界yमb", beforeWrites: 0, afterWrites: 0, betweenWrites: 0, atoms: [true, true] });
+    expect(result).toEqual({ text: "aन[inline-atom]界[inline-atom-2]मb", beforeWrites: 0, afterWrites: 0, betweenWrites: 0, atoms: [true, true] });
   });
 
   test("keeps upload completion outside history and drops stale completion", async ({ page }) => {

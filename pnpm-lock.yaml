@@ -23,6 +23,9 @@ importers:
       jszip:
         specifier: ^3.10.1
         version: 3.10.1
+      katex:
+        specifier: ^0.18.4
+        version: 0.18.4
       mammoth:
         specifier: ^1.11.0
         version: 1.11.0
@@ -122,8 +125,8 @@ importers:
   packages/react/playground:
     dependencies:
       katex:
-        specifier: ^0.16.22
-        version: 0.16.25
+        specifier: ^0.18.4
+        version: 0.18.4
       react:
         specifier: 18.3.1
         version: 18.3.1
@@ -1862,6 +1865,10 @@ packages:
 
   katex@0.16.25:
     resolution: {integrity: sha512-woHRUZ/iF23GBP1dkDQMh1QBad9dmr8/PAwNA54VrSOVYgI12MAcE14TqnDdQOdzyEonGzMepYnqBMYdsoAr8Q==}
+    hasBin: true
+
+  katex@0.18.4:
+    resolution: {integrity: sha512-IMPntbRLOU+eu88XDiFKqQ8Akhr9Tv7jDMXqPhjG9SI1JMA4DIgXk4x9k4skJz2NZJXBRbC+2pYBLj9olqcZow==}
     hasBin: true
 
   keyv@4.5.4:
@@ -4322,6 +4329,10 @@ snapshots:
       setimmediate: 1.0.5
 
   katex@0.16.25:
+    dependencies:
+      commander: 8.3.0
+
+  katex@0.18.4:
     dependencies:
       commander: 8.3.0
 

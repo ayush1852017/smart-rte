@@ -1,3 +1,4 @@
+import katex from "katex";
 import { isTextNode } from "../identity.js";
 import {
   FoundationModelDomMapping,
@@ -11,6 +12,26 @@ import type { CanonicalSubtreeRenderer } from "./types.js";
 import { renderMarkedText, stableValue } from "../marks/index.js";
 import { occupancyGridFor, snapTableCellRect } from "../table/index.js";
 import { sanitizeAtomSource } from "../atom/security.js";
+
+/**
+ * Security-hardened per the retired legacy KaTeX config this replaces:
+ * trust:false blocks commands like \includegraphics/\href with adverse
+ * side effects; strict:"error" rejects non-standard LaTeX outright rather
+ * than silently tolerating it. Neither is relaxed here. `output` is left
+ * at KaTeX's own default (`htmlAndMathml`) deliberately - that default
+ * already emits MathML alongside the visual HTML, which is what makes
+ * this accessible to screen readers beyond the aria-label below.
+ */
+const KATEX_OPTIONS = { trust: false, strict: "error" as const };
+
+/** Genuinely invalid/incomplete LaTeX (a real possibility mid-typing) must not crash the whole document render. */
+const renderFormulaInto = (element: HTMLElement, source: string): void => {
+  try {
+    katex.render(source, element, KATEX_OPTIONS);
+  } catch {
+    element.textContent = source;
+  }
+};
 
 const atomTypes = new Set(["image", "block_image", "formula", "block_formula", "video", "audio"]);
 const emptyLineOwnerTypes = new Set(["paragraph", "heading", "code_block"]);
@@ -210,10 +231,17 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
       else if (imageAlign === "left" || imageAlign === "right") { element.style.display = "inline"; element.style.float = imageAlign; element.style.margin = imageAlign === "left" ? "0 8px 8px 0" : "0 0 8px 8px"; }
     } else if (node.type === "formula" || node.type === "block_formula") {
       const source = String(node.attrs?.source || "");
+      const previousSource = element.getAttribute("data-smart-formula");
       this.setAttribute(element, "role", "math", node.id);
       this.setAttribute(element, "aria-label", `Mathematical formula: ${source}`, node.id);
       this.setAttribute(element, "data-smart-formula", source, node.id);
-      if (element.textContent !== source) { element.textContent = source; this.recordWrite(node.id); }
+      // KaTeX owns the element's children once rendered (real HTML+MathML,
+      // not plain text); the dirty check moves to the source attribute
+      // since textContent no longer equals the raw source after rendering.
+      if (previousSource !== source || !element.hasChildNodes()) {
+        renderFormulaInto(element, source);
+        this.recordWrite(node.id);
+      }
     } else if (node.type === "video" || node.type === "audio") {
       const source = sanitizeAtomSource(String(node.attrs?.src || ""), { kind: node.type });
       if (source) this.setAttribute(element, "src", source, node.id); else this.removeAttribute(element, "src", node.id);
