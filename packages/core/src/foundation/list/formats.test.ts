@@ -82,6 +82,38 @@ describe("Phase 3 list format fidelity", () => {
     ] });
   });
 
+  it("round-trips inline images, block images, and formulas through Markdown instead of silently dropping them", () => {
+    // Phase 9 SS2.3: markdownInlineText/markdownBlock's fallback for any
+    // non-text, non-hard_break inline/block node was `""` - image and
+    // formula atoms were silently deleted on export with zero trace, not
+    // merely reformatted. See docs/bugs/ for the full writeup.
+    const doc: SmartDocument = {
+      type: "doc", id: "doc",
+      children: [
+        { type: "paragraph", id: "p1", children: [
+          { type: "text", text: "before " },
+          { type: "image", id: "i1", attrs: { src: "https://x.test/a.png", alt: "A" } },
+          { type: "text", text: " and " },
+          { type: "formula", id: "f1", attrs: { source: "x^2", notation: "latex" } },
+        ] },
+        { type: "block_image", id: "bi1", attrs: { src: "https://x.test/b.png", alt: "B" } },
+        { type: "block_formula", id: "bf1", attrs: { source: "y=mx+b", notation: "latex" } },
+      ],
+    };
+    const markdown = serializeCanonicalListMarkdown(doc);
+    expect(markdown).toContain("![A](https://x.test/a.png)");
+    expect(markdown).toContain("$x^2$");
+    expect(markdown).toContain("![B](https://x.test/b.png)");
+    expect(markdown).toContain("$$\ny=mx+b\n$$");
+
+    const parsed = parseCanonicalListMarkdown(markdown);
+    const flat = JSON.stringify(parsed);
+    expect(flat).toContain('"type":"image"');
+    expect((flat.match(/"type":"image"/g) || []).length).toBe(2);
+    expect(flat).toContain('"source":"x^2"');
+    expect(flat).toContain('"source":"y=mx+b"');
+  });
+
   it("maps DOCX semantics to numId/ilvl and documents preset fallback through marker family", () => {
     const entries = canonicalListToDocxNumbering(fixture);
     expect(entries).toEqual([

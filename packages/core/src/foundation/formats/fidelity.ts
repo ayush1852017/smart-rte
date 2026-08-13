@@ -121,7 +121,7 @@ export const builtInFormatFidelity: readonly FeatureFidelityContract[] = [
     feature: "images-media",
     formats: {
       html: capability("semantic", "Images, audio, and video round-trip; host-only metadata may be lossy."),
-      markdown: capability("lossy", "Inline images round-trip; audio and video are unsupported."),
+      markdown: capability("lossy", "Inline and block images round-trip as ![alt](src) (SS2.3: fixed a real silent-data-loss bug - markdownInlineText/markdownBlock's fallback for any atom node was an empty string, deleting images with no trace; images are now routed through atomToMarkdown/parsed back via a real image AST case). Audio and video degrade to a readable [video: url](url) link on export - the link and URL survive, but re-import produces a generic link, not a video/audio atom."),
       docx: capability("semantic", "Data-URL PNG/JPEG/GIF images embed as native Word media relationships; remote or unsupported sources fall back to a portable text marker recovered on import (SS2.1, re-verified). No canonical DOCX projection exists yet for video/audio (block_image only)."),
       pdf: capability("lossy", "Export is visual; semantic media import is unsupported."),
     },
@@ -130,7 +130,7 @@ export const builtInFormatFidelity: readonly FeatureFidelityContract[] = [
     feature: "formulas",
     formats: {
       html: capability("full", "Formula source is stored canonically (data-smart-formula); displayText is presentation-only and is not preserved by canonical's own HTML round-trip, in any format."),
-      markdown: capability("semantic", "Dollar-delimited formula source round-trips."),
+      markdown: capability("semantic", "Dollar-delimited formula source round-trips: $source$ for inline, $$\\nsource\\n$$ for block (SS2.3: fixed the same silent-data-loss bug as images-media/markdown - formulas were being deleted with no trace on export, and remark's core parser has no math extension so $...$ survived as inert literal text on import even after the export side was fixed; both are now handled via a dedicated post-parse regex split, not a library dependency)."),
       docx: capability("lossy", "Formula source is written inside an <m:oMath> zone as literal LaTeX text, not translated to real OMML (no partial-OMML build, an explicit standing scope decision) - Word will show the raw LaTeX string, not typeset math. A hidden portable-marker text run carries the source for lossless round-trip back through Smart RTE specifically, independent of whether Word renders it usefully (SS2.1: this replaces a stale note that described a since-retired export path, which no longer applies)."),
       pdf: capability("lossy", "Rendered output is visual; source cannot be reconstructed reliably."),
     },

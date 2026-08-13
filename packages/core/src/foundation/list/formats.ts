@@ -6,7 +6,7 @@ import { createNodeId, isTextNode } from "../identity.js";
 import { canonicalMarkAttrs, canonicalMarkOrder } from "../marks/canonical.js";
 import type { SmartDocument, SmartElementNode, SmartMark, SmartNode } from "../types.js";
 import { occupancyGridFor } from "../table/grid.js";
-import { atomToHtml } from "../atom/formats.js";
+import { atomToHtml, atomToMarkdown } from "../atom/formats.js";
 import { sanitizeAtomSource } from "../atom/security.js";
 import { foundationListStyleForPresetDepth, isFoundationSmartListPreset } from "./presets.js";
 
@@ -415,7 +415,11 @@ export const parseCanonicalListHtml = (html: string): SmartDocument => {
 
 const plainText = (node: SmartElementNode) => (node.children || []).map((child) => isTextNode(child) ? child.text : child.type === "hard_break" ? "\n" : "").join("");
 const markdownInlineText = (node: SmartElementNode): string => (node.children || []).map((child) => {
-  if (!isTextNode(child)) return child.type === "hard_break" ? "  \n" : "";
+  if (!isTextNode(child)) {
+    if (child.type === "hard_break") return "  \n";
+    if (child.type === "image" || child.type === "formula") return atomToMarkdown(child);
+    return "";
+  }
   let value = child.text;
   [...canonicalMarkOrder(child.marks)].reverse().forEach((mark) => {
     if (mark.type === "code") value = `\`${value}\``;
@@ -440,6 +444,7 @@ const markdownList = (list: SmartElementNode, depth: number): string[] => (list.
 });
 
 const markdownBlock = (node: SmartElementNode): string[] => {
+  if (["block_image", "block_formula", "video", "audio"].includes(node.type)) return [atomToMarkdown(node)];
   if (node.type === "list") return markdownList(node, 0);
   if (node.type === "heading") return [`${"#".repeat(Math.max(1, Math.min(6, Number(node.attrs?.level) || 1)))} ${markdownInlineText(node)}`];
   if (node.type === "code_block") {
@@ -468,12 +473,38 @@ const markdownBlock = (node: SmartElementNode): string[] => {
 export const serializeCanonicalListMarkdown = (document: SmartDocument): string => document.children.flatMap((node) =>
   isTextNode(node) ? [node.text] : markdownBlock(node)).join("\n");
 
-type MdNode = { type: string; value?: string; url?: string; lang?: string; depth?: number; ordered?: boolean; start?: number; checked?: boolean | null; children?: MdNode[] };
+type MdNode = { type: string; value?: string; url?: string; alt?: string; lang?: string; depth?: number; ordered?: boolean; start?: number; checked?: boolean | null; children?: MdNode[] };
 const markdownText = (node: MdNode): string => node.value || (node.children || []).map(markdownText).join("");
+/**
+ * remark's core parser has no math extension, so `$x^2$` survives parsing
+ * as literal text on a plain text node - split any dollar-delimited
+ * formula regions out of a text run into formula atoms, post-parse. Only
+ * applied to unmarked (mark-free) text, matching how the serializer only
+ * emits `$source$` at the top level, never inside bold/italic/etc.
+ */
+const splitInlineFormulas = (text: string, marks: readonly SmartMark[]): SmartNode[] => {
+  if (marks.length) return [{ type: "text", text, marks: canonicalMarkOrder(marks) }];
+  // Block math ($$\n...\n$$, atomToMarkdown's block_formula form) first,
+  // since it would otherwise be swallowed as three separate single-$ matches;
+  // then inline math ($...$) over what's left.
+  const pattern = /\$\$\n([^]*?)\n\$\$|\$([^$\n]+)\$/g;
+  const output: SmartNode[] = [];
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(text))) {
+    if (match.index > cursor) output.push({ type: "text", text: text.slice(cursor, match.index) });
+    output.push({ type: "formula", id: createNodeId(), attrs: { source: match[1] ?? match[2] ?? "", notation: "latex" } });
+    cursor = pattern.lastIndex;
+  }
+  if (!output.length) return [{ type: "text", text }];
+  if (cursor < text.length) output.push({ type: "text", text: text.slice(cursor) });
+  return output;
+};
 const markdownInline = (node: MdNode, inherited: readonly SmartMark[] = []): SmartNode[] => {
-  if (node.type === "text") return node.value ? [{ type: "text", text: node.value, ...(inherited.length ? { marks: canonicalMarkOrder(inherited) } : {}) }] : [];
+  if (node.type === "text") return node.value ? splitInlineFormulas(node.value, inherited) : [];
   if (node.type === "inlineCode") return node.value ? [{ type: "text", text: node.value, marks: canonicalMarkOrder([...inherited, { type: "code" }]) }] : [];
   if (node.type === "break") return [{ type: "hard_break", id: createNodeId() }];
+  if (node.type === "image") return node.url ? [{ type: "image", id: createNodeId(), attrs: { src: node.url, alt: node.alt || "" } }] : [];
   const marks = [...inherited];
   if (node.type === "strong") marks.push({ type: "bold" });
   if (node.type === "emphasis") marks.push({ type: "italic" });
