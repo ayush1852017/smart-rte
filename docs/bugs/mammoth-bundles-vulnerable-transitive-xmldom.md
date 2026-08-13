@@ -1,6 +1,6 @@
 # DOCX import is reachable-DoS via mammoth's own bundled, vulnerable `@xmldom/xmldom@0.8.11`
 
-**Status:** Open — finding reported, fix not yet applied (requires explicit confirmation per this project's standing rule for anything with real blast radius)
+**Status:** Open — the originally recommended fix (a pnpm override) was tried and found to break DOCX import entirely; reverted. A different fix is needed; none applied yet.
 **Area:** formats / docx / security
 **First reported:** 2026-08-13, Phase 9 closeout item 3 (dependency vulnerability scan)
 **Related files:** `docs/bugs/published-npm-versions-predate-canonical-rebuild.md` (unrelated cause, same area)
@@ -38,19 +38,32 @@ shows **two separate resolutions** in the tree:
 
 ## Fix
 
-**Not applied.** Recommended fix: force `@xmldom/xmldom` to resolve to `^0.9.11` everywhere in the tree, including inside mammoth's own dependency resolution, via a pnpm override in the root `package.json`:
+**Attempted and reverted; still open.** The originally recommended fix — a pnpm override forcing `@xmldom/xmldom` to `^0.9.11` everywhere, including inside mammoth's resolution — was applied, confirmed effective at the dependency-resolution level, and then found to break DOCX import completely.
 
 ```json
 "pnpm": { "overrides": { "@xmldom/xmldom": "^0.9.11" } }
 ```
 
-This is a standard, low-risk pattern for exactly this situation (a well-behaved direct dependency bundling a vulnerable transitive one). `0.9.x` is a security-hardening line over `0.8.x`, not an API-breaking change, based on the advisory text describing purely internal traversal-algorithm changes (recursive → iterative) with no public API differences. Confirmed separately that `^0.9.11` remains the correct pin for our own direct usage — it is still npm's current `latest` dist-tag for `@xmldom/xmldom` as of this check, not superseded by anything newer, and not deprecated.
+**Verification that the override itself worked correctly:** after `pnpm install`, `pnpm -r why @xmldom/xmldom` showed exactly one resolved version (`0.9.11`) everywhere in the tree, including inside `mammoth@1.11.0`'s own dependency (previously `0.8.11`). `pnpm audit` confirmed all 5 `@xmldom/xmldom` advisories gone (high-severity count dropped from 33 to 28, an exact match). The override mechanism is not the problem.
 
-Per this project's standing rule for changes with real blast radius, this fix requires explicit confirmation before being applied — not made unilaterally as part of this audit.
+**What actually broke:** every DOCX import test failed with `TypeError: DOMParser.parseFromString: the provided mimeType "undefined" is not valid.` Root cause, confirmed by reading both sides directly:
+- Mammoth's own internal call site (`node_modules/mammoth/lib/xml/xmldom.js:13`, `exports.parseFromString`) calls `domParser.parseFromString(string)` with a **single argument** — it never passes a `mimeType`.
+- `@xmldom/xmldom`'s `DOMParser.prototype.parseFromString` (`lib/dom-parser.js`) validates `mimeType` with `isValidMimeType(mimeType)` **before** applying its own documented default (the JSDoc directly above it states `@param {string} [mimeType='application/xml']`). Passing `undefined` does not fall through to that default — it throws a `TypeError` immediately. This directly contradicts the function's own documentation.
+- Confirmed via direct testing (`npm pack @xmldom/xmldom@0.9.0`, inspecting `lib/dom-parser.js`) that this validate-before-default behavior exists starting at `0.9.0` and is present in every 0.9.x release, not a `0.9.11`-specific issue — no other 0.9.x version would avoid this. Picking a different patch version within 0.9.x is a confirmed dead end, not just an untried option.
+- Our own direct `@xmldom/xmldom` usage (`packages/core/src/foundation/formats/docx/styledImport.ts:197`) was never affected, since it always passes an explicit `"text/xml"` as the second argument. The incompatibility is specific to mammoth's calling convention, not a general problem with our own code.
+
+The override was reverted (`package.json`, `pnpm-lock.yaml` restored to their pre-override committed state, `pnpm install` re-run); confirmed `pnpm -r why @xmldom/xmldom` shows mammoth back on `0.8.11` and the full DOCX/core/react test suites pass again at their prior counts (see completion note below). This means the DoS finding above is **still live and unfixed** — reverting restored the vulnerable-but-working state, not a fixed one.
+
+**Real options, none applied — all need explicit confirmation, none is a small/obvious choice:**
+1. Patch mammoth's own dependency (a `pnpm.packageExtensions` entry forcing mammoth's `package.json` to depend on a version range compatible with its calling convention is not viable here, since the incompatibility is a behavior change in `@xmldom/xmldom` itself, not a version-range mismatch — no version of `@xmldom/xmldom` both fixes the 5 advisories and accepts a bare `parseFromString(string)` call).
+2. Vendor or monkeypatch mammoth's `lib/xml/xmldom.js` to pass an explicit `"application/xml"` mimeType (a `patch-package`-style fix) — would need mammoth's upstream behavior verified unaffected by forcing that default explicitly rather than relying on xmldom's (broken) implicit default.
+3. Replace `mammoth` with a different DOCX-to-HTML library entirely — a much larger change, affecting `importDocxDocumentWithMammoth`'s whole implementation, not just a dependency version.
+4. Accept the DoS as a documented, tracked residual risk and do not fix it in this dependency this way — matches the pattern already used for other owner-waived residual risks in this project (e.g. the native Windows Word capture gap), but for a security finding rather than a coverage gap, which is a materially different kind of risk to accept.
+5. Report the mimeType-validation inconsistency upstream to `@xmldom/xmldom` (their own JSDoc contradicts their own implementation) — doesn't fix anything in this repo directly, but is worth doing regardless since it affects every consumer of the library that calls `parseFromString` with a single argument, not just mammoth.
 
 ## Regression coverage
 
-None yet — no fix has been applied. Once the override is applied, the existing DOCX import test suite (`packages/core/src/foundation/formats/docx/format.test.ts`) exercises `importDocxDocumentWithMammoth` on every run and would need `pnpm -r why @xmldom/xmldom` re-checked to confirm the override actually took effect (resolving mammoth's copy to `0.9.11`, not just the top-level one).
+None — no fix is in place. `packages/core/src/foundation/formats/docx/format.test.ts` already exercises `importDocxDocumentWithMammoth` on every run and is exactly what caught the override's breakage; it will also catch a regression from whichever real fix is eventually chosen.
 
 ## Related/similar issues
 

@@ -2,6 +2,8 @@
 
 2026-08-13, branch `core-implementation`. Three independent items requested as the last Phase 9 work before Phase 10. `docs/bugs/` was checked before starting (nothing existing matched any of the three areas) and one new entry was added as a result of this work.
 
+**Update, same day:** the item 3 fix (pnpm override) was subsequently attempted, confirmed effective at the dependency-resolution level, then found to break DOCX import entirely, and reverted. See the updated §3 and "What remains" below — **Phase 9 is still not closed**; this update makes the blocker more precisely characterized, not resolved.
+
 ## 1. Codec refactor scoping — done, not implemented (as requested)
 
 Full detail: `docs/PHASE_9_CODEC_REFACTOR_SCOPE.md`.
@@ -24,22 +26,24 @@ Full detail: `docs/PHASE_9_RELEASE_POLICY.md`, "Dependency vulnerability scan" s
 
 `katex`, `jszip`, and `pdfjs-dist` are clean. Our own direct `@xmldom/xmldom` pin (`^0.9.11`) is clean and confirmed still current (npm's `latest` dist-tag, not deprecated, not superseded since Phase 9 chose it). **`mammoth@1.11.0` bundles its own transitive `@xmldom/xmldom@0.8.11`**, unaffected by our top-level pin. Triaged against mammoth's actual source rather than trusting raw audit output: 4 of 5 disclosed advisories are unreachable (mammoth never serializes XML), but the 5th — uncontrolled recursion causing a stack-exhaustion crash — **is reachable**, since mammoth calls `DOMParser.parseFromString()` and `getElementsByTagName()` (both confirmed trigger vectors) on every single DOCX import, unconditionally. A crafted, deeply-nested `.docx` file — trivial to construct, no special access required — can crash `importDocxDocumentWithMammoth` through completely routine use of the import feature.
 
-**Recommended fix, not applied:** a pnpm override (`"pnpm": {"overrides": {"@xmldom/xmldom": "^0.9.11"}}`) forcing the safe version everywhere in the tree, including inside mammoth's own resolution. Reported for confirmation per this project's standing rule on changes with real blast radius — not applied unilaterally.
+**Update:** the recommended fix — a pnpm override (`"pnpm": {"overrides": {"@xmldom/xmldom": "^0.9.11"}}`) — was subsequently tried. It worked exactly as intended at the dependency-resolution level (`pnpm -r why @xmldom/xmldom` showed a single `0.9.11` everywhere including inside mammoth; `pnpm audit` showed all 5 advisories gone, high-severity count 33→28) but broke DOCX import completely: every test in `docx/format.test.ts` failed with `TypeError: DOMParser.parseFromString: the provided mimeType "undefined" is not valid.` Mammoth's own internal call (`node_modules/mammoth/lib/xml/xmldom.js:13`) calls `parseFromString(string)` with no `mimeType` argument; `@xmldom/xmldom`'s entire `0.9.x` line (confirmed from `0.9.0` onward via `npm pack`, not just `0.9.11`) validates `mimeType` before applying its own documented default, throwing instead of defaulting — a genuine inconsistency between `@xmldom/xmldom`'s own JSDoc and implementation, unrelated to this repo. No `0.9.x` version avoids this. The override was reverted; `pnpm -r why @xmldom/xmldom` confirmed mammoth back on `0.8.11`, and the full suite (core, react, DOCX-specific) confirmed passing again at prior counts. **The DoS finding remains open and unfixed** — full detail and real remaining options (patch mammoth's call site, replace the library, accept as documented risk, report upstream) in `docs/bugs/mammoth-bundles-vulnerable-transitive-xmldom.md`.
 
 ## Test counts — unchanged, as expected
 
-No source code was modified by any of the three items (only documentation and one temporary, fully-removed verification script). Confirmed rather than assumed:
+No source code was modified, net, by any of the three items or the subsequent override attempt (only documentation; a temporary, fully-removed verification script; and a `package.json`/lockfile change that was itself fully reverted). Confirmed rather than assumed, after the revert:
 
 - **Core:** 495/495 (unchanged from the Phase 9 completion report's figure).
 - **React:** 97/97 (unchanged).
-- **E2e**, all 7 files, no filter, 3 browsers: **250 passed, 5 expected skips, 0 failures** (unchanged from every prior check this phase). No test was added, removed, or renamed by this closeout.
+- **DOCX-specific (`docx/format.test.ts`):** 12/12 (failed 9/12 mid-attempt with the override in place; back to 12/12 after revert).
+- **Lint** (`pnpm run lint` — all contract-check scripts plus both packages' `tsc --noEmit`): clean, re-run after the revert.
+- **E2e**, all 7 files, no filter, 3 browsers: **250 passed, 5 expected skips, 0 failures**, re-run in full after the revert (not just inferred from a clean `git status`).
 
 ## What remains
 
-Phase 9 is **not** fully closed. One item from this closeout is a real, open, blocking finding:
+Phase 9 is **still not fully closed.** The mammoth/xmldom finding is open, more precisely characterized than before, and does not have an easy fix:
 
-- **The mammoth/xmldom DoS finding (item 3) is unresolved** and should be treated as blocking any publish — including `beta` — not just `latest`, since it's a crash-on-routine-use vulnerability in an expected-use feature (DOCX import), not an edge case. It needs an explicit decision on the recommended pnpm-override fix before it can close.
+- **The mammoth/xmldom DoS finding is unresolved.** The obvious fix (pnpm override) does not work — it trades a narrow, attacker-must-craft-a-file DoS for an unconditional break of every DOCX import, which is strictly worse. A real fix needs one of: patching/vendoring mammoth's own xmldom call site, replacing the DOCX-parsing library, or explicitly accepting the DoS as a documented residual risk. None of these is a small, obvious choice, and none has been applied. This should still be treated as blocking any publish, including `beta`, until a decision is made — not because a fix wasn't attempted, but because the attempted fix made things worse and was correctly reverted rather than shipped or forced.
 
-Everything else genuinely closed this session (§3/§4 gate verification and completion report from the prior closeout, the KaTeX visual gap from this one) stays closed. Still-open items unrelated to this closeout's scope — the 29 deferred e2e tests, NVDA+Chrome validation, the native Windows Word capture — are unchanged and were not expected to be touched by this pass; see `docs/PHASE_9_RELEASE_POLICY.md`'s full "do not publish to latest until" list for their status.
+Everything else genuinely closed stays closed. Still-open items unrelated to this closeout's scope — the 29 deferred e2e tests, NVDA+Chrome validation, the native Windows Word capture — are unchanged; see `docs/PHASE_9_RELEASE_POLICY.md`'s full "do not publish to latest until" list for their status.
 
 The codec refactor itself (item 1) remains entirely unimplemented, as explicitly requested — it is now sized and schedulable, not done.
