@@ -52,7 +52,7 @@ import {
   type TableGridScope,
   type SelectionDescription,
 } from "smartrte-core/foundation";
-import { SMART_LIST_PRESETS } from "smartrte-core";
+import { FOUNDATION_SMART_LIST_PRESETS as SMART_LIST_PRESETS } from "smartrte-core/foundation";
 import { ensureStyleSheet } from "../theme.js";
 import type { MediaKind, MediaProvider } from "../mediaProvider.js";
 import { DefaultMediaPicker, type MediaPickerComponent } from "./MediaPicker.js";

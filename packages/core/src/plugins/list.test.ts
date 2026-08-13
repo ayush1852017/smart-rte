@@ -6,7 +6,7 @@ import {
   type LegacySmartDocument,
   type SmartEditorState,
   type SmartListNode,
-} from "../index.js";
+} from "../legacy/index.js";
 
 const textSelection = (anchor: readonly number[], focus: readonly number[]) => ({
   type: "text" as const,

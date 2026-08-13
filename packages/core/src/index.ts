@@ -1,41 +1,9 @@
+// The package root is the canonical, framework-agnostic public API: the
+// foundation document model and editing engine, and nothing else. Everything
+// built on the pre-canonical model (legacyCommands/*, plugins/*, the
+// html/markdown compatibility layers, and the discriminated-union model
+// types in model.ts et al.) lives exclusively behind "smartrte-core/legacy"
+// - see legacy/index.ts. Do not re-add those exports here; that flat
+// re-export used to defeat the whole point of the /legacy subpath by making
+// the same symbols reachable from the root import too.
 export * from "./foundation/index.js";
-export * from "./model.js";
-export * from "./command.js";
-export * from "./editor.js";
-export * from "./marks.js";
-export * from "./plugin.js";
-export * from "./preset.js";
-export * from "./history.js";
-export * from "./selection.js";
-export * from "./listScope.js";
-export * from "./listPresets.js";
-export * from "./selectionMapping.js";
-export * from "./schema.js";
-export * from "./table.js";
-export * from "./transaction.js";
-export * from "./tree.js";
-export * from "./legacyCommands/list.js";
-export * from "./legacyCommands/code.js";
-export * from "./legacyCommands/marks.js";
-export * from "./legacyCommands/alignment.js";
-export * from "./legacyCommands/checklist.js";
-export * from "./legacyCommands/media.js";
-export * from "./legacyCommands/formula.js";
-export * from "./legacyCommands/inlineAtoms.js";
-export * from "./legacyCommands/blocks.js";
-export * from "./legacyCommands/table.js";
-export * from "./legacyCommands/move.js";
-export * from "./plugins/basicFormatting.js";
-export * from "./plugins/list.js";
-export * from "./plugins/checklist.js";
-export * from "./plugins/media.js";
-export * from "./plugins/formula.js";
-export * from "./plugins/alignment.js";
-export * from "./plugins/codeBlock.js";
-export * from "./plugins/blockType.js";
-export * from "./plugins/blockquote.js";
-export * from "./plugins/table.js";
-export * from "./plugins/move.js";
-export * from "./html/compatibility.js";
-export * from "./markdown/compatibility.js";
-export * from "./security/urlPolicy.js";

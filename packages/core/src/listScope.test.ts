@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { paragraph, resolveListSelectionScope, type LegacySmartDocument } from "./index.js";
+import { paragraph, resolveListSelectionScope, type LegacySmartDocument } from "./legacy/index.js";
 
 const selection = (anchor: number[], focus: number[]) => ({
   type: "text" as const,

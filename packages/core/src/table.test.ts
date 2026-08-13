@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeTableCell, paragraph } from "./index.js";
+import { normalizeTableCell, paragraph } from "./legacy/index.js";
 
 describe("normalizeTableCell", () => {
   it("normalizes br-separated imported cell lines into paragraph blocks", () => {

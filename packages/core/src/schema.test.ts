@@ -5,7 +5,7 @@ import {
   paragraph,
   validateSmartDocument,
   type LegacySmartDocument,
-} from "./index.js";
+} from "./legacy/index.js";
 
 describe("LegacySmartDocument schema", () => {
   it("preserves a row fully covered by a rowspan without synthesizing a cell", () => {

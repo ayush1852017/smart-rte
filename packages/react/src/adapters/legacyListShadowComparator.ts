@@ -19,7 +19,7 @@ import {
   type SmartDocument,
   type SmartElementNode,
   type SmartSelection,
-} from "smartrte-core";
+} from "smartrte-core/foundation";
 import {
   applyTransaction as applyLegacyTransaction,
   indentListItems as legacyIndentListItems,

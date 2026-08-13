@@ -7,7 +7,7 @@ import {
   createSmartEditor,
   paragraph,
   type SmartEditorState,
-} from "../index.js";
+} from "../legacy/index.js";
 
 const state = (): SmartEditorState => ({
   document: {

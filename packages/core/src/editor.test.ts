@@ -6,7 +6,7 @@ import {
   type SmartEditorState,
   type SmartRtePlugin,
   type LegacySmartTransaction,
-} from "./index.js";
+} from "./legacy/index.js";
 
 const state = (): SmartEditorState => ({
   document: { type: "doc", children: [paragraph("hello")] },

@@ -13,7 +13,7 @@ import {
   updateLink,
   type LegacySmartDocument,
   type SmartEditorState,
-} from "../index.js";
+} from "../legacy/index.js";
 
 const stateFor = (document: LegacySmartDocument, path: readonly number[], start: number, end: number): SmartEditorState => ({
   document,

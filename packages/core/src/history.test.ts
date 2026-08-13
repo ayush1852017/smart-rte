@@ -9,7 +9,7 @@ import {
   type LegacySmartOperation,
   type LegacySmartSelection,
   type LegacySmartTransaction,
-} from "./index.js";
+} from "./legacy/index.js";
 
 const caret = (path: readonly number[], offset: number): LegacySmartSelection => ({
   type: "text",

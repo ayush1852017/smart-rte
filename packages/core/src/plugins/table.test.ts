@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createSmartEditor, paragraph, tablePlugin, type SmartEditorState } from "../index.js";
+import { createSmartEditor, paragraph, tablePlugin, type SmartEditorState } from "../legacy/index.js";
 
 const state = (): SmartEditorState => ({
   document: { type: "doc", children: [paragraph("before")] },

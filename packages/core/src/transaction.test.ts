@@ -7,7 +7,7 @@ import {
   type LegacySmartOperation,
   type LegacySmartSelection,
   type LegacySmartTransaction,
-} from "./index.js";
+} from "./legacy/index.js";
 
 const selection: LegacySmartSelection = {
   type: "text",

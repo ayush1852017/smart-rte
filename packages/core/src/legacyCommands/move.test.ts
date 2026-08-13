@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createSmartEditor, movePlugin, paragraph, type SmartEditorState } from "../index.js";
+import { createSmartEditor, movePlugin, paragraph, type SmartEditorState } from "../legacy/index.js";
 
 const state = (): SmartEditorState => ({
   document: { type: "doc", children: ["A", "B", "C", "D"].map(paragraph) },

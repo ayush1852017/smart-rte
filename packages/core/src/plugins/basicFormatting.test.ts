@@ -4,7 +4,7 @@ import {
   createSmartEditor,
   paragraph,
   type SmartEditorState,
-} from "../index.js";
+} from "../legacy/index.js";
 
 const selectedTextState = (): SmartEditorState => ({
   document: { type: "doc", children: [paragraph("hello")] },

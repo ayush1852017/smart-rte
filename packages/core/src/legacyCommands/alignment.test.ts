@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { paragraph, setTextAlignment, type LegacySmartDocument, type LegacySmartSelection } from "../index.js";
+import { paragraph, setTextAlignment, type LegacySmartDocument, type LegacySmartSelection } from "../legacy/index.js";
 
 const selection: LegacySmartSelection = {
   type: "text",

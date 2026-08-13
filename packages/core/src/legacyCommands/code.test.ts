@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { paragraph, toggleCodeBlocks, type LegacySmartDocument } from "../index.js";
+import { paragraph, toggleCodeBlocks, type LegacySmartDocument } from "../legacy/index.js";
 
 describe("toggleCodeBlocks", () => {
   it("converts only the selected paragraph beside an existing code block", () => {
