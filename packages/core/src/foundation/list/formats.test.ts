@@ -130,4 +130,19 @@ describe("Phase 3 list format fidelity", () => {
     expect(text).not.toContain("checked");
     expect(text).not.toContain("ordered-outline");
   });
+
+  it("round-trips Unicode special characters through HTML and Markdown, matching the declared full fidelity", () => {
+    const unicode: SmartDocument = { type: "doc", id: "doc", children: [
+      { type: "paragraph", id: "p", children: [{ type: "text", text: "café — “quoted” 中文 😀 → ½" }] },
+    ] };
+    const html = serializeCanonicalListHtml(unicode);
+    expect(normalizedStructureWithoutIds(parseCanonicalListHtml(html), foundationSchema))
+      .toEqual(normalizedStructureWithoutIds(unicode, foundationSchema));
+
+    const markdown = serializeCanonicalListMarkdown(unicode);
+    expect(markdown).toContain("café — “quoted” 中文 😀 → ½");
+    const parsedMarkdown = parseCanonicalListMarkdown(markdown);
+    expect((parsedMarkdown.children[0] as { children?: Array<{ text?: string }> }).children?.[0]?.text)
+      .toBe("café — “quoted” 中文 😀 → ½");
+  });
 });

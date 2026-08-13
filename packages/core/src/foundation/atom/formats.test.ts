@@ -31,6 +31,11 @@ describe("Phase 7 atom formats", () => {
     expect(atomToPdf(media).value).toContain("v.mp4");
   });
 
+  it("declares PDF export visual-only for images, matching the declared lossy fidelity", () => {
+    const image = { type: "image", id: "i", attrs: { src: "https://x.test/i.png", alt: "A picture", status: "ready" } };
+    expect(atomToPdf(image)).toEqual({ kind: "image", value: "https://x.test/i.png" });
+  });
+
   it("describes DOCX formulas as literal LaTeX text, matching the actual exporter (not a rendered image)", () => {
     expect(atomToDocx({ type: "formula", id: "f", attrs: { source: "x^2", notation: "latex" } })).toEqual({ kind: "text", source: "x^2" });
   });

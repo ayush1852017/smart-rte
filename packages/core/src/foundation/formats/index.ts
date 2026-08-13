@@ -4,3 +4,4 @@ export * from "./docx/styledImport.js";
 export * from "./pdf/format.js";
 export * from "./codec.js";
 export * from "./fidelity.js";
+export * from "./featureCodecs.js";

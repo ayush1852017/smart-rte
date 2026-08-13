@@ -35,14 +35,18 @@ const capability = (level: FidelityLevel, note: string): FormatFidelityCapabilit
  * Public, test-enforced compatibility contract for built-in document
  * formats (Phase 9 SS2.2's fidelity table deliverable).
  *
- * Verification status as of Phase 9 SS2.2 (2026-08-13): cells touching DOCX
- * export/import were re-checked directly against
- * packages/core/src/foundation/formats/docx/format.test.ts (the codec built
- * in SS2.1). Every other cell is carried forward from before this phase and
- * has NOT yet been independently re-verified against a round-trip fixture -
- * that enforcement is SS2.3's explicit job ("every fidelity claim requires a
- * round-trip fixture... has never been fully enforced"). Do not treat an
- * un-flagged cell here as fixture-verified until SS2.3 lands.
+ * Verification status as of Phase 9 SS3 gate 4 (2026-08-13): every one of
+ * the 44 (feature, format) cells below now has a passing round-trip fixture.
+ * DOCX cells: packages/core/src/foundation/formats/docx/format.test.ts.
+ * PDF cells: packages/core/src/foundation/formats/pdf/format.test.ts,
+ * atom/formats.test.ts, marks/formats.test.ts, block/formats.test.ts,
+ * list/formats.test.ts. HTML/Markdown cells: list/formats.test.ts,
+ * marks/formats.test.ts, block/formats.test.ts, table/formats.test.ts,
+ * atom/formats.test.ts. special-characters had zero coverage across all
+ * four formats until SS3's gate 4 audit found the gap; see the "Unicode
+ * special characters" tests added to each of those files. See also
+ * featureCodecs.ts, which declares the actual FeatureFormatCodec per cell
+ * gate 3 requires.
  */
 export const builtInFormatFidelity: readonly FeatureFidelityContract[] = [
   {

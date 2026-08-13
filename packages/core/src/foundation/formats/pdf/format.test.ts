@@ -63,4 +63,9 @@ describe("PDF reconstruction", () => {
     expect(result.layoutHtml).toContain("&lt;script&gt;");
     expect(result.layoutHtml).not.toContain("<script>");
   });
+
+  it("preserves Unicode special characters when reconstructing extracted PDF text, matching the declared semantic fidelity", () => {
+    const result = reconstructPdfPages([{ width: 600, items: [item("café 中文 😀 ½", 40, 700)] }]);
+    expect(result.layoutHtml).toContain("café 中文 😀 ½");
+  });
 });

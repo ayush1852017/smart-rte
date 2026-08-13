@@ -99,6 +99,12 @@ test.describe("canonical toolbar routing", () => {
     await placeCaret(page, '[data-smart-authority="canonical"] [contenteditable="true"] p', true);
     await page.getByRole("button", { name: "Insert formula" }).click();
     await expect(surface.locator('[data-smart-type="formula"]')).toHaveAttribute("data-smart-formula", "E=mc^2");
+    // Phase 9 SS2.4/SS3 gate 6: confirm real KaTeX HTML+MathML rendered in
+    // an actual browser, not just that the source attribute is set - a
+    // rendering failure that fell back to plain text would still pass the
+    // attribute check above.
+    await expect(surface.locator('[data-smart-type="formula"] .katex')).toBeVisible();
+    await expect(surface.locator('[data-smart-type="formula"] math')).toHaveCount(1);
 
     await page.getByRole("button", { name: "Insert image" }).click();
     await chooseMedia(page, "image", "example.png", "image/png");

@@ -308,4 +308,16 @@ describe("canonical DOCX format codec", () => {
     expect(JSON.stringify(imported)).not.toContain('"checked":true');
     expect(JSON.stringify(imported)).toContain("Done task");
   });
+
+  it("round-trips Unicode special characters through DOCX export and import, matching the declared full fidelity", async () => {
+    const unicode: SmartDocument = {
+      type: "doc", id: "doc",
+      children: [{ type: "paragraph", id: "p1", children: [{ type: "text", text: "café — “quoted” 中文 😀 → ½" }] }],
+    };
+    const xml = smartDocumentToDocxXml(unicode);
+    expect(xml).toContain("café — “quoted” 中文 😀 → ½");
+    const buffer = await blobArrayBuffer(await exportDocxDocument(unicode));
+    const imported = await importDocxDocumentWithMammoth(buffer);
+    expect(JSON.stringify(imported)).toContain("café — “quoted” 中文 😀 → ½");
+  });
 });
