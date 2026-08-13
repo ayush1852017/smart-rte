@@ -4,7 +4,7 @@ import {
   getFormatFidelity,
   type FidelityFeature,
   type FidelityFormat,
-} from "./formatFidelity.js";
+} from "./fidelity.js";
 
 describe("built-in format fidelity contract", () => {
   it("defines every feature against every built-in format", () => {
@@ -38,5 +38,22 @@ describe("built-in format fidelity contract", () => {
     expect(getFormatFidelity("tables", "pdf").level).toBe("lossy");
     expect(getFormatFidelity("formulas", "pdf").level).toBe("lossy");
     expect(getFormatFidelity("formulas", "docx").level).toBe("lossy");
+  });
+
+  it("does not let table Markdown fidelity regress toward a false semantic claim", () => {
+    // GFM tables cannot represent merged cells, spans, or block content in
+    // cells - this must stay lossy, not semantic. Explicit regression guard
+    // per Phase 9 SS2.2 exit gate 5.
+    expect(getFormatFidelity("tables", "markdown").level).toBe("lossy");
+  });
+
+  it("keeps DOCX formula fidelity honest about what actually happens on export", () => {
+    // Phase 9 SS2.1 replaced the legacy-model DOCX exporter; formulas are
+    // written as literal LaTeX text inside an <m:oMath> zone; there is no
+    // "rendered-image fallback" anymore. This guards against the fidelity
+    // note silently drifting stale again the way it did before SS2.2.
+    const note = getFormatFidelity("formulas", "docx").note;
+    expect(note).not.toContain("rendered-image");
+    expect(note).not.toContain("transitional legacy exporter");
   });
 });
