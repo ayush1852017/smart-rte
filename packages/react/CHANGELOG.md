@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.0-beta.1
+
+**BREAKING CHANGE.** `ClassicEditor` is now unconditionally the canonical, schema-driven editor (`CanonicalAuthorityEditor` underneath). The DOM-authoritative legacy editor and its rollback path have been fully removed; every published version through 0.3.4 defaulted to the DOM-authoritative implementation, so this changes real runtime behavior for every existing consumer, not just internals.
+
+- Promote the canonical editing engine to sole production authority. Removed `LegacyClassicEditor` (the previous default), the runtime rollback flag, and all four of its DOM-authoritative command bridges.
+- Add a documented, tested headless facade: `CanonicalEditorRuntime` / `SmartEditorHandle` (`createCanonicalEditorRuntime`) has zero React dependency and can drive a full editing session — mount, edit, checkpoint/restore, get/replace value — against a plain DOM element with no React runtime involved.
+- Wire DOCX, PDF, and Markdown import/export to `smartrte-core`'s new format codecs, replacing the previous ad hoc, partially DOM-dependent adapters.
+- Add live KaTeX rendering for formula content, including accessible MathML output.
+- Depends on `smartrte-core@1.0.0-beta.1`.
+
 ## 0.3.4
 
 - Make foreground and background colours deterministic across paragraphs, lists, and table-cell text selections.
