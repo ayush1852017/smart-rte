@@ -23,5 +23,13 @@
   "packageManager": "pnpm@9.10.0+sha512.73a29afa36a0d092ece5271de5177ecbf8318d454ecd701343131b8ebc0c1a91c487da46ab77c8e596d6acf1461e3594ced4becedf8921b074fbd8653ed7051c",
   "dependencies": {
     "katex": "^0.16.22"
+  },
+  "pnpm": {
+    "overrides": {
+      "@xmldom/xmldom": "^0.9.11"
+    },
+    "patchedDependencies": {
+      "mammoth@1.11.0": "patches/mammoth@1.11.0.patch"
+    }
   }
 }

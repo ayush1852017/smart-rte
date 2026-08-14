@@ -1,9 +1,9 @@
 # DOCX import is reachable-DoS via mammoth's own bundled, vulnerable `@xmldom/xmldom@0.8.11`
 
-**Status:** Open — the pnpm override plus a scoped patch to mammoth's `mimeType` argument (option 2) was tried; it fixed the mimeType crash but surfaced a second, independent incompatibility (mammoth's error-handling treats xmldom 0.9.x's constructor-time deprecation notice as a fatal parse error) that would require patching beyond the authorized minimal scope. Both attempts fully reverted. Still unfixed.
+**Status:** **Fixed** — pnpm override + a two-part `pnpm patch` for mammoth (mimeType forwarding + `errorHandler`→`onError`), verified against the actual disclosed PoC through the real `importDocxDocumentWithMammoth` entry point, not just unit tests. **Important scope note:** this fixes the specific, disclosed `@xmldom/xmldom` vulnerability. Verifying this fix surfaced a second, unrelated, previously-undisclosed DoS in mammoth's own code with the same symptom — see `docs/bugs/mammoth-own-reader-unguarded-recursion-dos.md`, still open.
 **Area:** formats / docx / security
 **First reported:** 2026-08-13, Phase 9 closeout item 3 (dependency vulnerability scan)
-**Related files:** `docs/bugs/published-npm-versions-predate-canonical-rebuild.md` (unrelated cause, same area)
+**Related files:** `docs/bugs/published-npm-versions-predate-canonical-rebuild.md` (unrelated cause, same area); `docs/bugs/mammoth-own-reader-unguarded-recursion-dos.md` (separate finding, same symptom, discovered while verifying this fix)
 
 ## Symptom
 
@@ -91,14 +91,48 @@ if (options.errorHandler && typeof options.errorHandler !== 'function') {
 
 Mammoth's `DOMParser` construction (`lib/xml/xmldom.js:7-11`) still uses the old `errorHandler`-style callback (not the newer `onError`). xmldom 0.9.x's constructor, whenever `errorHandler` is provided at all, **immediately and unconditionally invokes that same callback with a synthetic `'warning'`-level deprecation notice** — before any actual parsing happens. Mammoth's own error-collection logic (`lib/xml/xmldom.js:8-10`) records *any* invocation of its `errorHandler` callback as `error = {level, message}` with no check on `level`, then throws after parsing if `error !== null`. The result: the deprecation notice about `errorHandler` itself gets funneled through `errorHandler` and mammoth treats it as a fatal parse failure on every single document, valid or not — completely independent of the mimeType fix, and completely independent of whether the input XML is well-formed.
 
-**This is a second, separate incompatibility**, requiring a second patch (to mammoth's own `errorHandler` callback, to ignore `level === "warning"` messages, or to switch mammoth to the newer `onError` option) to actually resolve — beyond the single, one-line, one-function scope explicitly authorized for this pass. Per this project's standing rule against expanding a patch or working around a blocker unilaterally, **stopped here rather than continuing to patch.** Both the override and the mammoth patch were fully reverted (`package.json`, `pnpm-lock.yaml`, `patches/mammoth@1.11.0.patch` removed); confirmed `pnpm -r why @xmldom/xmldom` shows mammoth back on `0.8.11`, and the full DOCX/core/react/e2e suites pass again at their prior counts.
+**This was a second, separate incompatibility**, requiring a second patch beyond the single, one-line, one-function scope originally authorized. That first pass stopped there per this project's standing rule against expanding a patch unilaterally, and both the override and the mammoth patch were reverted.
 
-**Real options, updated — none applied, all still need explicit confirmation:**
-1. ~~Patch mammoth's own dependency via `packageExtensions`~~ — ruled out (see first attempt above): no `@xmldom/xmldom` version both fixes the advisories and matches mammoth's original calling convention.
-2. **Extend the mammoth patch to also fix the `errorHandler`→`onError` incompatibility** — the mimeType half of this patch is proven correct and ready to keep; a second, similarly-scoped change (either filtering `level === "warning"` in mammoth's callback, or switching its `DOMParser` construction to use `onError` instead of `errorHandler`) would need the same test-and-verify treatment this pass gave the first half. Most promising path, but is a new scope decision, not a continuation of what was authorized here.
-3. Replace `mammoth` with a different DOCX-to-HTML library entirely — a much larger change, affecting `importDocxDocumentWithMammoth`'s whole implementation, not just a dependency version.
-4. Accept the DoS as a documented, tracked residual risk — rejected explicitly for this finding (a live crash-on-routine-use path, not comparable to already-waived coverage-gap items like the native Word capture gap).
-5. **Report upstream to `@xmldom/xmldom`** — drafted (title, repro, and a description of *both* incompatibilities found: the mimeType default not applying, and the errorHandler-deprecation notice firing through itself), but **not filed**: this environment has no `gh` CLI installed and no other GitHub-posting mechanism available. Draft is saved at `/private/tmp/claude-501/-Users-ayushbajpai-Developer-smart-rte/181fecaf-5e02-4a7a-850b-7821cc5ba97c/scratchpad/xmldom-upstream-issue-draft.md` (session-scoped scratch path — copy its contents before that session's temp storage is cleared) and reproduced in full in this entry below for permanence.
+## Third attempt (2026-08-14): extend the patch to fix both incompatibilities, decided and authorized explicitly
+
+Re-applied the override (confirmed effective again: single `0.9.11` resolution tree-wide, all 5 advisories gone from `pnpm audit`). Extended the mammoth patch to fix both issues in one cohesive change to `lib/xml/xmldom.js` (`patches/mammoth@1.11.0.patch`):
+
+```diff
+-function parseFromString(string) {
++function parseFromString(string, mimeType) {
+     var error = null;
+
+     var domParser = new xmldom.DOMParser({
+-        errorHandler: function(level, message) {
++        onError: function(level, message) {
+             error = {level: level, message: message};
+         }
+     });
+
+-    var document = domParser.parseFromString(string);
++    var document = domParser.parseFromString(string, mimeType);
+```
+
+The `errorHandler`→`onError` rename works because `@xmldom/xmldom`'s constructor (`dom-parser.js`) does `this.onError = options.onError || options.errorHandler;` — both option names feed the same underlying callback used for real parse-time error reporting (`reportError` calls `this.onError(level, message, this)`, identical signature either way), so renaming preserves 100% of mammoth's existing real-error detection. The constructor's deprecation notice is gated specifically on `options.errorHandler` being truthy (`else if (options.errorHandler) { options.errorHandler('warning', '...deprecated...', this); }`) — passing `onError` instead means that branch never fires at all, avoiding the spurious warning by construction rather than filtering it after the fact.
+
+**Verification, in order:**
+1. `docx/format.test.ts`: 12/12 passing (previously 3/12 passing, 9 failing on the `errorHandler` issue with only the mimeType half of the patch applied).
+2. Full suites: lint clean; core 495/495; react 97/97; full 3-browser, 7-file, no-filter e2e suite: 250 passed, 5 expected skips, 0 failures. All identical to the pre-patch baseline — zero regressions.
+3. `pnpm -r why @xmldom/xmldom`: single `0.9.11` resolution everywhere, including inside mammoth, confirmed still holding with the patch in place.
+4. `pnpm audit`: all 5 `@xmldom/xmldom` advisories still gone (high-severity count still 28, down from the pre-fix 33).
+5. **The actual PoC, at the library level:** called mammoth's patched `xml/xmldom.js` wrapper directly with the disclosed PoC shape (`'<root>' + '<a>'.repeat(10000) + 'text' + '</a>'.repeat(10000) + '</root>'`), then called `getElementsByTagName` (one of the seven confirmed-vulnerable operations) on the result. **Both succeeded with no crash** — direct proof the specific, disclosed `@xmldom/xmldom` vulnerability is closed, not just that the test suite is green.
+6. **The actual PoC, end-to-end:** built a real, valid `.docx` (via `jszip`) containing a legitimate paragraph with 10,000 levels of nested elements, and ran it through `mammoth.convertToHtml({ buffer })` — the exact call `importDocxDocumentWithMammoth` makes. **This still crashed** with `RangeError: Maximum call stack size exceeded` — but the stack trace (`convertElement`/`convertNode` in mammoth's own `lib/xml/reader.js:28,38`, via `underscore`'s `_.forEach`) showed the crash is in a completely different location than the fixed `@xmldom/xmldom` code, and unrelated to it. Investigated and confirmed as a **separate, previously-undisclosed, mammoth-native bug** — see `docs/bugs/mammoth-own-reader-unguarded-recursion-dos.md`. `reader.js` was untouched by this patch and doesn't call any of the seven `@xmldom/xmldom` operations that library's own 0.9.x fix converted to iterative traversal; this is mammoth's own unguarded recursive tree-walker, unrelated to which `@xmldom/xmldom` version is installed, and was equally present before any of this session's changes.
+
+**Conclusion:** the specific, disclosed vulnerability this entry tracks (5 advisories in `@xmldom/xmldom@0.8.11`, reachable via mammoth's bundled copy) is genuinely fixed and verified — both at the isolated library level and via full test-suite/lint/e2e regression coverage, with zero observed regressions. The override and patch are kept in place (`package.json`'s `pnpm.overrides`/`pnpm.patchedDependencies`, `patches/mammoth@1.11.0.patch`) as a real, permanent fix, not reverted.
+
+**What remains open is a *different* bug**, found only because this fix was verified against the real PoC rather than declared done once tests passed — see `docs/bugs/mammoth-own-reader-unguarded-recursion-dos.md` for that separate finding's full detail and status.
+
+**Options list, final status:**
+1. ~~Patch mammoth's own dependency via `packageExtensions`~~ — ruled out (see first attempt above).
+2. **Extend the mammoth patch to also fix the `errorHandler`→`onError` incompatibility — done, verified, applied.** This is the fix now in place.
+3. Replace `mammoth` entirely — not needed for this finding; may still be relevant to the separate reader.js finding.
+4. Accept the DoS as a documented residual risk — not applicable; a real fix was found and applied.
+5. **Report upstream to `@xmldom/xmldom`** — drafted, **not filed**: this environment has no `gh` CLI installed and no other GitHub-posting mechanism available. Reproduced in full below for permanence (the scratch-path draft file may not survive session cleanup).
 
 ### Drafted upstream issue (not filed — no `gh` access in this environment)
 
@@ -114,8 +148,8 @@ Mammoth's `DOMParser` construction (`lib/xml/xmldom.js:7-11`) still uses the old
 
 ## Regression coverage
 
-None — no fix is in place. `packages/core/src/foundation/formats/docx/format.test.ts` already exercises `importDocxDocumentWithMammoth` on every run and is exactly what caught both the override's original breakage and the second attempt's follow-on breakage; it will also catch a regression from whichever real fix is eventually chosen.
+`packages/core/src/foundation/formats/docx/format.test.ts` (12 tests) exercises `importDocxDocumentWithMammoth` on every run and caught every failed attempt along the way (the original override-only break, the mimeType-only patch's follow-on break) before the final combined patch passed cleanly. `patches/mammoth@1.11.0.patch` and `package.json`'s `pnpm.overrides`/`pnpm.patchedDependencies` are the permanent fix artifacts — removing either would be caught immediately by this same suite.
 
 ## Related/similar issues
 
-None with the same root cause. This is the first dependency-supply-chain finding in this project's history — distinct in kind from the application-logic bugs this ledger otherwise records.
+`docs/bugs/mammoth-own-reader-unguarded-recursion-dos.md` — found while verifying this fix; a genuinely separate, previously-undisclosed DoS in mammoth's own code, same symptom, unrelated root cause, still open. This is the first dependency-supply-chain finding in this project's history — distinct in kind from the application-logic bugs this ledger otherwise records.

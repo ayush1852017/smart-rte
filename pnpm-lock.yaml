@@ -4,6 +4,14 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  '@xmldom/xmldom': ^0.9.11
+
+patchedDependencies:
+  mammoth@1.11.0:
+    hash: tzymsi2x64dkbkgcq6c7nd35l4
+    path: patches/mammoth@1.11.0.patch
+
 importers:
 
   .:
@@ -28,7 +36,7 @@ importers:
         version: 0.18.4
       mammoth:
         specifier: ^1.11.0
-        version: 1.11.0
+        version: 1.11.0(patch_hash=tzymsi2x64dkbkgcq6c7nd35l4)
       parse5:
         specifier: ^7.2.1
         version: 7.3.0
@@ -65,7 +73,7 @@ importers:
         version: 3.10.1
       mammoth:
         specifier: ^1.11.0
-        version: 1.11.0
+        version: 1.11.0(patch_hash=tzymsi2x64dkbkgcq6c7nd35l4)
       pdfjs-dist:
         specifier: ^5.4.530
         version: 5.4.530
@@ -1200,11 +1208,6 @@ packages:
 
   '@vitest/utils@2.1.9':
     resolution: {integrity: sha512-v0psaMSkNJ3A2NMrUEHFRzJtDPFn+/VWZ5WxImB21T9fjucJRmS7xCS3ppEnARb9y11OAzaD+P2Ps+b+BGX5iQ==}
-
-  '@xmldom/xmldom@0.8.11':
-    resolution: {integrity: sha512-cQzWCtO6C8TQiYl1ruKNn2U6Ao4o4WBBcbL61yJl84x+j5sOWWFU9X7DpND8XZG3daDppSsigMdfAIl2upQBRw==}
-    engines: {node: '>=10.0.0'}
-    deprecated: this version has critical issues, please update to the latest version
 
   '@xmldom/xmldom@0.9.11':
     resolution: {integrity: sha512-tW8bcK3hsG0/uqSnNz6TK4BkcuZSezoU7DlnYssILmZDktPnSHHuDJJFM0AJv+13gz2r0iGdrj6qqKeUnxXEDg==}
@@ -3629,8 +3632,6 @@ snapshots:
       loupe: 3.2.1
       tinyrainbow: 1.2.0
 
-  '@xmldom/xmldom@0.8.11': {}
-
   '@xmldom/xmldom@0.9.11': {}
 
   acorn-jsx@5.3.2(acorn@8.15.0):
@@ -4383,9 +4384,9 @@ snapshots:
     dependencies:
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  mammoth@1.11.0:
+  mammoth@1.11.0(patch_hash=tzymsi2x64dkbkgcq6c7nd35l4):
     dependencies:
-      '@xmldom/xmldom': 0.8.11
+      '@xmldom/xmldom': 0.9.11
       argparse: 1.0.10
       base64-js: 1.5.1
       bluebird: 3.4.7
