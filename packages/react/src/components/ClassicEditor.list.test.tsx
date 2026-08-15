@@ -1343,4 +1343,126 @@ describe("ClassicEditor lists", () => {
     expect(editor.querySelector("blockquote")).toBeNull();
     expect(editor.querySelector('p:not([data-srte-caret-boundary])')?.textContent).toBe("const one = 1;");
   });
+
+  it("toggles code on a p-wrapped list item inside a blockquote without invalid nesting or content loss", () => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    act(() => {
+      root = createRoot(host!);
+      root.render(
+        <ClassicEditorComponent
+          value={
+            '<ul><li><p>Diagnosis relies on <strong>lab testing</strong>.</p></li><li><p>second item</p></li></ul>'
+          }
+        />
+      );
+    });
+    const editor = host.querySelector('[contenteditable="true"]') as HTMLElement;
+    const quoteButton = host.querySelector('button[title="Blockquote"]') as HTMLButtonElement;
+    const codeButton = host.querySelector('button[title="Code block"]') as HTMLButtonElement;
+    const selection = window.getSelection()!;
+    const selectNode = (node: Element) => {
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      selection.removeAllRanges();
+      selection.addRange(range);
+      document.dispatchEvent(new Event("selectionchange"));
+    };
+
+    selectNode(editor.querySelector("ul")!);
+    act(() => quoteButton.click());
+
+    selectNode(editor.querySelector("li:first-child")!);
+    act(() => codeButton.click());
+
+    const pre = editor.querySelector("pre[data-srte-list-code]") as HTMLElement;
+    expect(pre.querySelector("code > p")).toBeNull();
+    expect(pre.querySelector("code strong")?.textContent).toBe("lab testing");
+    expect(editor.querySelector("li:first-child > p")).toBeNull();
+
+    act(() => codeButton.click());
+    expect(editor.querySelector("pre")).toBeNull();
+    const items = editor.querySelectorAll("li");
+    expect(items[0].querySelectorAll("p")).toHaveLength(1);
+    expect(items[0].textContent).toBe("Diagnosis relies on lab testing.");
+    expect(items[0].querySelector("strong")?.textContent).toBe("lab testing");
+    expect(items[1].textContent).toBe("second item");
+  });
+
+  it("removes code from a list item after its enclosing blockquote was removed", () => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    act(() => {
+      root = createRoot(host!);
+      root.render(<ClassicEditorComponent value={"<ul><li>const one = 1;</li></ul>"} />);
+    });
+    const editor = host.querySelector('[contenteditable="true"]') as HTMLElement;
+    const quoteButton = host.querySelector('button[title="Blockquote"]') as HTMLButtonElement;
+    const codeButton = host.querySelector('button[title="Code block"]') as HTMLButtonElement;
+    const selection = window.getSelection()!;
+    const selectItem = () => {
+      const range = document.createRange();
+      range.selectNodeContents(editor.querySelector("li")!);
+      selection.removeAllRanges();
+      selection.addRange(range);
+      document.dispatchEvent(new Event("selectionchange"));
+    };
+
+    selectItem();
+    act(() => quoteButton.click());
+    selectItem();
+    act(() => codeButton.click());
+    selectItem();
+    act(() => quoteButton.click());
+    expect(editor.querySelector("blockquote")).toBeNull();
+    expect(editor.querySelector("pre")).not.toBeNull();
+
+    selectItem();
+    act(() => codeButton.click());
+
+    expect(editor.querySelector("pre")).toBeNull();
+    expect(editor.querySelectorAll("li")).toHaveLength(1);
+    expect(editor.querySelector("li")?.textContent).toBe("const one = 1;");
+  });
+
+  it("keeps the code-block toolbar state and removal working after removing an enclosing blockquote, without reselecting", async () => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    act(() => {
+      root = createRoot(host!);
+      root.render(<ClassicEditorComponent value={"<ul><li>const one = 1;</li></ul>"} />);
+    });
+    const editor = host.querySelector('[contenteditable="true"]') as HTMLElement;
+    const quoteButton = host.querySelector('button[title="Blockquote"]') as HTMLButtonElement;
+    const codeButton = host.querySelector('button[title="Code block"]') as HTMLButtonElement;
+    const selection = window.getSelection()!;
+    const flushRaf = () =>
+      new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+
+    const range = document.createRange();
+    range.selectNodeContents(editor.querySelector("li")!);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+
+    // Every subsequent click relies on whatever selection the previous
+    // action left behind — no manual reselecting, matching a user who
+    // leaves the caret in place between toolbar clicks.
+    act(() => quoteButton.click());
+    act(() => codeButton.click());
+    act(() => quoteButton.click());
+    await act(async () => {
+      await flushRaf();
+    });
+
+    // The toolbar must reflect reality immediately: the item is still code,
+    // even though the blockquote around it was just removed.
+    expect(codeButton.getAttribute("aria-pressed")).toBe("true");
+
+    act(() => codeButton.click());
+
+    expect(editor.querySelector("blockquote")).toBeNull();
+    expect(editor.querySelector("pre")).toBeNull();
+    expect(editor.querySelector("li")?.textContent).toBe("const one = 1;");
+  });
 });

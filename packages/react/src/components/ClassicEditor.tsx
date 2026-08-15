@@ -502,7 +502,17 @@ export function ClassicEditor({
       const inEditor = range && editor.contains(range.commonAncestorContainer);
       if (!inEditor) return;
       let node: Node | null = range.commonAncestorContainer;
-      if (node.nodeType === Node.TEXT_NODE) node = node.parentNode;
+      if (node.nodeType === Node.TEXT_NODE) {
+        node = node.parentNode;
+      } else if (range.collapsed && node instanceof HTMLElement) {
+        // A caret collapsed "between children" of a container (e.g. left
+        // there by focusElementEnd(list) after unwrapping a blockquote)
+        // must resolve down into that container's actual content, or every
+        // active-state indicator below silently reports "not active" even
+        // though the caret is sitting right next to a blockquote/pre.
+        node = resolveCollapsedElementPosition(node, range.startOffset);
+        if (node.nodeType === Node.TEXT_NODE) node = node.parentNode;
+      }
       const element = node instanceof HTMLElement ? node : null;
       const block = element?.closest("p,h1,h2,h3,h4,h5,h6,li,blockquote,pre,div") as HTMLElement | null;
       const tag = block?.tagName.toLowerCase();
@@ -1224,9 +1234,14 @@ export function ClassicEditor({
     const editor = editableRef.current;
     if (!editor) return [];
     if (range.collapsed) {
-      const element = range.startContainer instanceof HTMLElement
-        ? range.startContainer
-        : range.startContainer.parentElement;
+      // A caret left positioned "between children" of a container (e.g. via
+      // focusElementEnd(ul) after unwrapping a blockquote) needs the same
+      // drill-down as getCurrentBlock, or a list item is missed entirely
+      // whenever the collapsed point sits on the list/blockquote itself
+      // rather than inside one of its descendant text nodes.
+      let node: Node = range.startContainer;
+      if (node instanceof HTMLElement) node = resolveCollapsedElementPosition(node, range.startOffset);
+      const element = node instanceof HTMLElement ? node : node.parentElement;
       const item = element?.closest("li") as HTMLElement | null;
       return item && editor.contains(item) ? [item] : [];
     }
@@ -2858,8 +2873,13 @@ export function ClassicEditor({
 
       const listItems = resolveSelectedListItems(range);
       const plainBlocks = blocks.filter((block) => !block.closest("ul,ol") && !block.closest("table"));
+      // Detect by tag alone, not the data-srte-list-code marker: operations
+      // that round-trip a list item's content through the canonical core
+      // model (e.g. unwrapping an enclosing blockquote) don't know about
+      // this editor-internal attribute and drop it, which previously made
+      // an already-coded item look uncoded and get double-wrapped.
       const getItemCode = (item: HTMLElement) =>
-        item.querySelector(":scope > pre[data-srte-list-code]") as HTMLElement | null;
+        item.querySelector(":scope > pre") as HTMLElement | null;
       const allTargetsActive =
         listItems.every((item) => Boolean(getItemCode(item))) &&
         plainBlocks.every((block) => block.tagName === "PRE") &&
@@ -2885,7 +2905,13 @@ export function ClassicEditor({
         if (allTargetsActive && existing) {
           const code = existing.querySelector(":scope > code") as HTMLElement | null;
           const source = code || existing;
-          while (source.firstChild) item.insertBefore(source.firstChild, existing);
+          // <code> only ever holds inline content (see creation below), so
+          // restore it inside a single paragraph rather than splicing bare
+          // inline nodes directly into the list item.
+          const paragraph = document.createElement("p");
+          while (source.firstChild) paragraph.appendChild(source.firstChild);
+          if (!paragraph.childNodes.length) paragraph.innerHTML = "<br>";
+          item.insertBefore(paragraph, existing);
           existing.remove();
           lastTarget = item;
           return;
@@ -2899,10 +2925,19 @@ export function ClassicEditor({
         pre.style.textAlign = "left";
         const code = document.createElement("code");
         const nestedList = Array.from(item.children).find((child) => child.matches("ul,ol")) || null;
-        Array.from(item.childNodes).forEach((node) => {
-          if (node === nestedList) return;
-          if (node instanceof HTMLElement && node.dataset.srteCheck === "true") return;
-          code.appendChild(node);
+        const contentNodes = Array.from(item.childNodes).filter((node) =>
+          node !== nestedList && !(node instanceof HTMLElement && node.dataset.srteCheck === "true"));
+        // <code> can only hold inline content: a p/heading child (the usual
+        // shape for list-item content) is unwrapped into its inline nodes
+        // rather than nested whole, which would be invalid markup.
+        contentNodes.forEach((node, index) => {
+          if (node instanceof HTMLElement && node.matches("p,h1,h2,h3,h4,h5,h6")) {
+            while (node.firstChild) code.appendChild(node.firstChild);
+            node.remove();
+          } else {
+            code.appendChild(node);
+          }
+          if (index < contentNodes.length - 1) code.appendChild(document.createElement("br"));
         });
         if (!code.childNodes.length) code.innerHTML = "<br>";
         pre.appendChild(code);
