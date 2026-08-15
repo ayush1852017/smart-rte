@@ -1098,4 +1098,249 @@ describe("ClassicEditor lists", () => {
     expect(editor.querySelector("pre")).toBeNull();
     expect(Array.from(editor.querySelectorAll("li"), (item) => item.textContent)).toEqual(["const one = 1;", "const two = 2;"]);
   });
+
+  it("leaves unrelated blocks alone when restyling a list nested inside a wrapping container", () => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    act(() => {
+      root = createRoot(host!);
+      root.render(
+        <ClassicEditorComponent
+          value={
+            "<blockquote>" +
+            "<p>You are caring for patients across every ward in India.</p>" +
+            "<p><strong>A. Disease Characteristics and Source (Etiology)</strong></p>" +
+            "<ul><li><p>Human Immunodeficiency Virus (HIV) is classified as a Retrovirus.</p></li></ul>" +
+            "<p><strong>2. Source of Infection</strong></p>" +
+            "<ul>" +
+            "<li><p>Historical and epidemiological evidence points to zoonotic origin.</p></li>" +
+            "<li><p>Example: This zoonotic link is presented as part of the broader history.</p></li>" +
+            "</ul>" +
+            "</blockquote>"
+          }
+        />
+      );
+    });
+
+    const editor = host.querySelector('[contenteditable="true"]') as HTMLElement;
+    const secondList = editor.querySelectorAll("ul")[1];
+    const exampleText = secondList.querySelectorAll("li > p")[1].firstChild!;
+    const range = document.createRange();
+    range.setStart(exampleText, 9);
+    range.setEnd(exampleText, exampleText.textContent!.length);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+
+    const styles = host.querySelector('select[aria-label="Bulleted list styles"]') as HTMLSelectElement;
+    act(() => {
+      styles.value = "bullet:circle";
+      styles.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    expect(editor.querySelectorAll(":scope > blockquote")).toHaveLength(1);
+    expect(editor.querySelectorAll("blockquote > ul")).toHaveLength(2);
+    expect(editor.querySelector("blockquote > p")?.textContent).toContain("You are caring");
+    expect(Array.from(editor.querySelectorAll("blockquote > ul")[1].children, (item) => item.textContent)).toEqual([
+      "Historical and epidemiological evidence points to zoonotic origin.",
+      "Example: This zoonotic link is presented as part of the broader history.",
+    ]);
+  });
+
+  it("leaves unrelated blocks alone when quoting a list nested inside a wrapping container", () => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    act(() => {
+      root = createRoot(host!);
+      root.render(
+        <ClassicEditorComponent
+          value={
+            "<div>" +
+            "<p>You are caring for patients across every ward in India.</p>" +
+            "<p><strong>2. Source of Infection</strong></p>" +
+            "<ul>" +
+            "<li><p>Historical and epidemiological evidence points to zoonotic origin.</p></li>" +
+            "<li><p>Example: This zoonotic link is presented as part of the broader history.</p></li>" +
+            "</ul>" +
+            "</div>"
+          }
+        />
+      );
+    });
+
+    const editor = host.querySelector('[contenteditable="true"]') as HTMLElement;
+    const list = editor.querySelector("ul")!;
+    const exampleText = list.querySelectorAll("li > p")[1].firstChild!;
+    const range = document.createRange();
+    range.setStart(exampleText, 9);
+    range.setEnd(exampleText, exampleText.textContent!.length);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+
+    const button = host.querySelector('button[title="Blockquote"]') as HTMLButtonElement;
+    act(() => button.click());
+
+    expect(editor.textContent).toContain("You are caring for patients");
+    expect(editor.querySelector("blockquote")?.textContent).not.toContain("You are caring");
+    expect(editor.querySelector("blockquote")?.textContent).not.toContain("Historical");
+    expect(editor.querySelectorAll("blockquote ul > li")).toHaveLength(1);
+    expect(editor.querySelector("blockquote ul > li")?.textContent).toContain("Example");
+  });
+
+  it("blockquotes only the selected plain lines inside a wrapping container", () => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    act(() => {
+      root = createRoot(host!);
+      root.render(
+        <ClassicEditorComponent
+          value={"<div><p>line one</p><p>line two</p><p>line three</p><p>line four</p><p>line five</p></div>"}
+        />
+      );
+    });
+
+    const editor = host.querySelector('[contenteditable="true"]') as HTMLElement;
+    const paragraphs = editor.querySelectorAll("p");
+    const range = document.createRange();
+    range.setStart(paragraphs[1].firstChild!, 0);
+    range.setEnd(paragraphs[2].firstChild!, paragraphs[2].textContent!.length);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+
+    const button = host.querySelector('button[title="Blockquote"]') as HTMLButtonElement;
+    act(() => button.click());
+
+    const quote = editor.querySelector("blockquote");
+    expect(quote).not.toBeNull();
+    expect(quote?.textContent).not.toContain("line one");
+    expect(quote?.textContent).toContain("line two");
+    expect(quote?.textContent).toContain("line three");
+    expect(quote?.textContent).not.toContain("line four");
+    expect(editor.textContent).toContain("line one");
+    expect(editor.textContent).toContain("line five");
+  });
+
+  it("wraps an existing code block in a blockquote without losing the code", () => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    act(() => {
+      root = createRoot(host!);
+      root.render(<ClassicEditorComponent value={"<pre><code>const one = 1;</code></pre>"} />);
+    });
+    const editor = host.querySelector('[contenteditable="true"]') as HTMLElement;
+    const pre = editor.querySelector("pre")!;
+    const range = document.createRange();
+    range.selectNodeContents(pre);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+
+    const button = host.querySelector('button[title="Blockquote"]') as HTMLButtonElement;
+    act(() => button.click());
+
+    expect(editor.querySelector("blockquote > pre > code")?.textContent).toBe("const one = 1;");
+    expect(editor.querySelector(":scope > pre")).toBeNull();
+  });
+
+  it("keeps a blockquote-wrapped code block through a normalization pass", () => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    act(() => {
+      root = createRoot(host!);
+      root.render(<ClassicEditorComponent value={"<blockquote><pre><code>const one = 1;</code></pre></blockquote>"} />);
+    });
+    const editor = host.querySelector('[contenteditable="true"]') as HTMLElement;
+
+    act(() => editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" })));
+
+    expect(editor.querySelector("blockquote > pre > code")?.textContent).toBe("const one = 1;");
+  });
+
+  it("converts a solo blockquote paragraph to a code block without corrupting the blockquote", () => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    act(() => {
+      root = createRoot(host!);
+      root.render(<ClassicEditorComponent value={"<blockquote><p>const one = 1;</p></blockquote>"} />);
+    });
+    const editor = host.querySelector('[contenteditable="true"]') as HTMLElement;
+    const p = editor.querySelector("blockquote > p")!;
+    const range = document.createRange();
+    range.selectNodeContents(p);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+
+    const button = host.querySelector('button[title="Code block"]') as HTMLButtonElement;
+    act(() => button.click());
+
+    expect(editor.querySelector("blockquote > pre > code")?.textContent).toBe("const one = 1;");
+    expect(editor.querySelectorAll("blockquote")).toHaveLength(1);
+  });
+
+  it("toggles a blockquoted code block off when the selection spans the caret-boundary spacer", () => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    act(() => {
+      root = createRoot(host!);
+      root.render(<ClassicEditorComponent value={"<blockquote><pre><code>const one = 1;</code></pre></blockquote>"} />);
+    });
+    const editor = host.querySelector('[contenteditable="true"]') as HTMLElement;
+    const range = document.createRange();
+    range.selectNodeContents(editor);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+
+    const button = host.querySelector('button[title="Code block"]') as HTMLButtonElement;
+    act(() => button.click());
+
+    expect(editor.querySelector("pre")).toBeNull();
+    expect(editor.querySelector("blockquote > p")?.textContent).toBe("const one = 1;");
+  });
+
+  it("chains blockquote and code-block toggles without an intervening reselect", () => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    act(() => {
+      root = createRoot(host!);
+      root.render(<ClassicEditorComponent value={"<p>const one = 1;</p>"} />);
+    });
+    const editor = host.querySelector('[contenteditable="true"]') as HTMLElement;
+    const quoteButton = host.querySelector('button[title="Blockquote"]') as HTMLButtonElement;
+    const codeButton = host.querySelector('button[title="Code block"]') as HTMLButtonElement;
+
+    const range = document.createRange();
+    range.selectNodeContents(editor.querySelector("p")!);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+
+    // Each click below relies on whatever selection the previous click left
+    // behind (via focusElementEnd), matching how a user clicks the toolbar
+    // repeatedly without manually reselecting text between actions.
+    act(() => quoteButton.click());
+    expect(editor.querySelector("blockquote > p")?.textContent).toBe("const one = 1;");
+
+    act(() => codeButton.click());
+    expect(editor.querySelector("blockquote > pre > code")?.textContent).toBe("const one = 1;");
+    expect(editor.querySelectorAll("blockquote")).toHaveLength(1);
+
+    act(() => codeButton.click());
+    expect(editor.querySelector("pre")).toBeNull();
+    expect(editor.querySelector("blockquote > p")?.textContent).toBe("const one = 1;");
+
+    act(() => quoteButton.click());
+    expect(editor.querySelector("blockquote")).toBeNull();
+    expect(editor.querySelector('p:not([data-srte-caret-boundary])')?.textContent).toBe("const one = 1;");
+  });
 });

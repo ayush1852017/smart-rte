@@ -392,6 +392,7 @@ export function ClassicEditor({
       fixNegativeMargins(el);
       normalizeInvalidQuoteNesting(el);
       normalizeInvalidCodeBlockNesting(el);
+      normalizeBlockContainerStyling(el);
       normalizeInvalidTableNesting(el);
       ensureTableWrappers(el);
       ensureCaretBoundaryParagraphs(el);
@@ -399,6 +400,7 @@ export function ClassicEditor({
     }
     normalizeInvalidQuoteNesting(el);
     normalizeInvalidCodeBlockNesting(el);
+    normalizeBlockContainerStyling(el);
     normalizeInvalidTableNesting(el);
     ensureCaretBoundaryParagraphs(el);
     // Suppress native context menu inside table cells at capture phase
@@ -906,6 +908,7 @@ export function ClassicEditor({
     const html = restored.html;
     fixNegativeMargins(editor);
     normalizeInvalidCodeBlockNesting(editor);
+    normalizeBlockContainerStyling(editor);
     ensureTableWrappers(editor);
     ensureCaretBoundaryParagraphs(editor);
     addTableResizeHandles();
@@ -1096,12 +1099,35 @@ export function ClassicEditor({
     return range;
   };
 
+  // A collapsed range positioned directly on an element (e.g. after
+  // focusElementEnd collapses "inside" a blockquote rather than into one of
+  // its text nodes) sits between that element's children, not inside any of
+  // them. Resolve down to the actual child content at that position so a
+  // container like blockquote/li/ul/ol/td/th is never mistaken for the
+  // current block itself.
+  const resolveCollapsedElementPosition = (element: HTMLElement, offset: number): Node => {
+    let node: Node = element.childNodes[offset] ?? element.childNodes[offset - 1] ?? element;
+    while (
+      node instanceof HTMLElement &&
+      node.matches("blockquote,li,ul,ol,td,th") &&
+      node.childNodes.length
+    ) {
+      node = node.lastChild!;
+    }
+    return node;
+  };
+
   const getCurrentBlock = () => {
     const editor = editableRef.current;
     const range = getSelectionRangeInEditor();
     if (!editor || !range) return null;
     let node: Node | null = range.startContainer;
-    if (node.nodeType === Node.TEXT_NODE) node = node.parentNode;
+    if (node.nodeType === Node.TEXT_NODE) {
+      node = node.parentNode;
+    } else if (node instanceof HTMLElement) {
+      node = resolveCollapsedElementPosition(node, range.startOffset);
+      if (node.nodeType === Node.TEXT_NODE) node = node.parentNode;
+    }
     const element = node instanceof HTMLElement ? node : null;
     const cell = element?.closest("td,th") as HTMLTableCellElement | null;
     if (cell && editor.contains(cell)) {
@@ -1118,6 +1144,21 @@ export function ClassicEditor({
 
   const blockSelector = "p,h1,h2,h3,h4,h5,h6,li,blockquote,pre,div";
 
+  // Finds the nearest blockSelector ancestor without leaping over an
+  // intervening ul/ol/blockquote: those are containers, not interchangeable
+  // wrappers, so a candidate nested inside one is never mistaken for being
+  // owned by a distant container beyond it (e.g. a blockquote wrapping the
+  // whole document, or a list several levels up).
+  const findOwningBlock = (start: HTMLElement | null): HTMLElement | null => {
+    let node: HTMLElement | null = start;
+    while (node) {
+      if (node.matches("ul,ol,blockquote")) return null;
+      if (node.matches(blockSelector)) return node;
+      node = node.parentElement;
+    }
+    return null;
+  };
+
   const getSelectedBlocks = (range: Range) => {
     const editor = editableRef.current;
     if (!editor) return [];
@@ -1130,26 +1171,50 @@ export function ClassicEditor({
     const startCell = startElement?.closest?.("td,th") as HTMLTableCellElement | null;
     const endCell = endElement?.closest?.("td,th") as HTMLTableCellElement | null;
     const scope: HTMLElement = startCell && startCell === endCell && editor.contains(startCell) ? startCell : editor;
-    const blocks = Array.from(scope.querySelectorAll<HTMLElement>(blockSelector)).filter((block) => {
-      if (block === editor || block.getAttribute("data-table-wrapper") === "true") return false;
-      const parentBlock = block.parentElement?.closest(blockSelector) as HTMLElement | null;
-      if (parentBlock && scope.contains(parentBlock) && parentBlock !== scope) return false;
+
+    const intersects = (node: Element) => {
       try {
-        if (!range.intersectsNode(block)) return false;
-        const parent = block.parentNode;
-        if (parent === range.endContainer) {
-          const index = Array.prototype.indexOf.call(parent.childNodes, block) as number;
-          if (range.endOffset <= index) return false;
-        }
-        if (parent === range.startContainer) {
-          const index = Array.prototype.indexOf.call(parent.childNodes, block) as number;
-          if (range.startOffset > index) return false;
-        }
-        return true;
+        return range.intersectsNode(node);
       } catch {
         return false;
       }
+    };
+
+    const candidates = Array.from(scope.querySelectorAll<HTMLElement>(blockSelector)).filter((block) => {
+      if (block === editor || block.getAttribute("data-table-wrapper") === "true") return false;
+      // Caret-boundary spacer paragraphs exist only to give the caret a click
+      // target next to a blockquote/pre/table; they aren't real content and
+      // must never be swept into a broader selection's block set.
+      if (block.getAttribute("data-srte-caret-boundary") === "true") return false;
+      if (!intersects(block)) return false;
+      const parent = block.parentNode;
+      if (parent === range.endContainer) {
+        const index = Array.prototype.indexOf.call(parent.childNodes, block) as number;
+        if (range.endOffset <= index) return false;
+      }
+      if (parent === range.startContainer) {
+        const index = Array.prototype.indexOf.call(parent.childNodes, block) as number;
+        if (range.startOffset > index) return false;
+      }
+      return true;
     });
+
+    // Prefer a candidate's owning block (e.g. an li wrapping a single p) only
+    // when that owner has no other content outside the selection — otherwise
+    // the owner is too broad (a container spanning many unrelated lines, or
+    // the whole document) and the more specific candidate stands on its own.
+    const stage1 = candidates.filter((block) => {
+      const parentBlock = findOwningBlock(block.parentElement);
+      if (!parentBlock || !scope.contains(parentBlock) || parentBlock === scope) return true;
+      return Array.from(parentBlock.querySelectorAll<HTMLElement>(blockSelector)).some(
+        (sibling) => sibling !== block && findOwningBlock(sibling.parentElement) === parentBlock && !intersects(sibling)
+      );
+    });
+
+    // Drop any survivor that only qualifies because a more specific
+    // descendant survivor is nested inside it.
+    const blocks = stage1.filter((block) => !stage1.some((other) => other !== block && block.contains(other)));
+
     if (blocks.length > 0) return sortInDocumentOrder(blocks);
     const current = getCurrentBlock();
     return current ? [current] : [];
@@ -3779,6 +3844,13 @@ export function ClassicEditor({
       const style = node.getAttribute('style');
       if (!style) return;
 
+      // blockquote/pre carry their own consistent border+padding from the
+      // editor stylesheet; an inline border/padding pasted in from the
+      // source page (e.g. a "border: 0" reset) silently wins the cascade
+      // over that stylesheet rule and leaves them looking broken.
+      const tagName = node.tagName.toLowerCase();
+      const dropsBorderAndPadding = tagName === 'blockquote' || tagName === 'pre';
+
       const safeRules = style
         .split(';')
         .map((rule) => rule.trim())
@@ -3789,6 +3861,7 @@ export function ClassicEditor({
           const name = rule.slice(0, separator).trim().toLowerCase();
           const value = rule.slice(separator + 1).trim().toLowerCase();
           if (!allowedStyleNames.has(name)) return false;
+          if (dropsBorderAndPadding && (name.startsWith('border') || name.startsWith('padding'))) return false;
           if (value.includes('position') || value.includes('expression') || value.includes('javascript:')) return false;
           if (name === 'white-space' && value !== 'pre-wrap') return false;
           if ((name === 'width' || name === 'min-width') && !/^[\d.]+(px|pt|em|rem|%)$/.test(value)) return false;
@@ -3968,6 +4041,27 @@ export function ClassicEditor({
     });
   };
 
+  // blockquote/pre always get their border+padding from the editor
+  // stylesheet, which an inline style (e.g. carried in from a paste, or set
+  // directly via the value prop) silently overrides regardless of how it
+  // got there. Strip those two properties so the editor's own look always
+  // wins, no matter the element's origin.
+  const normalizeBlockContainerStyling = (root: HTMLElement) => {
+    root.querySelectorAll<HTMLElement>("blockquote,pre").forEach((element) => {
+      element.style.removeProperty("border");
+      element.style.removeProperty("border-top");
+      element.style.removeProperty("border-right");
+      element.style.removeProperty("border-bottom");
+      element.style.removeProperty("border-left");
+      element.style.removeProperty("padding");
+      element.style.removeProperty("padding-top");
+      element.style.removeProperty("padding-right");
+      element.style.removeProperty("padding-bottom");
+      element.style.removeProperty("padding-left");
+      if (!element.getAttribute("style")) element.removeAttribute("style");
+    });
+  };
+
   const normalizeInvalidQuoteNesting = (root: HTMLElement) => {
     root.querySelectorAll("blockquote blockquote").forEach((quote) => {
       const outerQuote = quote.parentElement?.closest("blockquote") as HTMLElement | null;
@@ -4002,7 +4096,10 @@ export function ClassicEditor({
       }
     });
 
-    root.querySelectorAll("p,h1,h2,h3,h4,h5,h6,blockquote").forEach((container) => {
+    // p/h1-h6 can only hold inline content, so a pre landing inside one (e.g.
+    // from bad paste HTML) is genuinely invalid and gets hoisted out. A
+    // blockquote is a real block container and is allowed to hold a pre.
+    root.querySelectorAll("p,h1,h2,h3,h4,h5,h6").forEach((container) => {
       const nestedCodeBlocks = Array.from(container.children).filter(
         (child) => child.tagName === "PRE"
       ) as HTMLElement[];
@@ -4059,6 +4156,7 @@ export function ClassicEditor({
     normalizeInvalidQuoteNesting(el);
     // Code blocks are document blocks and cannot be nested by drag and drop.
     normalizeInvalidCodeBlockNesting(el);
+    normalizeBlockContainerStyling(el);
     // Tables are document-level blocks and must not remain inside code or list items.
     normalizeInvalidTableNesting(el);
     // Ensure tables are wrapped for horizontal scrolling
@@ -7031,69 +7129,6 @@ export function ClassicEditor({
             }
           }}
         />
-        {dragHandle && !readOnly && (
-          <button
-            type="button"
-            draggable
-            data-srte-drag-handle="true"
-            title="Drag block"
-            aria-label="Drag block"
-            onMouseEnter={() => {
-              if (dragHandleHideTimerRef.current != null) {
-                window.clearTimeout(dragHandleHideTimerRef.current);
-                dragHandleHideTimerRef.current = null;
-              }
-            }}
-            onMouseLeave={() => {
-              if (!draggedBlockRef.current) scheduleDragHandleHide();
-            }}
-            onMouseDown={(e) => {
-              e.stopPropagation();
-            }}
-            onDragStart={(e) => {
-              draggedBlockRef.current = dragHandle.target;
-              e.dataTransfer.effectAllowed = "move";
-              e.dataTransfer.setData("text/plain", "moving-block");
-              try {
-                const ghost = dragHandle.target.cloneNode(true) as HTMLElement;
-                ghost.style.position = "fixed";
-                ghost.style.left = "-10000px";
-                ghost.style.top = "-10000px";
-                ghost.style.width = `${Math.min(dragHandle.target.getBoundingClientRect().width, 480)}px`;
-                ghost.style.opacity = "0.75";
-                document.body.appendChild(ghost);
-                e.dataTransfer.setDragImage(ghost, 12, 12);
-                window.setTimeout(() => ghost.remove(), 0);
-              } catch {}
-            }}
-            onDragEnd={() => {
-              draggedBlockRef.current = null;
-              updateDragHandleForTarget(dragHandle.target);
-            }}
-            style={{
-              position: "absolute",
-              left: dragHandle.left,
-              top: dragHandle.top + Math.max(0, (dragHandle.height - 24) / 2),
-              width: 24,
-              height: 24,
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              border: "1px solid var(--srte-border)",
-              borderRadius: 6,
-              background: "var(--srte-input-bg)",
-              color: "var(--srte-input-text)",
-              boxShadow: "var(--srte-menu-shadow)",
-              cursor: "grab",
-              zIndex: 8,
-              fontSize: 14,
-              lineHeight: 1,
-              padding: 0,
-            }}
-          >
-            ⋮⋮
-          </button>
-        )}
         {selectedImage && imageOverlay && (
           <div
             style={{
