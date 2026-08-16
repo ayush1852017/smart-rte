@@ -1366,6 +1366,25 @@ test.describe("Phase 8b canonical product authority", () => {
     await expect(dropdown).toHaveValue("paragraph");
   });
 
+  test("tracks the Block type dropdown for a code block nested inside a blockquote", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    await page.evaluate(() => {
+      const runtime = (window as typeof window & { __smartProductCanonical?: any }).__smartProductCanonical!;
+      runtime.replaceValue({
+        schemaVersion: runtime.editor.schema.version,
+        revision: runtime.editor.state.revision + 1,
+        document: { type: "doc", id: "nested-dropdown-doc", children: [
+          { type: "blockquote", id: "nested-dropdown-quote", children: [
+            { type: "code_block", id: "nested-dropdown-code", children: [{ type: "text", text: "Code" }] },
+          ] },
+        ] },
+      });
+    });
+    const dropdown = page.getByRole("combobox", { name: "Block type" });
+    await placeCaret(page, '[data-smart-id="nested-dropdown-code"]', true);
+    await expect(dropdown).toHaveValue("code_block");
+  });
+
   test("toggles checklist controls and has no default checkbox outline", async ({ page }) => {
     await page.goto("/?canonicalAuthority=1&blocks=1");
     await page.evaluate(() => {

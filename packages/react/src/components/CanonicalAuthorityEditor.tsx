@@ -222,9 +222,17 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
     let node: SmartNode = runtime.editor.document;
     for (let depth = 0; depth <= position.path.length; depth += 1) {
       if (!isTextNode(node) && node.type !== "doc" && runtime.editor.schema.nodes[node.type]?.group === "block") {
+        // paragraph/heading/code_block are this dropdown's own options -
+        // answer immediately. Everything else block-group is either a
+        // container that holds further blocks (blockquote, list, list_item,
+        // table/table_row/table_cell) - keep walking the path to find the
+        // actual innermost block instead of answering for the wrapper - or
+        // an atomic node with no dropdown answer of its own, which falls
+        // through to the loop's own "paragraph" default below once it runs
+        // out of path to follow.
         if (node.type === "code_block") return "code_block";
         if (node.type === "heading") return `heading-${Number(node.attrs?.level || 1)}`;
-        return "paragraph";
+        if (node.type === "paragraph") return "paragraph";
       }
       if (depth === position.path.length || isTextNode(node)) break;
       const child = node.children?.[position.path[depth]];
