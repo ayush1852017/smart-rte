@@ -9,7 +9,7 @@ overrides:
 
 patchedDependencies:
   mammoth@1.11.0:
-    hash: tzymsi2x64dkbkgcq6c7nd35l4
+    hash: 5dvaqsxm7uyfkfhpbw65qptjzm
     path: patches/mammoth@1.11.0.patch
 
 importers:
@@ -36,7 +36,7 @@ importers:
         version: 0.18.4
       mammoth:
         specifier: ^1.11.0
-        version: 1.11.0(patch_hash=tzymsi2x64dkbkgcq6c7nd35l4)
+        version: 1.11.0(patch_hash=5dvaqsxm7uyfkfhpbw65qptjzm)
       parse5:
         specifier: ^7.2.1
         version: 7.3.0
@@ -73,7 +73,7 @@ importers:
         version: 3.10.1
       mammoth:
         specifier: ^1.11.0
-        version: 1.11.0(patch_hash=tzymsi2x64dkbkgcq6c7nd35l4)
+        version: 1.11.0(patch_hash=5dvaqsxm7uyfkfhpbw65qptjzm)
       pdfjs-dist:
         specifier: ^5.4.530
         version: 5.4.530
@@ -4384,7 +4384,7 @@ snapshots:
     dependencies:
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  mammoth@1.11.0(patch_hash=tzymsi2x64dkbkgcq6c7nd35l4):
+  mammoth@1.11.0(patch_hash=5dvaqsxm7uyfkfhpbw65qptjzm):
     dependencies:
       '@xmldom/xmldom': 0.9.11
       argparse: 1.0.10

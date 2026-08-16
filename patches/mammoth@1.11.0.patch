@@ -1,3 +1,90 @@
+diff --git a/lib/xml/reader.js b/lib/xml/reader.js
+index 41aabde7dac1b2be37fbcbc6d925b03b10e7e736..01a7dedb7d9fbb3599213a23c41a03a175637ed4 100644
+--- a/lib/xml/reader.js
++++ b/lib/xml/reader.js
+@@ -22,32 +22,62 @@ function readString(xmlString, namespaceMap) {
+         return promises.resolve(new Error(document.documentElement.textContent));
+     }
+ 
+-    function convertNode(node) {
+-        switch (node.nodeType) {
+-        case Node.ELEMENT_NODE:
+-            return convertElement(node);
+-        case Node.TEXT_NODE:
+-            return nodes.text(node.nodeValue);
++    // Originally a pair of mutually-recursive functions (one JS call-stack
++    // frame per level of XML nesting). A sufficiently deep document (a
++    // realistic attack via a crafted .docx - XML nesting has no size limit
++    // of its own) exhausted the stack with a RangeError, independently of
++    // and unrelated to the @xmldom/xmldom recursion issues fixed above in
++    // this same patch. Rewritten as a single iterative, explicit-stack
++    // post-order walk so nesting depth costs heap (an array), not call
++    // frames. See docs/bugs/mammoth-own-reader-unguarded-recursion-dos.md.
++    //
++    // Must produce byte-identical output to the original recursive version
++    // for any well-formed document: same document order, same filtering of
++    // non-element/non-text nodes (comments, processing instructions, etc.
++    // are silently dropped, matching the original switch's fall-through).
++    function convertNode(rootNode) {
++        if (rootNode.nodeType === Node.TEXT_NODE) {
++            return nodes.text(rootNode.nodeValue);
++        }
++        if (rootNode.nodeType !== Node.ELEMENT_NODE) {
++            return undefined;
+         }
+-    }
+ 
+-    function convertElement(element) {
+-        var convertedName = convertName(element);
++        // Each frame converts one element: its DOM node, an index cursor
++        // into its childNodes (avoids O(n) array shifting on wide sibling
++        // lists), and the already-converted children collected so far, in
++        // document order.
++        var stack = [{ element: rootNode, index: 0, convertedChildren: [] }];
++        var result;
+ 
+-        var convertedChildren = [];
+-        _.forEach(element.childNodes, function(childNode) {
+-            var convertedNode = convertNode(childNode);
+-            if (convertedNode) {
+-                convertedChildren.push(convertedNode);
++        while (stack.length > 0) {
++            var frame = stack[stack.length - 1];
++            var childNodes = frame.element.childNodes;
++            if (frame.index >= childNodes.length) {
++                var convertedAttributes = {};
++                _.forEach(frame.element.attributes, function(attribute) {
++                    convertedAttributes[convertName(attribute)] = attribute.value;
++                });
++                var built = new Element(convertName(frame.element), convertedAttributes, frame.convertedChildren);
++                stack.pop();
++                if (stack.length === 0) {
++                    result = built;
++                } else {
++                    stack[stack.length - 1].convertedChildren.push(built);
++                }
++                continue;
+             }
+-        });
+ 
+-        var convertedAttributes = {};
+-        _.forEach(element.attributes, function(attribute) {
+-            convertedAttributes[convertName(attribute)] = attribute.value;
+-        });
++            var childNode = childNodes[frame.index];
++            frame.index += 1;
++            if (childNode.nodeType === Node.TEXT_NODE) {
++                frame.convertedChildren.push(nodes.text(childNode.nodeValue));
++            } else if (childNode.nodeType === Node.ELEMENT_NODE) {
++                stack.push({ element: childNode, index: 0, convertedChildren: [] });
++            }
++        }
+ 
+-        return new Element(convertedName, convertedAttributes, convertedChildren);
++        return result;
+     }
+ 
+     function convertName(node) {
 diff --git a/lib/xml/xmldom.js b/lib/xml/xmldom.js
 index 752c353f0c97f86280c96984fe963c8b6f6d0c6c..63bc6ad7685433ddf73b124de32ba5051206d6c1 100644
 --- a/lib/xml/xmldom.js
