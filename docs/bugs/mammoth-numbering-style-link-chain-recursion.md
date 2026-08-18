@@ -1,6 +1,6 @@
 # Mammoth's numbering `numStyleLink` chain resolution has unguarded recursion — unmitigated by the existing depth guard
 
-**Status:** Open, confirmed exploitable through the real production entry point, **not** protected by the existing mitigation
+**Status:** Fixed. Converted to an iterative loop with cycle detection, verified against the exact real-attack reproduction below (no longer crashes) plus a genuine A→B→...→A cycle (resolves cleanly, doesn't hang) and normal short chains (unaffected).
 **Area:** formats / docx / security
 **First reported:** 2026-08-16, during `docs/PHASE_9_MAMMOTH_RECURSION_AUDIT.md`'s systematic audit for further instances of the bug class found in `docs/bugs/mammoth-bundles-vulnerable-transitive-xmldom.md`, `docs/bugs/mammoth-own-reader-unguarded-recursion-dos.md`, and `docs/bugs/mammoth-office-xml-reader-collapse-alternate-content-recursion.md`
 **Related files:** the three entries above (same bug class); `packages/core/src/foundation/formats/docx/nestingGuard.ts` (does **not** cover this attack shape — see Root cause)
@@ -67,15 +67,43 @@ This is exactly why `nestingGuard.ts` — a tag-nesting-depth scan of `word/docu
 
 ## Fix
 
-**Not applied — audit-only pass, per explicit scope.** This needs its own decision, and likely its own kind of fix rather than a simple guard extension:
-1. Convert `findLevel` to an iterative loop with cycle/length detection (straightforward — it's a simple linear chain-follow, easier to convert than the tree-walkers already fixed) — but this only closes *this* specific function, not the general class.
-2. A reference-chain-length guard specific to numbering resolution (cap the number of `numStyleLink` hops `findLevel` will follow) — narrower and more targeted than the existing tag-depth guard, would need its own reasoned threshold (a real document's numbering style chains are essentially never more than 1-2 links deep; a limit in the low tens would be extremely generous).
-3. See `docs/PHASE_9_MAMMOTH_RECURSION_AUDIT.md` for the broader question this and the other newly-found candidates raise about whether continuing to guard/fix individual functions is the right approach at all.
+**Applied** (option 1 from the list previously here): converted `findLevel` to an iterative loop, extended into the same `patches/mammoth@1.11.0.patch` that already fixes the `@xmldom/xmldom` mimeType/errorHandler incompatibilities and `xml/reader.js`'s `convertNode`/`convertElement` — one patch file for this mammoth version, consistent with every prior fix in this chain, no reason found to split it out.
+
+```js
+function findLevel(numId, level) {
+    var visitedNumIds = {};
+    for (;;) {
+        if (Object.prototype.hasOwnProperty.call(visitedNumIds, numId)) {
+            return null; // cycle detected
+        }
+        visitedNumIds[numId] = true;
+
+        var num = nums[numId];
+        if (!num) return null;
+        var abstractNum = abstractNums[num.abstractNumId];
+        if (!abstractNum) return null;
+        if (abstractNum.numStyleLink == null) {
+            return abstractNums[num.abstractNumId].levels[level];
+        }
+        var style = styles.findNumberingStyleById(abstractNum.numStyleLink);
+        numId = style.numId;
+    }
+}
+```
+
+Includes explicit cycle detection (`visitedNumIds`), not just an iteration cap — a genuine `A → B → ... → A` reference cycle now returns `null` cleanly on revisiting a `numId`, rather than looping (or recursing) forever. Every other branch's behavior — including the original's un-null-checked `style.numId` access, which throws if `styles.findNumberingStyleById` returns nothing for a malformed `numStyleLink` — is preserved exactly; only the recursive call itself became a loop iteration.
+
+**Verification, in order:**
+1. `docx/format.test.ts` + `nestingGuard.test.ts`: 18/18, unchanged.
+2. Full suites: lint clean; core 501/501; react 97/97; full 3-browser 7-file e2e 253/5/0 — all identical to the pre-fix baseline.
+3. **The real attack, rebuilt exactly as in this report** (10,000-link `numStyleLink` chain, real `.docx`, through the actual `importDocxDocumentWithMammoth` entry point): **succeeded in 353ms**, producing correct list output — no longer crashes.
+4. **A genuine cycle**, not just a long finite chain (`A → B → ... → A`, both at 50 and 10,000 links): resolved cleanly in single-digit-to-low-hundreds of milliseconds, no hang, no crash — `findLevel` correctly returns `null` for the unresolvable cyclic reference, and the paragraph falls back to plain (non-numbered) content rather than the import failing.
+5. A normal, short (depth-3) chain: unaffected, still resolves correctly — confirming the fix doesn't change behavior for realistic documents.
 
 ## Regression coverage
 
-None yet — no fix applied. The isolated `Numbering.findLevel` test and the full crafted-`.docx` reproduction above are both repeatable and should be the basis for verifying whichever fix is eventually chosen, per the standing lesson of this entire investigation chain (verify against the real attack, not just unit tests).
+`docx/format.test.ts` and `nestingGuard.test.ts` (18 tests) exercise the DOCX import path on every run. The real-attack reproduction (10,000-link chain), the cycle reproduction (`A → B → ... → A`), and the normal-chain case above are all repeatable and are the actual proof of this fix, per the standing lesson of this entire investigation chain (verify against the real attack, not just unit tests) — none of the three was a plausible-looking change accepted on inspection alone.
 
 ## Related/similar issues
 
-`docs/bugs/mammoth-bundles-vulnerable-transitive-xmldom.md`, `docs/bugs/mammoth-own-reader-unguarded-recursion-dos.md`, `docs/bugs/mammoth-office-xml-reader-collapse-alternate-content-recursion.md` — same general bug class (unguarded recursion in mammoth's own code or bundled dependency), but this is the first one **not** incidentally covered by the existing `nestingGuard.ts` mitigation, and the first one driven by a fundamentally different attack shape (reference-chain length, not tree-nesting depth). See `docs/PHASE_9_MAMMOTH_RECURSION_AUDIT.md` for the full systematic audit this was found during, including several further candidates (confirmed vulnerable at the function level, currently masked by the existing guard for the tree-nesting-depth attack shape specifically) not yet individually ledgered.
+`docs/bugs/mammoth-bundles-vulnerable-transitive-xmldom.md`, `docs/bugs/mammoth-own-reader-unguarded-recursion-dos.md`, `docs/bugs/mammoth-office-xml-reader-collapse-alternate-content-recursion.md` — same general bug class (unguarded recursion in mammoth's own code or bundled dependency). This was the first one found **not** incidentally covered by the existing `nestingGuard.ts` mitigation (a fundamentally different attack shape — reference-chain length, not tree-nesting depth), and is now, with `xml/reader.js`, the second of the four confirmed instances fixed at the root rather than only mitigated. See `docs/PHASE_9_MAMMOTH_RECURSION_AUDIT.md` for the full systematic audit this was found during, and `docs/PHASE_9_MAMMOTH_FINAL_DECISION.md` for the closing decision on the remaining candidates that audit left open.

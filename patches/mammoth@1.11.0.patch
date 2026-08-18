@@ -1,3 +1,53 @@
+diff --git a/lib/docx/numbering-xml.js b/lib/docx/numbering-xml.js
+index 544ba5244bd6d1650b4d41e5011516b679889bed..8d202eb3d70ab7f2934c96d2e1972cc26d84eabc 100644
+--- a/lib/docx/numbering-xml.js
++++ b/lib/docx/numbering-xml.js
+@@ -17,19 +17,37 @@ function Numbering(nums, abstractNums, styles) {
+     );
+ 
+     function findLevel(numId, level) {
+-        var num = nums[numId];
+-        if (num) {
++        // Originally recursive (one call-stack frame per numStyleLink hop),
++        // with no length limit and no cycle detection - a long chain or a
++        // self-referential cycle (A -> B -> A) both recursed the same way,
++        // unboundedly. Rewritten as an iterative loop with cycle detection
++        // via visitedNumIds so a chain of any length costs heap (an object),
++        // not call frames, and a genuine cycle returns null on the second
++        // visit to a numId instead of recursing forever. See
++        // docs/bugs/mammoth-numbering-style-link-chain-recursion.md. Every
++        // other branch's behavior (including throwing if style.numId is
++        // accessed on an unresolved style, matching the original) is
++        // unchanged.
++        var visitedNumIds = {};
++        for (;;) {
++            if (Object.prototype.hasOwnProperty.call(visitedNumIds, numId)) {
++                return null;
++            }
++            visitedNumIds[numId] = true;
++
++            var num = nums[numId];
++            if (!num) {
++                return null;
++            }
+             var abstractNum = abstractNums[num.abstractNumId];
+             if (!abstractNum) {
+                 return null;
+-            } else if (abstractNum.numStyleLink == null) {
++            }
++            if (abstractNum.numStyleLink == null) {
+                 return abstractNums[num.abstractNumId].levels[level];
+-            } else {
+-                var style = styles.findNumberingStyleById(abstractNum.numStyleLink);
+-                return findLevel(style.numId, level);
+             }
+-        } else {
+-            return null;
++            var style = styles.findNumberingStyleById(abstractNum.numStyleLink);
++            numId = style.numId;
+         }
+     }
+ 
 diff --git a/lib/xml/reader.js b/lib/xml/reader.js
 index 41aabde7dac1b2be37fbcbc6d925b03b10e7e736..01a7dedb7d9fbb3599213a23c41a03a175637ed4 100644
 --- a/lib/xml/reader.js
