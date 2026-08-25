@@ -1,6 +1,6 @@
 # Rolling back to the legacy editor remints canonical node IDs
 
-**Status:** Open — promotion/annotation identity risk
+**Status:** Fixed by deletion — the mechanism this bug describes no longer exists in product code
 **Area:** authority / rollback / identity / collaboration
 **First reported:** 2026-08-05 (Phase 8b completion report)
 **Related files:** `docs/PHASE_8B_COMPLETION_REPORT.md`, `docs/PHASE_8B_DELTA_REPORT_2.md`, `packages/react/src/components/CanonicalAuthorityEditor.tsx`
@@ -24,11 +24,15 @@ The rollback boundary intentionally serializes clean HTML and reparses it. Clean
 
 ## Fix
 
-None yet. The current rollout decision explicitly treats rollback as content-safe but not annotation-safe. Before annotations or collaboration rely on rollback, preserve an ID-bearing canonical envelope across the flag transition or add a stable mapping/reconciliation layer; do not silently call the current HTML round-trip identity-safe.
+**Closed by deletion, verified during Phase 8c item 4 (2026-08-18).** `legacyDocument()` and the entire `LegacyClassicEditor` DOM-authoritative rollback path — the code this bug's root cause pointed at — were removed in `60adfb7` ("feat(react)!: retire LegacyClassicEditor, the DOM-authoritative rollback path") and `cb05f88` ("feat(react)!: remove canonicalAuthorityFlag entirely (Phase 9 §1.1)"). There is no longer a canonical → clean-HTML → legacy-DOM-edit → reparse boundary anywhere in the product: `git grep -n "legacyDocument\|LegacyClassicEditor" packages/react/src packages/core/src` returns zero product-code hits — only unrelated, differently-named list/table shadow-comparator test infrastructure (`packages/core/src/foundation/list/shadow.ts`, `packages/react/src/adapters/legacyListShadowComparator.ts`, `packages/react/src/test-harness/tableShadowComparator.ts`) and one historical doc-comment in `packages/react/src/components/ClassicEditorAuthority.tsx:39`.
+
+The only other path that could plausibly be called a "rollback" today — checkpoint/version restore — is safe by construction: `restoreCheckpoint` (`packages/react/src/canonicalEditorRuntime.ts:319-324`) calls `this.editor.replaceState(checkpoint.envelope, ...)` with a structured `PersistedEditorDocument`, serialized/parsed via `serializePersistedDocument`/`parsePersistedDocument` (`packages/core/src/foundation/schema.ts:408-411`) — a JSON round-trip where node IDs are first-class fields, never an HTML boundary that could strip and remint them.
+
+**Forward-looking flag, not a fix:** if a future feature adds an HTML-based restore/import surface (e.g. an "restore from exported HTML" recovery feature, conceivably in Phase 12a), it would need the same identity scrutiny this bug documents. Recommend adding a standing ID-preservation regression test on whatever module owns that surface if/when it's proposed — do not assume safety carries forward automatically just because this specific mechanism is gone.
 
 ## Regression coverage
 
-`canonicalEditorRuntime.test.tsx` covers canonical/legacy/canonical content preservation and flag precedence, but it does not assert node-ID preservation across a legacy edit. Add that identity test when the rollback contract is changed. Phase 1 identity tests remain valid for canonical operations that do not cross the HTML boundary.
+No code changed by this closure — verification was read-only (`git log`, `git grep`, and direct inspection of `restoreCheckpoint`'s envelope-based data flow). `canonicalEditorRuntime.test.tsx`'s existing coverage of checkpoint restore already exercises the JSON-envelope path this bug's fix relies on being identity-preserving; no new test was added since there is no live code path left to regress. If a future HTML-based restore surface is added, add a dedicated ID-preservation test at that point (see flag above).
 
 ## Related/similar issues
 

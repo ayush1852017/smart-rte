@@ -4,7 +4,7 @@ import { runNormalization, type NormalizationRun } from "./normalization.js";
 import { applyOperations } from "./operations.js";
 import { createTransactionMap } from "./mapping.js";
 import { resolvePos } from "./positions.js";
-import { foundationSchema, repair, validate } from "./schema.js";
+import { foundationRegistry, foundationSchema, repair, validate } from "./schema.js";
 import { applyTransactionAtomic } from "./transactions.js";
 import { FoundationScopeIndex } from "./scope/resolveScope.js";
 import { migrateNewlineTextToHardBreaks } from "./marks/hardBreak.js";
@@ -25,6 +25,7 @@ import type {
   SmartTransaction,
 } from "./types.js";
 import type { PositionLookup, ScopeRequest, ScopeResult } from "./scope/types.js";
+import type { ContextMenuContribution, KeyboardShortcutContribution, PluginCommand } from "./plugin/types.js";
 
 export interface FoundationEditorState extends PersistedEditorDocument {
   selection: SmartSelection;
@@ -123,6 +124,12 @@ export interface FoundationEditorOptions {
   selection: SmartSelection;
   revision?: number;
   schema?: SmartSchema;
+  /** Defaults to the built-in registry's commands - a custom plugin list's registry.commands should be passed here to keep it in sync with a custom `schema`. */
+  commands?: ReadonlyMap<string, PluginCommand>;
+  /** Defaults to the built-in registry's keyboardShortcuts, for the same reason as `commands`. */
+  keyboardShortcuts?: readonly KeyboardShortcutContribution[];
+  /** Defaults to the built-in registry's contextMenu, for the same reason as `commands`. */
+  contextMenu?: readonly ContextMenuContribution[];
   normalizers?: readonly NormalizerRegistration[];
   historyLimit?: number;
   historyByteLimit?: number;
@@ -158,6 +165,9 @@ const mapSelectionThroughBoundaryOperations = (
 
 export class FoundationEditor {
   readonly schema: SmartSchema;
+  readonly commands: ReadonlyMap<string, PluginCommand>;
+  readonly keyboardShortcuts: readonly KeyboardShortcutContribution[];
+  readonly contextMenu: readonly ContextMenuContribution[];
   private current: FoundationEditorState;
   private currentHistory: SmartHistory;
   private readonly normalizers: readonly NormalizerRegistration[];
@@ -169,6 +179,9 @@ export class FoundationEditor {
 
   constructor(options: FoundationEditorOptions) {
     this.schema = options.schema || foundationSchema;
+    this.commands = options.commands || foundationRegistry.commands;
+    this.keyboardShortcuts = options.keyboardShortcuts || foundationRegistry.keyboardShortcuts;
+    this.contextMenu = options.contextMenu || foundationRegistry.contextMenu;
     const candidate = options.document.type === "doc"
       ? options.document
       : { type: "doc", id: createNodeId(), children: [options.document] };

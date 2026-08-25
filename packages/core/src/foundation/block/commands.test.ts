@@ -169,6 +169,39 @@ describe("Phase 5 pure block commands", () => {
       expect(editor.selection).toEqual(reverse);
     }
   });
+
+  // Phase 8c collab-readiness gate, assertion 1: identity survives
+  // split/merge/move/type-change/undo. The property test above covers
+  // type-change at editor level; split/merge already have dedicated
+  // editor-level and pure-operation coverage elsewhere (foundation.test.ts,
+  // table/table.test.ts, list/history.property.test.ts). moveNode was only
+  // covered at the pure-operation-algebra level (foundation.test.ts's
+  // apply-then-invert case), not through a real editor undo/redo cycle -
+  // this closes that gap using the same seeded-loop, editor-level shape.
+  it("preserves exact IDs and order across move-then-undo-then-redo in 500 cases (seed 0x3A0BE500)", () => {
+    let seed = 0x3A0BE500;
+    for (let run = 0; run < 500; run += 1) {
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+      const before = documentOf(paragraph(`a-${run}`, "A"), paragraph(`b-${run}`, "B"), paragraph(`c-${run}`, "C"));
+      const selection = { type: "text" as const, anchor: { path: [0], offset: 0 }, head: { path: [0], offset: 0 } };
+      const editor = createFoundationEditor({ document: before, selection });
+      const ids = [`a-${run}`, `b-${run}`, `c-${run}`];
+      const blockId = ids[seed % 3];
+      const direction = (seed >>> 8) % 2 === 0 ? "down" : "up";
+      const operations = moveBlockCommand(editor.document, blockScope(blockId), { direction }, { schema: editor.schema, positions: editor.positions });
+      if (!operations.length) continue; // e.g. moving the first block "up" is a no-op
+      const idsBefore = editor.document.children.map((node) => !isText(node) && node.id);
+      editor.transact((transaction) => { transaction.operations.push(...operations); }, { source: "toolbar", addToHistory: true, timestamp: seed });
+      const idsAfterMove = editor.document.children.map((node) => !isText(node) && node.id);
+      expect(idsAfterMove).not.toEqual(idsBefore);
+      expect(new Set(idsAfterMove)).toEqual(new Set(idsBefore));
+      expect(editor.undo()).toBe(true);
+      expect(editor.document).toEqual(before);
+      expect(editor.document.children.map((node) => !isText(node) && node.id)).toEqual(idsBefore);
+      expect(editor.redo()).toBe(true);
+      expect(editor.document.children.map((node) => !isText(node) && node.id)).toEqual(idsAfterMove);
+    }
+  });
 });
 
 const isText = (node: SmartDocument["children"][number]): node is Extract<typeof node, { type: "text" }> => node.type === "text";

@@ -25,12 +25,14 @@ import {
   recordHistory,
   repair,
   resolvePos,
+  restoreUnknownMarks,
   runNormalization,
   serializePersistedDocument,
   validate,
   type NormalizerRegistration,
   type PersistedEditorDocument,
   type SmartDocument,
+  type SmartElementNode,
   type SmartOperation,
   type SmartPos,
   type SmartSelection,
@@ -62,6 +64,38 @@ const deepFreeze = <T>(value: T): T => {
     Object.values(value as Record<string, unknown>).forEach(deepFreeze);
   }
   return value;
+};
+
+// Hoisted to module scope (Phase 8c collab-readiness gate, assertion
+// 3/5): the canonical one-of-each-operation-type fixture, reused by the
+// operation-algebra tests below as well as the cross-describe-block
+// associativity and mapOperation coverage further down this file.
+const operationCases = (): Array<[string, SmartDocument, SmartOperation]> => {
+  const twoBlocks: SmartDocument = { type: "doc", id: "doc", children: [
+    { type: "paragraph", id: "a", children: [{ type: "text", text: "one" }] },
+    { type: "paragraph", id: "b", children: [{ type: "text", text: "two" }] },
+  ] };
+  const splitDoc: SmartDocument = { type: "doc", id: "doc", children: [{ type: "list", id: "list", attrs: { ordered: false }, children: [
+    { type: "list_item", id: "i1", children: [{ type: "paragraph", id: "p1", children: [] }] },
+    { type: "list_item", id: "i2", children: [{ type: "paragraph", id: "p2", children: [] }] },
+  ] }] };
+  return [
+    ["insertNode", doc(), { type: "insertNode", pos: { path: [], offset: 1 }, node: { type: "paragraph", id: "p2", children: [] } }],
+    ["removeNode", twoBlocks, { type: "removeNode", pos: { path: [], offset: 1 }, node: twoBlocks.children[1] }],
+    ["replaceNode", twoBlocks, { type: "replaceNode", pos: { path: [], offset: 1 }, before: twoBlocks.children[1], after: { type: "paragraph", id: "c", children: [] } }],
+    ["moveNode", twoBlocks, { type: "moveNode", from: { path: [], offset: 0 }, to: { path: [], offset: 1 }, nodeId: "a" }],
+    ["splitNode", splitDoc, { type: "splitNode", pos: { path: [0], offset: 1 }, depth: 0, newId: "list-new" }],
+    ["mergeNode", { type: "doc", id: "doc", children: [
+      { type: "list", id: "l1", attrs: { ordered: false }, children: [{ type: "list_item", id: "i1", children: [{ type: "paragraph", id: "p1", children: [] }] }] },
+      { type: "list", id: "l2", attrs: { ordered: false }, children: [{ type: "list_item", id: "i2", children: [{ type: "paragraph", id: "p2", children: [] }] }] },
+    ] }, { type: "mergeNode", pos: { path: [], offset: 1 }, depth: 0, retiredId: "l2", splitOffset: 1 }],
+    ["setNodeAttributes", doc(), { type: "setNodeAttributes", pos: { path: [0], offset: 0 }, before: {}, after: { role: "note" } }],
+    ["setNodeType", doc(), { type: "setNodeType", pos: { path: [0], offset: 0 }, before: "paragraph", after: "heading", beforeAttrs: {}, afterAttrs: { level: 2 } }],
+    ["insertText", doc(), { type: "insertText", pos: { path: [0], offset: 2 }, text: "X", marks: [{ type: "bold" }] }],
+    ["deleteText", doc(), { type: "deleteText", pos: { path: [0], offset: 1 }, text: "ell" }],
+    ["addMark", doc(), { type: "addMark", range: { from: { path: [0], offset: 1 }, to: { path: [0], offset: 4 } }, mark: { type: "bold" } }],
+    ["removeMark", { type: "doc", id: "doc", children: [{ type: "paragraph", id: "p1", children: [{ type: "text", text: "hello", marks: [{ type: "bold" }] }] }] }, { type: "removeMark", range: { from: { path: [0], offset: 1 }, to: { path: [0], offset: 4 } }, mark: { type: "bold" } }],
+  ];
 };
 
 describe("Phase 1 schema and identity contract", () => {
@@ -105,6 +139,30 @@ describe("Phase 1 schema and identity contract", () => {
       persisted = parsePersistedDocument(serializePersistedDocument(persisted));
       expect(repair(persisted.document).doc).toEqual(first);
     }
+  });
+
+  it("preserves an unrecognized mark as unknown-mark on ordinary repair, independent of any plugin registry, and restores it once recognized again", () => {
+    const original: SmartDocument = { type: "doc", id: "doc", children: [
+      { type: "paragraph", id: "p", children: [{ type: "text", text: "hello", marks: [{ type: "a-mark-type-that-was-never-registered", attrs: { intensity: 2 } }] }] },
+    ] };
+    expect(foundationSchema.marks["a-mark-type-that-was-never-registered"]).toBeUndefined();
+
+    const { doc: repaired, repairs } = repair(original, foundationSchema);
+    expect(repairs.some((r) => r.code === "preserve-unknown-mark")).toBe(true);
+    const textNode = (repaired.children[0] as SmartElementNode).children![0];
+    expect("marks" in textNode ? textNode.marks : undefined).toEqual([
+      { type: "unknown-mark", attrs: { originalType: "a-mark-type-that-was-never-registered", originalAttrs: { intensity: 2 } } },
+    ]);
+    expect(validate(repaired, foundationSchema)).toEqual([]);
+
+    const laterSchema = createSchema({
+      version: 1,
+      nodes: [foundationSchema.nodes.doc, foundationSchema.nodes.paragraph, foundationSchema.nodes.text],
+      marks: [...Object.values(foundationSchema.marks), { type: "a-mark-type-that-was-never-registered", attributes: { intensity: {} } }],
+    });
+    const restored = restoreUnknownMarks(repaired, laterSchema);
+    expect(restored).toEqual(original);
+    expect(validate(restored, laterSchema)).toEqual([]);
   });
 
   it("round-trips the envelope losslessly", () => {
@@ -205,34 +263,6 @@ describe("Phase 1 positions and graphemes", () => {
 });
 
 describe("Phase 1 operation algebra", () => {
-  const operationCases = (): Array<[string, SmartDocument, SmartOperation]> => {
-    const twoBlocks: SmartDocument = { type: "doc", id: "doc", children: [
-      { type: "paragraph", id: "a", children: [{ type: "text", text: "one" }] },
-      { type: "paragraph", id: "b", children: [{ type: "text", text: "two" }] },
-    ] };
-    const splitDoc: SmartDocument = { type: "doc", id: "doc", children: [{ type: "list", id: "list", attrs: { ordered: false }, children: [
-      { type: "list_item", id: "i1", children: [{ type: "paragraph", id: "p1", children: [] }] },
-      { type: "list_item", id: "i2", children: [{ type: "paragraph", id: "p2", children: [] }] },
-    ] }] };
-    return [
-      ["insertNode", doc(), { type: "insertNode", pos: { path: [], offset: 1 }, node: { type: "paragraph", id: "p2", children: [] } }],
-      ["removeNode", twoBlocks, { type: "removeNode", pos: { path: [], offset: 1 }, node: twoBlocks.children[1] }],
-      ["replaceNode", twoBlocks, { type: "replaceNode", pos: { path: [], offset: 1 }, before: twoBlocks.children[1], after: { type: "paragraph", id: "c", children: [] } }],
-      ["moveNode", twoBlocks, { type: "moveNode", from: { path: [], offset: 0 }, to: { path: [], offset: 1 }, nodeId: "a" }],
-      ["splitNode", splitDoc, { type: "splitNode", pos: { path: [0], offset: 1 }, depth: 0, newId: "list-new" }],
-      ["mergeNode", { type: "doc", id: "doc", children: [
-        { type: "list", id: "l1", attrs: { ordered: false }, children: [{ type: "list_item", id: "i1", children: [{ type: "paragraph", id: "p1", children: [] }] }] },
-        { type: "list", id: "l2", attrs: { ordered: false }, children: [{ type: "list_item", id: "i2", children: [{ type: "paragraph", id: "p2", children: [] }] }] },
-      ] }, { type: "mergeNode", pos: { path: [], offset: 1 }, depth: 0, retiredId: "l2", splitOffset: 1 }],
-      ["setNodeAttributes", doc(), { type: "setNodeAttributes", pos: { path: [0], offset: 0 }, before: {}, after: { role: "note" } }],
-      ["setNodeType", doc(), { type: "setNodeType", pos: { path: [0], offset: 0 }, before: "paragraph", after: "heading", beforeAttrs: {}, afterAttrs: { level: 2 } }],
-      ["insertText", doc(), { type: "insertText", pos: { path: [0], offset: 2 }, text: "X", marks: [{ type: "bold" }] }],
-      ["deleteText", doc(), { type: "deleteText", pos: { path: [0], offset: 1 }, text: "ell" }],
-      ["addMark", doc(), { type: "addMark", range: { from: { path: [0], offset: 1 }, to: { path: [0], offset: 4 } }, mark: { type: "bold" } }],
-      ["removeMark", { type: "doc", id: "doc", children: [{ type: "paragraph", id: "p1", children: [{ type: "text", text: "hello", marks: [{ type: "bold" }] }] }] }, { type: "removeMark", range: { from: { path: [0], offset: 1 }, to: { path: [0], offset: 4 } }, mark: { type: "bold" } }],
-    ];
-  };
-
   it.each(operationCases())("apply then invert is identity for %s", (_name, before, operation) => {
     const after = applyOperation(before, operation);
     expect(applyOperation(after, invertOperation(operation))).toEqual(before);
@@ -369,6 +399,20 @@ describe("Phase 1 operation algebra", () => {
     expect(mapOperation(pending, remove)).toBeNull();
   });
 
+  // Phase 8c collab-readiness gate, assertion 5: mapOperation's dispatch
+  // covers all 12 operation types (mapOperation, operations.ts); this
+  // exercises every branch, not just the single setNodeAttributes-through-
+  // removeNode case above. mapPosThroughOperation is pure path arithmetic
+  // with no document lookups, so a synthetic "through" operation is safe to
+  // pair with every case regardless of whether it is semantically valid for
+  // that case's own document.
+  it.each(operationCases())("mapOperation maps %s through a concurrent operation without throwing", (_name, _before, operation) => {
+    const through: SmartOperation = { type: "insertText", pos: { path: [0], offset: 0 }, text: "Z" };
+    expect(() => mapOperation(operation, through)).not.toThrow();
+    const result = mapOperation(operation, through);
+    if (result) expect(result.type).toBe(operation.type);
+  });
+
   it("applies and inverts a mark across block boundaries", () => {
     const before: SmartDocument = { type: "doc", id: "doc", children: [
       { type: "paragraph", id: "a", children: [{ type: "text", text: "one" }] },
@@ -417,6 +461,25 @@ describe("Phase 1 transactions, maps, normalization, and history", () => {
     expect(invertTransaction(invertTransaction(tx([], 1)))).toMatchObject({ operations: [] });
   });
 
+  // Phase 8c collab-readiness gate, assertion 4: baseRevision is required
+  // and already tested above; authorId stays optional at the type level
+  // (no ripple through every SmartTransaction construction call site this
+  // phase), but the plumbing - an authorId passed to transact() actually
+  // reaching the emitted transaction, and surviving into history - must
+  // work end to end for collaboration to build on it later.
+  it("threads authorId from transact() options into the emitted transaction and its history entry", () => {
+    const editor = new FoundationEditor({ document: doc(""), selection: caret(0) });
+    const transaction = editor.transact((builder) => {
+      builder.operations.push({ type: "insertText", pos: { path: [0], offset: 0 }, text: "hi" });
+    }, { source: "api", addToHistory: true, authorId: "author-1" });
+    expect(transaction.metadata.authorId).toBe("author-1");
+    expect(editor.history.undo.at(-1)?.forward.metadata.authorId).toBe("author-1");
+    const withoutAuthor = editor.transact((builder) => {
+      builder.operations.push({ type: "insertText", pos: { path: [0], offset: 2 }, text: "!" });
+    }, { source: "api", addToHistory: true });
+    expect(withoutAuthor.metadata.authorId).toBeUndefined();
+  });
+
   it("maps selections associatively through transactions", () => {
     const a: SmartOperation = { type: "insertText", pos: { path: [0], offset: 1 }, text: "a" };
     const b: SmartOperation = { type: "insertText", pos: { path: [0], offset: 3 }, text: "b" };
@@ -444,6 +507,31 @@ describe("Phase 1 transactions, maps, normalization, and history", () => {
         new FoundationTransactionMap([second]).map(new FoundationTransactionMap([first]).map(original)),
       );
     }
+  });
+
+  // Phase 8c collab-readiness gate, assertion 3: the two tests above only
+  // ever pair insertText with insertText. mapPosThroughOperation is pure
+  // path arithmetic (no document lookups), so associativity is checked here
+  // for every operation type paired with a second, independent insertText -
+  // extending coverage to moveNode/splitNode/mergeNode/setNodeType/
+  // addMark/removeMark, not just the two text-editing types above.
+  it.each(operationCases())("maps positions associatively for [%s, insertText] pairs", (_name, before, operation) => {
+    const positions: SmartPos[] = [];
+    const visit = (node: SmartDocument | Exclude<SmartDocument["children"][number], { type: "text" }>, path: number[]) => {
+      const inline = node.type === "paragraph" || node.type === "heading";
+      const limit = inline
+        ? (node.children || []).reduce((size, child) => size + (child.type === "text" ? child.text.length : 1), 0)
+        : node.children?.length || 0;
+      for (let offset = 0; offset <= limit; offset += 1) positions.push({ path, offset });
+      node.children?.forEach((child, index) => { if (child.type !== "text") visit(child as typeof node, [...path, index]); });
+    };
+    visit(before, []);
+    const through: SmartOperation = { type: "insertText", pos: { path: [0], offset: 0 }, text: "Z" };
+    positions.forEach((position) => {
+      const combined = new FoundationTransactionMap([operation, through]).map(position);
+      const sequential = new FoundationTransactionMap([through]).map(new FoundationTransactionMap([operation]).map(position));
+      expect(combined).toEqual(sequential);
+    });
   });
 
   it("enforces local, deterministic normalization and names oscillators", () => {

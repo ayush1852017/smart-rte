@@ -14,6 +14,8 @@ export type MediaSearchQuery = {
 export type MediaManagerAdapter = {
   upload: (files: File[]) => Promise<MediaItem[]>;
   search: (query: MediaSearchQuery) => Promise<MediaItem[]>;
+  /** Optional - MediaProvider.remove exists but nothing here called it before Phase 11.5 §2.1. */
+  remove?: (id: string) => Promise<void>;
 };
 
 export function MediaManager(props: {
@@ -29,6 +31,7 @@ export function MediaManager(props: {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<MediaItem[]>([]);
   const [infoItem, setInfoItem] = useState<MediaItem | null>(null);
+  const [removing, setRemoving] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -50,6 +53,22 @@ export function MediaManager(props: {
       setResults(items || []);
     } catch (e) {
       setError("Failed to search media.");
+    }
+  };
+
+  /** Phase 11.5 §2.1: MediaProvider.remove already existed; nothing here ever called it. */
+  const handleRemove = async (item: MediaItem) => {
+    if (!adapter.remove) return;
+    setRemoving(true);
+    setError(null);
+    try {
+      await adapter.remove(item.id);
+      setResults((current) => current.filter((entry) => entry.id !== item.id));
+      setInfoItem(null);
+    } catch (e) {
+      setError("Failed to delete media.");
+    } finally {
+      setRemoving(false);
     }
   };
 
@@ -124,6 +143,9 @@ export function MediaManager(props: {
       onClick={onClose}
     >
       <div
+        role="dialog"
+        aria-label="Media library"
+        data-srte-media-manager="true"
         style={{
           background: "var(--srte-modal-bg)",
           color: "var(--srte-modal-text)",
@@ -148,6 +170,7 @@ export function MediaManager(props: {
         >
           <div style={{ display: "flex", gap: 8 }}>
             <button
+              type="button"
               onClick={() => setActiveTab("upload")}
               style={{
                 padding: "6px 10px",
@@ -160,6 +183,7 @@ export function MediaManager(props: {
               Upload
             </button>
             <button
+              type="button"
               onClick={() => setActiveTab("library")}
               style={{
                 padding: "6px 10px",
@@ -172,7 +196,7 @@ export function MediaManager(props: {
               Library
             </button>
           </div>
-          <button onClick={onClose}>✕</button>
+          <button type="button" aria-label="Close media library" onClick={onClose}>✕</button>
         </div>
 
         {error && (
@@ -235,7 +259,7 @@ export function MediaManager(props: {
                   color: "var(--srte-input-text)",
                 }}
               />
-              <button onClick={performSearch}>Search</button>
+              <button type="button" onClick={performSearch}>Search</button>
             </div>
             <div
               style={{
@@ -375,6 +399,7 @@ export function MediaManager(props: {
                 ["MIME type", infoItem.mimeType],
                 ["Size", infoItem.sizeBytes ? `${Math.round(infoItem.sizeBytes / 1024)} KB` : undefined],
                 ["Created", infoItem.createdAt],
+                ["Used", infoItem.usageCount !== undefined ? `${infoItem.usageCount} time${infoItem.usageCount === 1 ? "" : "s"}` : undefined],
                 ["Tags", infoItem.tags?.join(", ")],
                 ["Work", infoItem.license?.workName],
                 ["Author", infoItem.license?.author],
@@ -386,6 +411,26 @@ export function MediaManager(props: {
                   <div style={{ overflowWrap: "anywhere" }}>{value}</div>
                 </div>
               ))}
+              {adapter.remove && (
+                <button
+                  type="button"
+                  data-srte-media-delete="true"
+                  disabled={removing}
+                  onClick={() => void handleRemove(infoItem)}
+                  style={{
+                    marginTop: 8,
+                    padding: "6px 12px",
+                    borderRadius: 6,
+                    border: "1px solid var(--srte-danger)",
+                    background: "transparent",
+                    color: "var(--srte-danger)",
+                    cursor: removing ? "default" : "pointer",
+                    opacity: removing ? 0.6 : 1,
+                  }}
+                >
+                  {removing ? "Deleting…" : "Delete"}
+                </button>
+              )}
             </div>
           </div>
         )}

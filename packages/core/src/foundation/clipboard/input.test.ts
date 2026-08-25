@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { FoundationEditor } from "../editor.js";
 import { createSubtreeRenderer } from "../surface/renderer.js";
 import { FoundationInputPipeline } from "../surface/input.js";
+import type { ClipboardDiagnosticReport } from "./diagnostics.js";
 import type { SmartSelection } from "../types.js";
 
 class FakeTransfer {
@@ -48,6 +49,42 @@ describe("canonical clipboard browser entry points", () => {
     expect(text(editor)).toBe("");
     expect(editor.history.undo).toHaveLength(1);
     expect(editor.history.undo[0].forward.metadata.source).toBe("cut");
+    pipeline.destroy();
+  });
+
+  /**
+   * Phase 11 Tier 1-3: diagnostics.ts's reportParsedClipboard/reportRejectedClipboard
+   * were already wired into handlePaste (input.ts) and threaded up through
+   * CanonicalEditorRuntime/CanonicalAuthorityEditor's onClipboardDiagnostic
+   * prop - the mechanism existed and was reachable, but had zero test
+   * coverage proving the callback actually fires with the right shape on a
+   * real paste event. This closes that gap.
+   */
+  it("invokes onClipboardDiagnostic with a parsed, telemetry-safe report on a successful paste", () => {
+    const root = document.createElement("div"); document.body.append(root);
+    const editor = new FoundationEditor({ document: { type: "doc", id: "doc", children: [{ type: "paragraph", id: "p", children: [{ type: "text", text: "hello" }] }] }, selection: select(0, 5) });
+    const reports: ClipboardDiagnosticReport[] = [];
+    const pipeline = new FoundationInputPipeline(editor, createSubtreeRenderer(root), root, { onClipboardDiagnostic: (report) => reports.push(report) });
+    const transfer = new FakeTransfer(); transfer.setData("text/plain", "world");
+    pipeline.handlePaste({ clipboardData: transfer, preventDefault: () => undefined } as unknown as ClipboardEvent);
+    expect(reports).toHaveLength(1);
+    expect(reports[0].status).toBe("parsed");
+    expect(reports[0].structuralShape).not.toBeNull();
+    expect(JSON.stringify(reports[0])).not.toMatch(/world/);
+    pipeline.destroy();
+  });
+
+  it("invokes onClipboardDiagnostic with a rejected report, no exception message, when the payload exceeds the size limit", () => {
+    const root = document.createElement("div"); document.body.append(root);
+    const editor = new FoundationEditor({ document: { type: "doc", id: "doc", children: [{ type: "paragraph", id: "p", children: [{ type: "text", text: "hello" }] }] }, selection: select(0, 5) });
+    const reports: ClipboardDiagnosticReport[] = [];
+    const pipeline = new FoundationInputPipeline(editor, createSubtreeRenderer(root), root, { onClipboardDiagnostic: (report) => reports.push(report) });
+    const transfer = new FakeTransfer(); transfer.setData("text/plain", "oversized-secret-content ".repeat(250_000));
+    pipeline.handlePaste({ clipboardData: transfer, preventDefault: () => undefined } as unknown as ClipboardEvent);
+    expect(reports).toHaveLength(1);
+    expect(reports[0].status).toBe("rejected");
+    expect(reports[0].failureCode).toBe("payload-too-large");
+    expect(JSON.stringify(reports[0])).not.toMatch(/oversized-secret-content/);
     pipeline.destroy();
   });
 });

@@ -233,10 +233,17 @@ const applyToSession = (session: PathCopySession, operation: SmartOperation): bo
   } else if (operation.type === "setNodeAttributes") {
     const target = session.node(operation.pos.path);
     if (!target || isTextNode(target) || !sameValue(target.attrs || {}, operation.before)) throw new Error("setNodeAttributes before payload does not match.");
-    const { attrs: _attrs, ...withoutAttrs } = target;
-    session.replace(operation.pos.path, Object.keys(operation.after).length
-      ? { ...withoutAttrs, attrs: structuredClone(operation.after) }
-      : withoutAttrs as SmartElementNode);
+    // Reassign in place rather than destructure-then-respread: the latter
+    // always re-adds `attrs` as the object's last key, silently reordering
+    // it even when only the value changed. sameValue elsewhere compares
+    // nodes via JSON.stringify, which is key-order sensitive - a later
+    // replaceNode/removeNode whose `before` payload was captured pre-reorder
+    // would then fail to match an otherwise-identical node. See
+    // docs/bugs/setnodeattributes-reorders-keys-breaking-exact-match.md.
+    const next = { ...target } as Record<string, unknown>;
+    if (Object.keys(operation.after).length) next.attrs = structuredClone(operation.after);
+    else delete next.attrs;
+    session.replace(operation.pos.path, next as unknown as SmartElementNode);
   } else if (operation.type === "setNodeType") {
     const target = session.node(operation.pos.path);
     if (!target || isTextNode(target) || target.type !== operation.before || !sameValue(target.attrs || {}, operation.beforeAttrs)) {

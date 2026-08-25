@@ -28,13 +28,36 @@ const fixtures = [
   ["plain-text-clipboard.clipboard.json", "plain-text"],
   ["generic-web-clipboard.clipboard.json", "plain-text"],
 ] as const satisfies readonly (readonly [string, ClipboardSource])[];
+// google-docs and native-smart-rte updated 2026-08-19: parseCanonicalListHtml
+// (list/formats.ts) now recognizes style-based font-weight:bold/bolder,
+// font-style:italic/oblique, and text-decoration:underline/line-through as
+// real marks instead of silently dropping them (found via the
+// [Unsupported: span] investigation - see docs/bugs/
+// html-import-span-and-div-wrapped-content-lost.md). Both captures contain
+// genuine style-only bold runs (google-docs: one real font-weight:700 run
+// among many font-weight:400 runs; native-smart-rte: font-weight:bold on
+// browser-DOM-captured copy output) that were previously pasted as
+// unstyled plain text - the hash changes reflect those runs now correctly
+// carrying a bold mark, verified by inspecting the fixtures' raw HTML
+// directly, not assumed from the hash diff alone.
+//
+// excel updated 2026-08-19 (docs/bugs/table-shrinks-after-paste.md):
+// <col>'s width parsing now only trusts a bare number or an explicit
+// "Npx" value, rejecting other CSS units instead of misreading them as
+// pixels via a bare parseFloat. This fixture's own <col> elements
+// (inspected directly) carry both a real pixel `width` attribute (e.g.
+// width="19") and a `style="width:14pt"` - 14 *points*, not 14 pixels
+// (14pt ~= 18.67px, consistent with the 19px attribute). The old code
+// checked style first and read "14pt" as "14", a ~25% understatement;
+// the new code correctly rejects the non-px style value and falls back
+// to the genuinely-pixel attribute value instead.
 const expectedCanonicalHashes: Record<string, string> = {
   "word-macos-clipboard.clipboard.json": "18c70f20",
-  "google-docs-clipboard.clipboard.json": "53c031ef",
+  "google-docs-clipboard.clipboard.json": "a185d8ab",
   "google-sheets-clipboard.clipboard.json": "7d90f1a7",
-  "excel-clipboard.clipboard.json": "8f56ffb5",
+  "excel-clipboard.clipboard.json": "78a735fa",
   "markdown-plain-text-clipboard.clipboard.json": "fbe7bef8",
-  "native-smart-rte-clipboard.clipboard.json": "4e57a651",
+  "native-smart-rte-clipboard.clipboard.json": "3f38366d",
   "plain-text-clipboard.clipboard.json": "338a8736",
   "generic-web-clipboard.clipboard.json": "0c01e672",
 };

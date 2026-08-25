@@ -1,5 +1,18 @@
 import type { BlockToolDeclaration } from "./types.js";
-import type { Attrs } from "../types.js";
+import type { Attrs, AttributeSpec, NodeSpec } from "../types.js";
+
+const stringAttr: AttributeSpec = { validate: (value) => typeof value === "string" };
+const alignmentAttr: AttributeSpec = { validate: (value) => ["left", "center", "right", "justify"].includes(String(value)) };
+const indentLevelAttr: AttributeSpec = { validate: (value) => Number.isInteger(value) && Number(value) >= 0 && Number(value) <= 10 };
+const blockAttrs = { align: alignmentAttr, indentLevel: indentLevelAttr };
+
+/** Node specs owned by the block family - extracted out of foundation/schema.ts's previously hardcoded foundationSchema literal (Phase 10). */
+export const blockNodeSpecs: readonly NodeSpec[] = [
+  { type: "paragraph", group: "block", content: "inline*", attributes: blockAttrs },
+  { type: "heading", group: "block", content: "inline*", attributes: { ...blockAttrs, level: { required: true, default: 1, validate: (v) => Number.isInteger(v) && Number(v) >= 1 && Number(v) <= 6 } } },
+  { type: "blockquote", group: "block", content: "block+", attributes: blockAttrs, defining: true },
+  { type: "code_block", group: "block", content: "text*", marks: "", attributes: { ...blockAttrs, language: stringAttr }, defining: true },
+];
 
 export const blockToolDeclarations = [
   ...Array.from({ length: 6 }, (_, index) => ({

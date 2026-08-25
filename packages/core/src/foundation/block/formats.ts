@@ -30,6 +30,36 @@ export interface CanonicalDocxBlock {
 const textOf = (node: SmartElementNode): string => (node.children || []).map((child) =>
   isTextNode(child) ? child.text : child.type === "hard_break" ? "\n" : "").join("");
 
+/**
+ * The per-node half of canonicalBlocksToDocx's visit() body, matching
+ * FeatureFormatCodec.serialize's (node, ctx) => unknown shape
+ * (formats/codec.ts) - Phase 11 Tier 2's block codec slice. `quoteDepth`
+ * defaults to 0 for a direct single-node call (a codec invocation has no
+ * ancestor-walk context); canonicalBlocksToDocx below still owns tracking
+ * the real depth across a blockquote's descendants and passes it through.
+ * Returns null for a block type this mapping doesn't cover (e.g. `table`,
+ * `list`), matching FeatureFormatCodec.parse's null-for-inapplicable
+ * convention.
+ */
+export const blockToDocxEntry = (node: SmartElementNode, quoteDepth = 0): CanonicalDocxBlock | null => {
+  if (!["paragraph", "heading", "code_block"].includes(node.type)) return null;
+  const level = node.type === "heading" ? Math.max(1, Math.min(6, Number(node.attrs?.level) || 1)) : undefined;
+  const alignment = typeof node.attrs?.align === "string" && ["left", "center", "right", "justify"].includes(node.attrs.align)
+    ? node.attrs.align as CanonicalDocxBlock["alignment"] : undefined;
+  const indentLevel = Math.max(0, Number(node.attrs?.indentLevel) || 0);
+  return {
+    nodeId: node.id,
+    kind: node.type === "code_block" ? "code" : node.type === "heading" ? "heading" : "paragraph",
+    text: textOf(node),
+    style: node.type === "heading" ? `Heading${level}` : node.type === "code_block" ? "Code" : quoteDepth ? "Quote" : "Normal",
+    ...(level ? { outlineLevel: level - 1 } : {}),
+    ...(alignment ? { alignment } : {}),
+    ...(indentLevel ? { indentTwips: indentLevel * 720 } : {}),
+    ...(node.type === "code_block" && typeof node.attrs?.language === "string" ? { language: node.attrs.language } : {}),
+    ...(quoteDepth ? { quoteDepth } : {}),
+  };
+};
+
 /** Semantic DOCX mapping. Heading styles and paragraph properties are retained;
  * unsupported custom visual CSS is deliberately not transported. */
 export const canonicalBlocksToDocx = (document: SmartDocument): CanonicalDocxBlock[] => {
@@ -39,22 +69,8 @@ export const canonicalBlocksToDocx = (document: SmartDocument): CanonicalDocxBlo
       (node.children || []).forEach((child) => { if (!isTextNode(child)) visit(child, quoteDepth + 1); });
       return;
     }
-    if (!["paragraph", "heading", "code_block"].includes(node.type)) return;
-    const level = node.type === "heading" ? Math.max(1, Math.min(6, Number(node.attrs?.level) || 1)) : undefined;
-    const alignment = typeof node.attrs?.align === "string" && ["left", "center", "right", "justify"].includes(node.attrs.align)
-      ? node.attrs.align as CanonicalDocxBlock["alignment"] : undefined;
-    const indentLevel = Math.max(0, Number(node.attrs?.indentLevel) || 0);
-    output.push({
-      nodeId: node.id,
-      kind: node.type === "code_block" ? "code" : node.type === "heading" ? "heading" : "paragraph",
-      text: textOf(node),
-      style: node.type === "heading" ? `Heading${level}` : node.type === "code_block" ? "Code" : quoteDepth ? "Quote" : "Normal",
-      ...(level ? { outlineLevel: level - 1 } : {}),
-      ...(alignment ? { alignment } : {}),
-      ...(indentLevel ? { indentTwips: indentLevel * 720 } : {}),
-      ...(node.type === "code_block" && typeof node.attrs?.language === "string" ? { language: node.attrs.language } : {}),
-      ...(quoteDepth ? { quoteDepth } : {}),
-    });
+    const entry = blockToDocxEntry(node, quoteDepth);
+    if (entry) output.push(entry);
   };
   document.children.forEach((node) => { if (!isTextNode(node)) visit(node); });
   return output;

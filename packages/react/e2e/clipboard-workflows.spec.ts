@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import AxeBuilder from "@axe-core/playwright";
 
 test.describe("Phase 8a canonical clipboard", () => {
   test("paste, copy, cut, drop and undo share the canonical path", async ({ page }) => {
@@ -64,5 +65,29 @@ test.describe("Phase 8a canonical clipboard", () => {
         : (node.children || []).map((child) => child.type === "text" ? child.text : "").join(""));
     });
     expect(result).toEqual(["block 1", "start", "block 2"]);
+  });
+
+  /**
+   * Phase 11 Tier 3: axe-core coverage expansion - clipboard-workflows.spec.ts
+   * had zero axe scans before this pass. Pastes real HTML (headings, a
+   * list, marks) through the canonical paste path and scans the result.
+   */
+  test("has no axe violations after pasting a mixed-feature HTML fragment", async ({ page }) => {
+    await page.goto("/?canonical=1");
+    const surface = '[aria-label="Canonical Smart RTE editing surface"]';
+    await page.evaluate((selector) => {
+      const runtime = window.__smartCanonical!;
+      const root = document.querySelector<HTMLElement>(selector)!;
+      runtime.editor.setSelection({ type: "text", anchor: { path: [0], offset: 0 }, head: { path: [0], offset: 0 } }, { source: "api" });
+      runtime.renderer.render(runtime.editor.document, runtime.editor.selection);
+      const transfer = new DataTransfer();
+      transfer.setData("text/html", "<h2>Pasted heading</h2><ul><li>one</li><li>two</li></ul><p><strong>bold</strong> text</p>");
+      transfer.setData("text/plain", "Pasted heading\none\ntwo\nbold text");
+      runtime.pipeline.handlePaste({ clipboardData: transfer, preventDefault: () => undefined } as ClipboardEvent);
+      root.focus();
+    }, surface);
+    await expect(page.locator(surface)).toContainText("Pasted heading");
+    const results = await new AxeBuilder({ page }).include(surface).analyze();
+    expect(results.violations).toEqual([]);
   });
 });

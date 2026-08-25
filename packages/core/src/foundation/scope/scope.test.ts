@@ -381,6 +381,44 @@ describe("Phase 2 isolating and table-grid contract", () => {
     });
   });
 
+  /**
+   * Post-Phase-11.5 bug batch item 3: describe's collapsed-caret mark
+   * lookup (marksForRange) only ever found a run at an exact run boundary
+   * (`to <= offset` or `from >= offset`) - a caret strictly inside a run's
+   * interior satisfies neither, so `marks` silently came back empty for
+   * the overwhelmingly common case (a caret placed inside a single-run
+   * paragraph, or inside any run past the first in a multi-run one).
+   * Found investigating why a right-click context menu on link text never
+   * showed "Edit link"/"Remove link" - the toolbar's own Link button uses
+   * this exact same describe().marks lookup, so this was a real,
+   * previously-unnoticed defect there too, not something new.
+   */
+  it("describe's collapsed-caret marks find the run the caret is actually inside, not only at a run boundary", () => {
+    const single: SmartDocument = { type: "doc", id: "doc", children: [
+      p("single", "", [{ type: "text", text: "a link here", marks: [{ type: "link", attrs: { href: "https://example.com" } }] }]),
+    ] };
+    // Every interior offset of a single-run paragraph, not just its two edges.
+    [0, 1, 5, 6, 10, 11].forEach((offset) => {
+      expect(resolveScope(single, selection({ path: [0], offset }), { want: "describe" }, schema)).toMatchObject({
+        marks: [{ mark: { type: "link", attrs: { href: "https://example.com" } }, coverage: "all" }],
+      });
+    });
+
+    const multi: SmartDocument = { type: "doc", id: "doc", children: [
+      p("multi", "", [{ type: "text", text: "hello" }, { type: "text", text: "world", marks: [{ type: "bold" }] }]),
+    ] };
+    // Interior of the first (unmarked) run.
+    expect(resolveScope(multi, selection({ path: [0], offset: 2 }), { want: "describe" }, schema)).toMatchObject({ marks: [] });
+    // Interior of the second (bold) run - the case the old boundary-only
+    // logic got wrong by finding the first run instead.
+    expect(resolveScope(multi, selection({ path: [0], offset: 7 }), { want: "describe" }, schema)).toMatchObject({
+      marks: [{ mark: { type: "bold" }, coverage: "all" }],
+    });
+    // Exact boundary between the two runs: still prefers the preceding
+    // (unmarked) run, matching the pre-existing tie-break convention.
+    expect(resolveScope(multi, selection({ path: [0], offset: 5 }), { want: "describe" }, schema)).toMatchObject({ marks: [] });
+  });
+
   it("rejects renderer UI markers if they leak into the canonical model", () => {
     const leaked: SmartDocument = { type: "doc", id: "doc", children: [{ type: "paragraph", id: "ui", attrs: { "data-smart-ui": true }, children: [] }] };
     expect(() => resolveScope(leaked, selection({ path: [0], offset: 0 }), { want: "describe" }, schema)).toThrow("Editor UI nodes");

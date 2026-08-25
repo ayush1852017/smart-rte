@@ -26,13 +26,55 @@ describe("Phase 9 SS3 gate 3: FeatureFormatCodec declarations", () => {
     }
   });
 
-  it("leaves parse/serialize undefined for the 36 cells backed only by whole-document walkers", () => {
-    const withoutRealCodec = builtInFeatureFormatCodecs.filter((entry) => entry.feature !== "images-media" && entry.feature !== "formulas");
-    expect(withoutRealCodec).toHaveLength(9 * 4);
+  /**
+   * Phase 11 Tier 2 wired real DOCX-only serialize for marks
+   * (inline-marks/colors-fonts-sizes) and block (headings-alignment/
+   * blockquote-code) - docxProperties and blockToDocxEntry were already
+   * genuine single-node functions (the latter extracted from
+   * canonicalBlocksToDocx's per-node visit() body). No reverse (parse)
+   * mapping exists for either, and HTML/Markdown/PDF for these features
+   * remain whole-document walkers per docs/PHASE_9_CODEC_REFACTOR_SCOPE.md's
+   * scope (HTML/Markdown scheduled last "if at all").
+   */
+  it("attaches a real docx-only serialize function to the two Phase 11 Tier 2 codec-slice feature families", () => {
+    for (const feature of ["inline-marks", "colors-fonts-sizes", "headings-alignment", "blockquote-code"] as const) {
+      const docx = builtInFeatureFormatCodecs.find((entry) => entry.feature === feature && entry.format === "docx")!;
+      expect(docx.serialize, `${feature}/docx should have a real serialize function`).toBeTypeOf("function");
+      expect(docx.parse, `${feature}/docx has no reverse mapping`).toBeUndefined();
+      for (const format of ["html", "markdown", "pdf"] as const) {
+        const codec = builtInFeatureFormatCodecs.find((entry) => entry.feature === feature && entry.format === format)!;
+        expect(codec.serialize, `${feature}/${format} should remain whole-document-only`).toBeUndefined();
+      }
+    }
+  });
+
+  it("leaves parse/serialize undefined for the 32 remaining cells backed only by whole-document walkers", () => {
+    const wired = new Set(["inline-marks/docx", "colors-fonts-sizes/docx", "headings-alignment/docx", "blockquote-code/docx"]);
+    const withoutRealCodec = builtInFeatureFormatCodecs.filter((entry) =>
+      entry.feature !== "images-media" && entry.feature !== "formulas" && !wired.has(`${entry.feature}/${entry.format}`));
+    expect(withoutRealCodec).toHaveLength(9 * 4 - wired.size);
     for (const codec of withoutRealCodec) {
       expect(codec.serialize).toBeUndefined();
       expect(codec.parse).toBeUndefined();
     }
+  });
+
+  it("serializes real mark and block nodes to DOCX projections via the declared codecs, matching docxProperties/blockToDocxEntry directly", () => {
+    const bold = { type: "text", text: "hi", marks: [{ type: "bold" }] } as never;
+    const marksDocx = builtInFeatureFormatCodecs.find((entry) => entry.feature === "inline-marks" && entry.format === "docx")!;
+    expect(marksDocx.serialize!(bold, { format: "docx" })).toEqual({ bold: true });
+
+    const colorText = { type: "text", text: "hi", marks: [{ type: "textColor", attrs: { value: "#ff0000" } }] } as never;
+    const colorsDocx = builtInFeatureFormatCodecs.find((entry) => entry.feature === "colors-fonts-sizes" && entry.format === "docx")!;
+    expect(colorsDocx.serialize!(colorText, { format: "docx" })).toEqual({ color: "#ff0000" });
+
+    const heading = { type: "heading", id: "h1", attrs: { level: 2 }, children: [{ type: "text", text: "Title" }] } as never;
+    const headingsDocx = builtInFeatureFormatCodecs.find((entry) => entry.feature === "headings-alignment" && entry.format === "docx")!;
+    expect(headingsDocx.serialize!(heading, { format: "docx" })).toEqual({ nodeId: "h1", kind: "heading", text: "Title", style: "Heading2", outlineLevel: 1 });
+
+    const codeBlock = { type: "code_block", id: "c1", attrs: { language: "js" }, children: [{ type: "text", text: "x" }] } as never;
+    const blockquoteDocx = builtInFeatureFormatCodecs.find((entry) => entry.feature === "blockquote-code" && entry.format === "docx")!;
+    expect(blockquoteDocx.serialize!(codeBlock, { format: "docx" })).toEqual({ nodeId: "c1", kind: "code", text: "x", style: "Code", language: "js" });
   });
 
   it("serializes a real formula atom to HTML, Markdown, DOCX, and PDF projections via the declared codecs", () => {

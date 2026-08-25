@@ -12,7 +12,13 @@ export const tableNodeSpecs: readonly NodeSpec[] = [
       layout: { validate: (value) => value === "auto" || value === "fixed" },
     },
   },
-  { type: "table_row", group: "block", semanticRole: "table-row", content: "table_cell+", attributes: { height: { validate: (value) => Number.isFinite(value) && Number(value) > 0 } } },
+  // "table_cell*", not "+": a row every one of whose columns is covered by
+  // an earlier row's rowspan legitimately has zero own cells (e.g. after
+  // merging a selection that spans that row's full width). Row count still
+  // has to match grid.rows for rowspan bookkeeping, so the row node itself
+  // must exist even when empty - it cannot simply be deleted. See
+  // docs/bugs/table-row-empty-rowspan-coverage-rejected.md.
+  { type: "table_row", group: "block", semanticRole: "table-row", content: "table_cell*", attributes: { height: { validate: (value) => Number.isFinite(value) && Number(value) > 0 } } },
   {
     type: "table_cell", group: "block", semanticRole: "table-cell", content: "block+", isolating: true,
     attributes: {

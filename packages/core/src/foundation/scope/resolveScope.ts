@@ -780,8 +780,19 @@ const markKey = (mark: SmartMark) => JSON.stringify([mark.type, mark.attrs ?? nu
 const marksForRange = (context: ResolutionContext) => {
   if (context.from.rank === context.to.rank && context.from.entry.inlineOwner) {
     const offset = context.from.resolved.pos.offset;
-    const child = [...context.from.entry.inlineChildren].reverse().find((candidate) => candidate.to <= offset)
-      ?? context.from.entry.inlineChildren.find((candidate) => candidate.from >= offset);
+    // A collapsed caret strictly inside a run (not at any run boundary) has
+    // exactly one containing run - `from <= offset <= to` - regardless of
+    // how many other runs the owner has. At an exact boundary between two
+    // runs, both the preceding and following run satisfy that inequality;
+    // prefer the preceding one (`to === offset`), matching this function's
+    // original tie-break (continuing the run just typed/edited, not the
+    // one about to be entered). The previous version only ever found a run
+    // via that boundary tie-break, which by construction never matches a
+    // caret that isn't at some run's edge - a collapsed caret anywhere in
+    // the interior of a run (the overwhelmingly common case) silently
+    // returned no marks at all.
+    const touching = context.from.entry.inlineChildren.filter((candidate) => candidate.from <= offset && offset <= candidate.to);
+    const child = touching.find((candidate) => candidate.to === offset) ?? touching[0];
     return child && isTextNode(child.node)
       ? child.node.marks?.map((mark) => ({ mark, coverage: "all" as const })) || []
       : [];

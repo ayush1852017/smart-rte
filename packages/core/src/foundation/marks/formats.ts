@@ -27,7 +27,7 @@ export interface CanonicalDocxRun {
   readonly properties: CanonicalDocxRunProperties;
 }
 
-const docxProperties = (marks: readonly SmartMark[]): CanonicalDocxRunProperties => {
+export const docxProperties = (marks: readonly SmartMark[]): CanonicalDocxRunProperties => {
   const properties: Record<string, unknown> = {};
   canonicalMarkOrder(marks).forEach((mark) => {
     if (mark.type === "bold" || mark.type === "italic" || mark.type === "underline" || mark.type === "strike"
@@ -40,6 +40,16 @@ const docxProperties = (marks: readonly SmartMark[]): CanonicalDocxRunProperties
   });
   return properties;
 };
+
+/**
+ * The per-node half of docxProperties, matching FeatureFormatCodec.serialize's
+ * (node, ctx) => unknown shape (formats/codec.ts) - Phase 11 Tier 2's marks
+ * codec slice. Real single-node function already existed (docxProperties
+ * operates on one text node's marks array already); this only adapts its
+ * signature to accept a SmartNode directly, it does not add new logic.
+ */
+export const markRunDocxProperties = (node: SmartNode): CanonicalDocxRunProperties =>
+  isTextNode(node) ? docxProperties(node.marks || []) : {};
 
 /** Semantic DOCX run model. Conversion to OOXML lives in the product adapter. */
 export const canonicalMarksToDocxRuns = (document: SmartDocument): CanonicalDocxRun[] => {

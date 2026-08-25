@@ -82,3 +82,18 @@ Chromium's 14.5 ms median is higher than Phase 6's 9.6 ms run. Cold first sample
 dominate p95 for Chromium and WebKit. The already-triggered headed
 `content-visibility` trace remains the correct next diagnostic; these headless
 development measurements do not justify attributing the cost to atom commands.
+
+## Phase 11 Tier 3 — renderer-integrated content-visibility, benchmarked and rejected
+
+Per `docs/PHASE_ROADMAP_8B_12B.md`'s instruction ("any design here must be renderer-aware or the idea is dropped"), a design keyed off `surface/renderer.ts`'s existing reference-identity diff (`syncContentVisibility`) was built and benchmarked, not just proposed: a top-level block only gets `content-visibility: auto` when the renderer's own diff already proved it untouched *this* render pass, and never when it's the actively-selected block — correctly avoiding the naive experiment's flaw of stamping the containment cost onto the block being typed into on every keystroke.
+
+**Result: still does not beat baseline**, measured via `packages/react/e2e/canonical-authority.spec.ts`'s "benchmarks the renderer-integrated content-visibility design against production" (Chromium, headed, 10,000 blocks, same 5-sample typing-latency harness as the tables above), comparing a production runtime (no content-visibility) against a second runtime instance with the option enabled, both mounted from the same synthetic document:
+
+| | Sample 1 (cold) | 2 | 3 | 4 | 5 |
+|---|---:|---:|---:|---:|---:|
+| Baseline (off) | 36.6 | 33.6 | 26.8 | 24.3 | 25.8 |
+| Renderer-integrated (on) | 1156.8 | 52.9 | 45.7 | 39.5 | 37.9 |
+
+The first sample's ~1.15s spike is the cost of the initial `content-visibility`/`contain-intrinsic-block-size` write across ~9,999 elements on first mount. Steady-state samples (37.9–52.9ms) are still 40–90% slower than baseline (24.3–36.6ms) even with the active block correctly excluded — the CSS containment machinery's own per-render bookkeeping cost exceeds its off-screen-skip benefit for this editor's actual render path, not just for the naive blanket version. This confirms Phase 8b's original disproof was not an artifact of the naive implementation's specific mistake (touching the active block); a more careful, genuinely renderer-aware version has the same result.
+
+**Disposition:** not adopted. The implementation (`surface/renderer.ts`'s `syncContentVisibility`, `CanonicalEditorRuntimeOptions.contentVisibility`) is real, tested, and kept in the codebase as opt-in and default-`false` — zero behavior change for every existing caller — both as the documented record of this investigation and in case a future renderer architecture change (e.g. genuine virtualization) revisits the question under different conditions. It is not enabled anywhere in the shipped product.
