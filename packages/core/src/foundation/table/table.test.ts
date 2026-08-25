@@ -3,12 +3,13 @@ import { applyOperation, applyOperations, invertOperation } from "../operations.
 import { createScopeIndex } from "../scope/index.js";
 import { createTransactionMap } from "../mapping.js";
 import { foundationSchema, repair, validate } from "../schema.js";
-import type { SmartDocument, SmartElementNode, SmartOperation } from "../types.js";
+import { applyTransactionAtomic } from "../transactions.js";
+import type { PersistedEditorDocument, SmartDocument, SmartElementNode, SmartOperation, SmartTransaction } from "../types.js";
 import type { TableGridScope } from "../scope/types.js";
 import {
   insertTableColumnCommand, insertTableRowCommand, mergeTableCellsCommand,
   moveTableColumnCommand, occupancyGridFor, removeTableColumnCommand,
-  removeTableRowCommand, repairTableGeometry, setTableHeaderCommand,
+  removeTableRowCommand, repairTableGeometry, setTableColumnWidthCommand, setTableHeaderCommand,
   splitTableCellCommand, validateTableGeometry,
 } from "./index.js";
 
@@ -68,7 +69,7 @@ describe("shared occupancy grid and table geometry", () => {
 });
 
 describe("pure table commands", () => {
-  it("measures 50x50 whole-table history payload against the 200-entry cap", () => {
+  it("measures a 50x50 single-row-insert payload, now bounded independent of table size (Phase 8c)", () => {
     const size = 50;
     const large = doc({ type: "table", id: "large", children: Array.from({ length: size }, (_, rowIndex) => row(`large-r-${rowIndex}`, Array.from({ length: size }, (_, columnIndex) => cell(`large-c-${rowIndex}-${columnIndex}`, `${rowIndex}:${columnIndex}`)))) });
     const selected = { ...scope(currentTable(large)), tableId: "large" };
@@ -77,10 +78,16 @@ describe("pure table commands", () => {
       cellIds: Array.from({ length: size }, (_, index) => `large-new-cell-${index}`),
       paragraphIds: Array.from({ length: size }, (_, index) => `large-new-p-${index}`),
     }, ctx(large));
+    // Fine-grained row insert emits one insertNode for the new row (its own
+    // 50 cells - irreducible, that is the actual edit) plus a handful of
+    // setNodeAttributes ops for rowspan-crossing cells. It must never emit a
+    // replaceNode of the whole 50x50 table, which is what made this payload
+    // scale with table size before the Phase 8c table-operations conversion.
+    expect(operations.every((operation) => operation.type !== "replaceNode")).toBe(true);
     const bytes = JSON.stringify({ forward: operations, inverse: operations.map(invertOperation).reverse() }).length;
-    console.log(`Phase 6 carry-forward: 50x50 table history entry=${bytes} bytes; 200-entry upper bound=${bytes * 200} bytes`);
-    expect(bytes).toBeGreaterThan(100_000);
-    expect(bytes * 200).toBeLessThan(1_000_000_000);
+    console.log(`Phase 8c: 50x50 table single-row-insert payload=${bytes} bytes; 200-entry bound=${bytes * 200} bytes`);
+    expect(bytes).toBeLessThan(50_000);
+    expect(bytes * 200).toBeLessThan(10_000_000);
   });
   it("maps a cursor in an untouched cell through whole-table replacement", () => {
     const model = doc();
@@ -135,6 +142,26 @@ describe("pure table commands", () => {
     expect(mergeTableCellsCommand(headerModel, { ...whole, tableId: "plain" }, {}, ctx(headerModel))).toEqual([]);
   });
 
+  /**
+   * Phase 12a §2.1a: every absorbed cell's removeNode must carry
+   * `mergedInto` pointing at the anchor cell's id, so `rebaseAnnotationRange`
+   * can snap an annotation anchored to an absorbed cell to the surviving
+   * one instead of silently orphaning it. Verified against the real
+   * command output, not a hand-constructed operation - the standing bar
+   * for this kind of "looks right in isolation" claim.
+   */
+  it("mergeTableCellsCommand marks every absorbed cell's removal as merged into the anchor", () => {
+    const plain = doc({ type: "table", id: "plain", children: [
+      row("pr0", [cell("pa", "A"), cell("pb", "B")]), row("pr1", [cell("pc", "C"), cell("pd", "D")]),
+    ] });
+    const whole = { ...scope(currentTable(plain)), tableId: "plain" };
+    const merge = mergeTableCellsCommand(plain, whole, {}, ctx(plain));
+    const removals = merge.filter((operation): operation is Extract<typeof operation, { type: "removeNode" }> => operation.type === "removeNode");
+    expect(removals).toHaveLength(3);
+    expect(removals.every((operation) => operation.mergedInto === "pa")).toBe(true);
+    expect(removals.map((operation) => operation.node.id).sort()).toEqual(["pb", "pc", "pd"]);
+  });
+
   it("does not stack placeholder paragraphs when merging empty cells", () => {
     const empty = doc({ type: "table", id: "empty", children: [
       row("empty-row", [cell("empty-a", ""), cell("empty-b", ""), cell("empty-c", "")]),
@@ -147,7 +174,19 @@ describe("pure table commands", () => {
     expect(isText(anchor.node.children![0] as SmartElementNode)).toBe("");
   });
 
-  it("keeps row height once when horizontally merging two, three, or four one-line cells", () => {
+  /**
+   * A prior version of this command concatenated short single-paragraph
+   * cells' content into one shared paragraph specifically to keep this
+   * `attrs.height` unchanged after a merge - trading away a worse defect
+   * (merging "1"/"2"/"3"/"4" cells silently read as the single run
+   * "1234", mixing distinct cells' content with no separation) for a
+   * cosmetic one. `attrs.height` staying a row-level property (not
+   * multiplied, not touched by content assembly at all) is still correct
+   * and still asserted below; a merged cell legitimately containing
+   * multiple separate lines of real content is not a bug - see
+   * docs/bugs/table-merge-concatenates-cell-content.md.
+   */
+  it("keeps row height a row-level property, and preserves each source cell's content as its own line, when merging two, three, or four one-line cells", () => {
     [2, 3, 4].forEach((count) => {
       const cells = Array.from({ length: count }, (_, index) => cell(`height-${count}-${index}`, String(index + 1)));
       const model = doc({ type: "table", id: `height-${count}`, children: [{ ...row(`height-row-${count}`, cells), attrs: { height: 48 } }] });
@@ -157,8 +196,9 @@ describe("pure table commands", () => {
       const mergedTable = currentTable(merged);
       expect(mergedTable.children?.[0]).toMatchObject({ attrs: { height: 48 } });
       const anchor = occupancyGridFor(mergedTable).at(0, 0)!;
-      expect(anchor.node.children).toHaveLength(1);
-      expect(isText(anchor.node.children![0] as SmartElementNode)).toBe(Array.from({ length: count }, (_, index) => String(index + 1)).join(""));
+      expect(anchor.node.children).toHaveLength(count);
+      expect(anchor.node.children!.map((block) => isText(block as SmartElementNode)))
+        .toEqual(Array.from({ length: count }, (_, index) => String(index + 1)));
       expect(validateTableGeometry(mergedTable)).toEqual([]);
     });
   });
@@ -186,17 +226,38 @@ describe("pure table commands", () => {
       const all: SmartOperation[] = [];
       for (let step = 0; step < 8 && currentTable(model)?.type === "table"; step += 1) {
         const value = currentTable(model);
+        const grid = occupancyGridFor(value);
         const selected = { ...scope(value), tableId: value.id };
-        const choice = random(4);
+        const choice = random(7);
         const suffix = `${run}-${step}`;
         const ops = choice === 0
-          ? insertTableRowCommand(model, selected, { rowIndex: random(occupancyGridFor(value).rows + 1), rowId: `nr-${suffix}`, cellIds: [`nc-${suffix}-0`, `nc-${suffix}-1`, `nc-${suffix}-2`, `nc-${suffix}-3`], paragraphIds: [`np-${suffix}-0`, `np-${suffix}-1`, `np-${suffix}-2`, `np-${suffix}-3`] }, ctx(model))
+          ? insertTableRowCommand(model, selected, { rowIndex: random(grid.rows + 1), rowId: `nr-${suffix}`, cellIds: Array.from({ length: grid.columns }, (_, i) => `nc-${suffix}-${i}`), paragraphIds: Array.from({ length: grid.columns }, (_, i) => `np-${suffix}-${i}`) }, ctx(model))
           : choice === 1
-            ? removeTableRowCommand(model, selected, { rowIndex: random(occupancyGridFor(value).rows) }, ctx(model))
+            ? removeTableRowCommand(model, selected, { rowIndex: random(grid.rows) }, ctx(model))
             : choice === 2
-              ? insertTableColumnCommand(model, selected, { columnIndex: random(occupancyGridFor(value).columns + 1), cellIds: Array.from({ length: occupancyGridFor(value).rows }, (_, i) => `xc-${suffix}-${i}`), paragraphIds: Array.from({ length: occupancyGridFor(value).rows }, (_, i) => `xp-${suffix}-${i}`) }, ctx(model))
-              : removeTableColumnCommand(model, selected, { columnIndex: random(occupancyGridFor(value).columns) }, ctx(model));
+              ? insertTableColumnCommand(model, selected, { columnIndex: random(grid.columns + 1), cellIds: Array.from({ length: grid.rows }, (_, i) => `xc-${suffix}-${i}`), paragraphIds: Array.from({ length: grid.rows }, (_, i) => `xp-${suffix}-${i}`) }, ctx(model))
+              : choice === 3
+                ? removeTableColumnCommand(model, selected, { columnIndex: random(grid.columns) }, ctx(model))
+                : choice === 4
+                  ? moveTableColumnCommand(model, selected, { direction: random(2) === 0 ? "left" : "right", index: random(grid.columns) }, ctx(model))
+                  : choice === 5
+                    ? (() => {
+                      const top = random(grid.rows); const left = random(grid.columns);
+                      const bottom = Math.min(grid.rows - 1, top + random(2));
+                      const right = Math.min(grid.columns - 1, left + random(2));
+                      return mergeTableCellsCommand(model, { ...scope(value, top, left, bottom, right), tableId: value.id }, {}, ctx(model));
+                    })()
+                    : (() => {
+                      const anchor = grid.at(random(grid.rows), random(grid.columns));
+                      if (!anchor) return [];
+                      return splitTableCellCommand(model, { ...scope(value, anchor.top, anchor.left, anchor.top, anchor.left), tableId: value.id },
+                        { cellIds: Array.from({ length: 15 }, (_, i) => `sc-${suffix}-${i}`), paragraphIds: Array.from({ length: 15 }, (_, i) => `sp-${suffix}-${i}`) }, ctx(model));
+                    })();
         if (!ops.length) continue;
+        // No operation this fuzz loop generates should ever replace the whole
+        // table - that is exactly the whole-table-replaceNode granularity
+        // violation Phase 8c's table-operations conversion removes.
+        ops.forEach((operation) => { if (operation.type === "replaceNode") expect(operation.before.type).not.toBe("table"); });
         all.push(...ops);
         model = applyOperations(model, ops);
         if (model.children[0]?.type === "table") {
@@ -207,6 +268,147 @@ describe("pure table commands", () => {
       for (const operation of [...all].reverse()) model = applyOperation(model, invertOperation(operation));
       expect(model).toEqual(before);
     }
+  });
+
+  /**
+   * Post-Phase-11.5 bug batch, round 2: a table with no columnWidths yet
+   * (natural/stretched rendering) shrank as soon as any one column was
+   * resized. Root cause: without a real-widths seed, this command's own
+   * fallback for a missing columnWidths array (`Array(columns).fill(120)`)
+   * silently reset every OTHER column to a fabricated 120px the instant
+   * one column changed - the command layer has no way to know a table's
+   * real *rendered* widths on its own; only a caller that measured the
+   * DOM (a resize-handle UI) does. `params.widths` lets that caller seed
+   * the real values instead of letting the fallback guess.
+   */
+  it("setTableColumnWidthCommand seeds columnWidths from params.widths instead of fabricating 120 for other columns", () => {
+    const noWidths: SmartElementNode = { type: "table", id: "table", attrs: {}, children: [
+      row("r0", [cell("a", "A"), cell("b", "B"), cell("c", "C")]),
+    ] };
+    const document = doc(noWidths);
+    const tableScope = scope(noWidths, 0, 0, 0, 2);
+
+    // Without a seed: every column not being resized falls back to 120.
+    const unseeded = setTableColumnWidthCommand(document, tableScope, { index: 2, width: 300 }, ctx(document));
+    const unseededAfter = applyOperations(document, unseeded);
+    expect(currentTable(unseededAfter).attrs?.columnWidths).toEqual([120, 120, 300]);
+
+    // With a seed (what TableResizeHandles now passes - the real,
+    // currently-measured width of every column): the other columns keep
+    // their real values, not a fabricated default.
+    const seeded = setTableColumnWidthCommand(document, tableScope, { index: 2, width: 300, widths: [526, 137, 533] }, ctx(document));
+    const seededAfter = applyOperations(document, seeded);
+    expect(currentTable(seededAfter).attrs?.columnWidths).toEqual([526, 137, 300]);
+  });
+
+  /**
+   * Codex work order (3 confirmed table bugs): "Adding a column to a table
+   * copied from Sootr shrinks the table". Same fabricated-fallback pattern
+   * docs/bugs/table-resize-shrinks-table-with-no-prior-columnwidths.md
+   * fixed for resize, found here in insertTableColumnCommand: a table with
+   * no real columnWidths (e.g. pasted content with no real per-<col> pixel
+   * width, correctly left unset per docs/bugs/table-shrinks-after-
+   * paste.md) got a fabricated Array(columns).fill(120) the instant a
+   * column was inserted, which the renderer then pins the table's width
+   * to - shrinking a table that previously rendered at its natural width.
+   */
+  it("insertTableColumnCommand does not fabricate columnWidths for a table that never had any", () => {
+    const noWidths: SmartElementNode = { type: "table", id: "table", attrs: {}, children: [
+      row("r0", [cell("a", "A"), cell("b", "B")]),
+    ] };
+    const document = doc(noWidths);
+    const operations = insertTableColumnCommand(document, scope(noWidths, 0, 0, 0, 1), { columnIndex: 1, cellIds: ["new"], paragraphIds: ["new-p"] }, ctx(document));
+    const after = applyOperations(document, operations);
+    expect(currentTable(after).attrs?.columnWidths).toBeUndefined();
+  });
+
+  it("insertTableColumnCommand still extends real columnWidths when the table already has them", () => {
+    const withWidths: SmartElementNode = { type: "table", id: "table", attrs: { columnWidths: [150, 250] }, children: [
+      row("r0", [cell("a", "A"), cell("b", "B")]),
+    ] };
+    const document = doc(withWidths);
+    const operations = insertTableColumnCommand(document, scope(withWidths, 0, 0, 0, 1), { columnIndex: 1, cellIds: ["new"], paragraphIds: ["new-p"] }, ctx(document));
+    const after = applyOperations(document, operations);
+    expect(currentTable(after).attrs?.columnWidths).toEqual([150, 150, 250]);
+  });
+
+  /**
+   * Codex work order item 3: "Adding a row/column doesn't inherit the last
+   * row/column's style". Confirmed current behaviour first: new cells were
+   * always created via `emptyCell` with no style attrs at all - default/
+   * blank unconditionally, not a broken inheritance attempt (there wasn't
+   * one). New capability, not a bug fix: new row/column cells now inherit
+   * background/borders/textColor/verticalAlign from the immediately
+   * adjacent existing row/column (the one before the insertion point, or
+   * after it if inserting at the very start).
+   */
+  it("insertTableRowCommand inherits the adjacent (preceding) row's cell style", () => {
+    const styled: SmartElementNode = { type: "table", id: "table", attrs: { columnWidths: [100, 100] }, children: [
+      row("r0", [cell("a", "A", { background: "#ff0000", verticalAlign: "top" }), cell("b", "B", { borders: "1px solid blue" })]),
+    ] };
+    const document = doc(styled);
+    const operations = insertTableRowCommand(document, scope(styled, 0, 0, 0, 1), { rowId: "r1", cellIds: ["c", "d"], paragraphIds: ["c-p", "d-p"] }, ctx(document));
+    const after = applyOperations(document, operations);
+    const newRow = currentTable(after).children?.[1] as SmartElementNode;
+    expect((newRow.children?.[0] as SmartElementNode).attrs).toMatchObject({ background: "#ff0000", verticalAlign: "top" });
+    expect((newRow.children?.[1] as SmartElementNode).attrs).toMatchObject({ borders: "1px solid blue" });
+    // Structural attrs stay fresh, not inherited.
+    expect((newRow.children?.[0] as SmartElementNode).attrs).toMatchObject({ rowspan: 1, colspan: 1, header: false });
+  });
+
+  it("insertTableRowCommand inserted before every row inherits from what was originally the first row", () => {
+    const styled: SmartElementNode = { type: "table", id: "table", attrs: { columnWidths: [100] }, children: [
+      row("r0", [cell("a", "A", { background: "#00ff00" })]),
+    ] };
+    const document = doc(styled);
+    const operations = insertTableRowCommand(document, scope(styled, 0, 0, 0, 0), { rowIndex: 0, rowId: "r-before", cellIds: ["z"], paragraphIds: ["z-p"] }, ctx(document));
+    const after = applyOperations(document, operations);
+    const newRow = currentTable(after).children?.[0] as SmartElementNode;
+    expect((newRow.children?.[0] as SmartElementNode).attrs).toMatchObject({ background: "#00ff00" });
+  });
+
+  it("insertTableColumnCommand inherits the adjacent (preceding) column's cell style", () => {
+    const styled: SmartElementNode = { type: "table", id: "table", attrs: { columnWidths: [100, 100] }, children: [
+      row("r0", [cell("a", "A"), cell("b", "B", { background: "#0000ff", textColor: "#ffffff" })]),
+      row("r1", [cell("c", "C"), cell("d", "D", { background: "#0000ff", textColor: "#ffffff" })]),
+    ] };
+    const document = doc(styled);
+    const operations = insertTableColumnCommand(document, scope(styled, 0, 0, 1, 1), { columnIndex: 2, cellIds: ["x", "y"], paragraphIds: ["x-p", "y-p"] }, ctx(document));
+    const after = applyOperations(document, operations);
+    const grid = occupancyGridFor(currentTable(after));
+    expect(grid.at(0, 2)?.node.attrs).toMatchObject({ background: "#0000ff", textColor: "#ffffff" });
+    expect(grid.at(1, 2)?.node.attrs).toMatchObject({ background: "#0000ff", textColor: "#ffffff" });
+  });
+});
+
+describe("per-transaction validity (Phase 8c item 1)", () => {
+  it("lets a fine-grained row insert pass through an invalid intermediate op, valid only once the whole transaction commits", () => {
+    const model = doc();
+    const operations = insertTableRowCommand(model, scope(currentTable(model)), {
+      rowIndex: 1, rowId: "row-1", cellIds: ["row-1-cell"], paragraphIds: ["row-1-cell-p"],
+    }, ctx(model));
+    // The crossing cell ("a", rowspan 2) needs its own setNodeAttributes op
+    // in addition to the row insertNode - that is the multi-op shape this
+    // test depends on to prove anything.
+    expect(operations.length).toBeGreaterThan(1);
+    expect(operations[0].type).toBe("insertNode");
+
+    const partial = applyOperation(model, operations[0]);
+    const partialErrors = validate(partial, foundationSchema);
+    expect(partialErrors.some((error) => error.code === "table-hole")).toBe(true);
+
+    const selection = { type: "node" as const, anchor: { path: [0], offset: 0 }, head: { path: [0], offset: 0 } };
+    const transaction: SmartTransaction = {
+      id: "tx-row-insert",
+      baseRevision: 0,
+      operations,
+      selectionBefore: selection,
+      selectionAfter: selection,
+      metadata: { source: "api", timestamp: 1, addToHistory: true },
+    };
+    const state: PersistedEditorDocument = { schemaVersion: foundationSchema.version, revision: 0, document: model };
+    const next = applyTransactionAtomic(state, transaction, foundationSchema);
+    expect(validate(next.document, foundationSchema)).toEqual([]);
   });
 });
 

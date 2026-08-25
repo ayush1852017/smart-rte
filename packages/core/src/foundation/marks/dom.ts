@@ -21,6 +21,11 @@ const elementForMark = (mark: SmartMark, document: Document): HTMLElement => {
   else if (mark.type === "backgroundColor") element.style.backgroundColor = String(mark.attrs?.value || "");
   else if (mark.type === "fontSize") element.style.fontSize = `${String(mark.attrs?.valuePx || "")}px`;
   else if (mark.type === "fontFamily") element.style.fontFamily = String(mark.attrs?.value || "");
+  else if (mark.type === "suggestion") {
+    element.style.textDecoration = mark.attrs?.kind === "delete" ? "line-through" : "underline";
+    if (mark.attrs?.authorId) element.setAttribute("data-suggestion-author", String(mark.attrs.authorId));
+    if (mark.attrs?.kind) element.setAttribute("data-suggestion-kind", String(mark.attrs.kind));
+  }
   return element;
 };
 

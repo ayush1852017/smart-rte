@@ -118,6 +118,28 @@ describe("Phase 3 cross-parent deletion matrix", () => {
     expect(result?.selectionTarget).toEqual({ ownerId: "deep-b-p", offset: 2 });
   });
 
+  /**
+   * Phase 12a §2.1a: a list item merge's replaceNode must carry
+   * `retiredInto` pairing both the retired item wrapper and its retired
+   * paragraph with their respective survivors, so `rebaseAnnotationRange`
+   * can snap an annotation anchored to either one instead of orphaning it.
+   * Verified against the real command output for the same merge scenario
+   * the test above exercises end-to-end.
+   */
+  it("backspaceAtListItemStart's merge marks the retired item and its paragraph as merged into the target", () => {
+    const before = tree();
+    const result = backspaceAtListItemStart(before, { path: [0, 1, 0], offset: 0 }, ctx(before));
+    expect(result?.intent).toBe("merge-backward");
+    const replace = result!.operations.find((operation) => operation.type === "replaceNode");
+    expect(replace).toBeDefined();
+    expect((replace as Extract<typeof replace, { type: "replaceNode" }>).retiredInto).toEqual(
+      expect.arrayContaining([
+        { retiredId: "current", survivorId: "deep-b" },
+        { retiredId: "current-p", survivorId: "deep-b-p" },
+      ]),
+    );
+  });
+
   it("outdents at nested depth and unwraps the first top-level item", () => {
     const nestedBefore = doc(list("root", [item("parent", "P", [list("nested", [item("child", "C")])])]));
     const outdent = backspaceAtListItemStart(nestedBefore, { path: [0, 0, 1, 0, 0], offset: 0 }, ctx(nestedBefore));

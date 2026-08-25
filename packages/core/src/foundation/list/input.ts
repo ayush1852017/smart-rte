@@ -298,7 +298,17 @@ const mergeItems = (
   const cleaned = transformElement(transformed, (candidate) => candidate.type === "list" && !(candidate.children?.length) ? null : candidate);
   if (!cleaned) throw new Error("List merge produced an empty root list.");
   return {
-    operations: [{ type: "replaceNode", pos: { path: [...rootLocated.pos.path], offset: rootLocated.pos.offset }, before: root, after: cleaned }],
+    // retiredInto marks this as a semantic merge, not a plain content
+    // change - an annotation anchored to the source item or its owner can
+    // snap to the corresponding target instead of orphaning. See
+    // annotations/range.ts.
+    operations: [{
+      type: "replaceNode", pos: { path: [...rootLocated.pos.path], offset: rootLocated.pos.offset }, before: root, after: cleaned,
+      retiredInto: [
+        { retiredId: sourceItemId, survivorId: targetItemId },
+        { retiredId: sourceOwnerId, survivorId: targetOwnerId },
+      ],
+    }],
     selectionTarget: { ownerId: targetOwnerId, offset: targetOffset },
     intent: backward ? "merge-backward" : "merge-forward",
   };

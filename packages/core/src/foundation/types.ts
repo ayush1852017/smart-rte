@@ -109,9 +109,41 @@ export interface SmartSelection {
 }
 
 export type SmartOperation =
-  | { type: "insertNode"; pos: SmartPos; node: SmartNode }
-  | { type: "removeNode"; pos: SmartPos; node: SmartNode }
-  | { type: "replaceNode"; pos: SmartPos; before: SmartNode; after: SmartNode }
+  | {
+    type: "insertNode"; pos: SmartPos; node: SmartNode;
+  }
+  | {
+    type: "removeNode"; pos: SmartPos; node: SmartNode;
+    /**
+     * Set when this removal is semantically a merge - the node's content
+     * was absorbed into the node at this id, not simply deleted. Purely
+     * informational: every existing consumer of `removeNode` (apply,
+     * invert, map, normalization, history rebasing) ignores it, since
+     * removal itself is unaffected either way. Populated by
+     * `mergeTableCellsCommand` for an absorbed cell; consumed by
+     * `rebaseAnnotationRange` to decide whether an annotation anchored to
+     * this id should snap to the surviving node instead of orphaning.
+     */
+    mergedInto?: string;
+  }
+  | {
+    type: "replaceNode"; pos: SmartPos; before: SmartNode; after: SmartNode;
+    /**
+     * Ids present in `before`'s subtree that have no counterpart in
+     * `after` because their content was folded into a node that does
+     * survive, paired with which surviving id each one merged into (a
+     * single `replaceNode` can retire more than one id into more than
+     * one survivor - e.g. list item merge retires both the outer
+     * `list_item` wrapper and its inner paragraph, into the target
+     * item's wrapper and paragraph respectively, not one shared
+     * survivor). Every other id difference between before/after is an
+     * ordinary content change, not a merge. Same "purely informational,
+     * ignored by every existing consumer" contract as
+     * `removeNode.mergedInto` above. Populated by list item merge
+     * (`mergeItems`); consumed by `rebaseAnnotationRange`.
+     */
+    retiredInto?: readonly { readonly retiredId: string; readonly survivorId: string }[];
+  }
   | { type: "moveNode"; from: SmartPos; to: SmartPos; nodeId: string }
   | { type: "splitNode"; pos: SmartPos; depth: number; newId: string }
   | { type: "mergeNode"; pos: SmartPos; depth: number; retiredId: string; splitOffset: number }

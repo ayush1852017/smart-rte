@@ -2,6 +2,7 @@ import {
   createFoundationEditor,
   applyOperations,
   createInputPipeline,
+  createNodeId,
   createSubtreeRenderer,
   createTransactionMap,
   foundationSchema,
@@ -11,6 +12,7 @@ import {
   type CanonicalInputPipeline,
   type ClipboardDiagnosticReport,
   type CanonicalSubtreeRenderer,
+  type DocumentVersion,
   type FoundationEditor,
   type PersistedEditorDocument,
   type SmartMark,
@@ -44,6 +46,13 @@ export interface SmartEditorHandle {
   executeOperations(operations: readonly SmartOperation[], opts?: ExecuteOperationsOptions): void;
   createCheckpoint(): SmartEditorCheckpoint;
   restoreCheckpoint(checkpoint: SmartEditorCheckpoint): void;
+  saveVersion(opts?: SaveVersionOptions): DocumentVersion;
+  restoreVersion(version: DocumentVersion, opts?: { keepSelection?: boolean }): void;
+}
+
+export interface SaveVersionOptions {
+  label?: string;
+  authorId?: string;
 }
 
 export interface ExecuteOperationsOptions {
@@ -61,6 +70,15 @@ export interface CanonicalEditorRuntimeOptions {
   onChange?: (change: SmartEditorChange) => void;
   onHtmlChange?: (html: string) => void;
   onClipboardDiagnostic?: (report: ClipboardDiagnosticReport) => void;
+  /**
+   * Renderer-integrated content-visibility (Phase 11 Tier 3, opt-in,
+   * default off) - only applies content-visibility:auto to a top-level
+   * block the renderer's own diff already proved untouched this render
+   * pass and that isn't the actively-selected block. See
+   * surface/renderer.ts's syncContentVisibility for why this differs from
+   * the disproven naive per-block experiment.
+   */
+  contentVisibility?: boolean;
 }
 
 const nodeAtPath = (root: SmartNode, path: readonly number[]): SmartNode | null => {
@@ -91,7 +109,11 @@ const firstTextSelection = (document: PersistedEditorDocument["document"]): Smar
     if (isTextNode(node)) return null;
     const spec = foundationSchema.nodes[node.type];
     const children = node.children || [];
-    if (spec?.group === "block" && (children.length === 0 || children.every((child) =>
+    // Atomic nodes (e.g. block_image) never accept a text caret inside them,
+    // even when they report an empty children array - only a genuine
+    // text-content container (an empty or all-inline block) is a valid
+    // first-text-selection target.
+    if (spec?.group === "block" && !spec.atomic && (children.length === 0 || children.every((child) =>
       isTextNode(child) || foundationSchema.nodes[child.type]?.group === "inline"))) return { path, offset: 0 };
     for (let index = 0; index < children.length; index += 1) {
       const found = visit(children[index], [...path, index]);
@@ -142,6 +164,7 @@ export class CanonicalEditorRuntime implements SmartEditorHandle {
   private onChange?: (change: SmartEditorChange) => void;
   private onHtmlChange?: (html: string) => void;
   private readonly onClipboardDiagnostic?: (report: ClipboardDiagnosticReport) => void;
+  private readonly contentVisibility: boolean;
   private htmlChangeTimer: number | null = null;
   private pendingHtmlDocument: PersistedEditorDocument["document"] | null = null;
 
@@ -156,6 +179,7 @@ export class CanonicalEditorRuntime implements SmartEditorHandle {
     this.onChange = options.onChange;
     this.onHtmlChange = options.onHtmlChange;
     this.onClipboardDiagnostic = options.onClipboardDiagnostic;
+    this.contentVisibility = options.contentVisibility === true;
   }
 
   setCallbacks(onChange?: (change: SmartEditorChange) => void, onHtmlChange?: (html: string) => void): void {
@@ -190,7 +214,7 @@ export class CanonicalEditorRuntime implements SmartEditorHandle {
     if (this.root === root && this.pipeline && this.renderer) return;
     this.unmount();
     this.root = root;
-    this.renderer = createSubtreeRenderer(root);
+    this.renderer = createSubtreeRenderer(root, { contentVisibility: this.contentVisibility });
     this.pipeline = createInputPipeline(this.editor, this.renderer, root, { onClipboardDiagnostic: this.onClipboardDiagnostic });
     this.unsubscribe = this.editor.subscribe((transaction, state) => {
       this.renderer?.render(this.editor.document, this.editor.selection);
@@ -322,6 +346,44 @@ export class CanonicalEditorRuntime implements SmartEditorHandle {
       storedMarks: checkpoint.storedMarks,
     });
     this.savedRevision = checkpoint.savedRevision;
+  }
+  /**
+   * A pure read of current state, like `createCheckpoint` - never touches
+   * the undo stack, never a `transact()` call. The runtime doesn't call a
+   * `VersionProvider` itself (same division as `mediaProvider.upload`
+   * being called directly from the React component, not the runtime) -
+   * this just builds the payload a caller then hands to a provider.
+   */
+  saveVersion(opts: SaveVersionOptions = {}): DocumentVersion {
+    return { id: createNodeId(), createdAt: Date.now(), envelope: this.getValue(), ...(opts.label ? { label: opts.label } : {}), ...(opts.authorId ? { authorId: opts.authorId } : {}) };
+  }
+  /**
+   * Reuses `replaceValue` (the same "load a full snapshot" mechanism
+   * `restoreCheckpoint` already uses) rather than replaying the version as
+   * a sequence of operations - a version can be arbitrarily old, and
+   * `replaceState` already validates/repairs an incoming document the same
+   * way loading any document does. Deliberately does NOT reuse the
+   * version's own stored `revision`: `replaceState` sets the live
+   * revision counter to whatever it's given verbatim, so restoring an old
+   * version's envelope as-is would roll a monotonic counter backward -
+   * colliding with `StaleTransactionError`'s bookkeeping and this
+   * runtime's own `isDirty()` comparison. Always re-stamps to
+   * `currentRevision + 1` instead. Not undoable, same as checkpoint
+   * restore today (`replaceState`'s emitted transaction always sets
+   * `addToHistory: false`). Per the Phase 12a spec's explicit
+   * recommendation, restore is non-destructive of version history at the
+   * UI layer: the caller (`VersionHistoryPanel`) saves a new version
+   * recording the restored state immediately after calling this, rather
+   * than this method silently discarding anything - the version list only
+   * ever grows, never rewrites.
+   */
+  restoreVersion(version: DocumentVersion, opts: { keepSelection?: boolean } = {}): void {
+    const restamped: PersistedEditorDocument = {
+      schemaVersion: version.envelope.schemaVersion,
+      revision: this.getRevision() + 1,
+      document: version.envelope.document,
+    };
+    this.replaceValue(restamped, opts);
   }
 
   /** Instrumentation for product-path composition and takeover tests. */

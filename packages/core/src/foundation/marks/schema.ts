@@ -22,6 +22,17 @@ export const inlineMarkSpecs = [
     href: stringValue,
     target: { validate: (value: unknown) => typeof value === "string" && Boolean(value) },
   } },
+  // Phase 12a §2.3: a proposed inline insert/delete, applied to real
+  // document text like any other mark rather than a separate not-yet-
+  // applied record. Not inclusive - typing at a suggestion's boundary
+  // should not silently extend someone else's (or an already-decided)
+  // proposal.
+  { type: "suggestion", inclusive: false, attributes: {
+    id: stringValue,
+    authorId: stringValue,
+    kind: { required: true, validate: (value: unknown) => value === "insert" || value === "delete" },
+    createdAt: numberValue,
+  } },
 ] as const satisfies readonly MarkSpec[];
 
 /** A hard break is one inline cursor unit and never carries marks itself. */
