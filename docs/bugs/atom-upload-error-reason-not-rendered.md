@@ -1,6 +1,6 @@
 # Atom `attrs.error` (specific upload-failure reason) is written but never read by the canonical renderer
 
-**Status:** Open
+**Status:** Fixed (2026-08-25, pre-12b punch list item 3)
 **Area:** atom / surface renderer / media
 **First reported:** 2026-08-25, found during the Phase 9–12a independent audit's systematic "written, never rendered" schema sweep (`packages/core/src/foundation/{atom,table,block,list,marks}/schema.ts` cross-referenced against `packages/core/src/foundation/surface/renderer.ts` and `packages/core/src/foundation/marks/dom.ts`).
 **Related files:** `packages/core/src/foundation/atom/schema.ts` (`error: optionalString` on `image`/`block_image`/`video`/`audio`/`formula`/`block_formula`), `packages/core/src/foundation/atom/lifecycle.ts:30` (`failAtomUpload`/`completeAtomUpload` write it), `packages/core/src/foundation/surface/renderer.ts` (canonical renderer, never reads it), `packages/react/src/adapters/domInlineAtomCommandBridge.ts:172` (legacy bridge, reads it into an inert dataset attribute)
@@ -24,11 +24,13 @@ Direct source inspection (no live repro needed — this is a static gap, same me
 
 ## Fix
 
-Not attempted in this pass — this audit is read-only per its scope. A correct fix would have the canonical renderer's atom branches (or `installMediaDiagnostics`) prefer `node.attrs.error` as the `title`/`aria-label` text when `attrs.status === "error"` and `attrs.error` is a non-empty string, falling back to the current generic message only when the model has no specific reason recorded.
+`packages/core/src/foundation/surface/renderer.ts`: added a small `atomErrorTitle(node, fallback)` helper (preferring `node.attrs.error` when it's a non-empty string, else the fallback) and wired it into three places: the `image`/`block_image` attrs-sync branch, the `video`/`audio` attrs-sync branch (both set/clear `title` based on `node.attrs?.status === "error"`, independent of any DOM load event - so a document loaded already in a failed-upload state shows the specific reason immediately, not only after a live browser load failure), and `installMediaDiagnostics`'s `failed()` handler (the live DOM `error`-event path), so a real load failure doesn't overwrite a model-known specific reason with the generic fallback. `formula`/`block_formula`'s `error` attribute was left untouched - investigation confirmed (via `grep -rn "formula.*error"` across `atom/`, `surface/`) that nothing anywhere ever writes it, unlike `image`/`video`/`audio`'s real `atom/lifecycle.ts:30` writer, so there is currently no writer-side gap to close there; noted in case that changes.
+
+**Proactive check for other instances (per this bug's own §"Related/similar issues" recommendation)**: re-read `atom/schema.ts`'s full attribute set. Found one more real instance - `formula`/`block_formula`'s `notation` attribute (`"latex"` | `"mathml"`) is schema-validated and round-tripped by the HTML codec, but the renderer's `renderFormulaInto` always calls KaTeX's LaTeX-only renderer regardless of `notation`, so a `"mathml"`-notation formula never renders correctly. Filed separately (not fixed in this pass, out of scope for this item): `docs/bugs/formula-mathml-notation-not-rendered.md`. `uploadId` (on image/media) was checked and confirmed intentionally unrendered - it's async-upload-correlation bookkeeping, not a display attribute.
 
 ## Regression coverage
 
-None — not yet fixed. A future fix should add a renderer test asserting that a node with `attrs.status = "error"` and `attrs.error = "<specific reason>"` produces a `title`/`aria-label` containing that exact reason, not just the generic fallback string.
+`packages/core/src/foundation/phase2_5.test.ts`: "surfaces the model's specific upload-failure reason as the atom's title, not the generic fallback" - asserts an `image`/`video` node with `attrs.status = "error"` and a specific `attrs.error` string produces that exact string as `title`, and that an `audio` node with `status: "error"` but no `attrs.error` still falls back to a non-empty generic message rather than an empty/missing title. The pre-existing "renders media atoms with playback attributes and exposes load failures" test (same file) continues to pass unchanged, confirming the live-DOM-error-event path's generic-fallback behavior is preserved when the model has no specific reason recorded. Core suite: 694/694 (694, up from 693). React suite: 130/130 (unchanged). Full repo lint: clean.
 
 ## Related/similar issues
 

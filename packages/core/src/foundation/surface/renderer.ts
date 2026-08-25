@@ -34,6 +34,17 @@ const renderFormulaInto = (element: HTMLElement, source: string): void => {
 };
 
 const atomTypes = new Set(["image", "block_image", "formula", "block_formula", "video", "audio"]);
+
+/**
+ * atom/lifecycle.ts writes a specific upload-failure reason to
+ * attrs.error (the host MediaProvider's own message, or a generic
+ * fallback if none) - previously written but never read by this
+ * renderer (docs/bugs/atom-upload-error-reason-not-rendered.md), so
+ * every failed upload showed only this function's own generic fallback
+ * regardless of what the model actually recorded.
+ */
+const atomErrorTitle = (node: SmartElementNode, fallback: string): string =>
+  typeof node.attrs?.error === "string" && node.attrs.error ? node.attrs.error : fallback;
 const emptyLineOwnerTypes = new Set(["paragraph", "heading", "code_block"]);
 
 const tagForNode = (node: SmartElementNode): string => {
@@ -282,6 +293,8 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
       if (node.attrs?.width) this.setAttribute(element, "width", String(node.attrs.width), node.id); else this.removeAttribute(element, "width", node.id);
       if (node.attrs?.height) this.setAttribute(element, "height", String(node.attrs.height), node.id); else this.removeAttribute(element, "height", node.id);
       this.setAttribute(element, "data-smart-status", String(node.attrs?.status || "ready"), node.id);
+      if (node.attrs?.status === "error") this.setAttribute(element, "title", atomErrorTitle(node, "Image could not be loaded"), node.id);
+      else this.removeAttribute(element, "title", node.id);
       const imageAlign = node.attrs?.align;
       if (imageAlign === "center") { element.style.display = "block"; element.style.margin = "0 auto"; element.style.float = "none"; }
       else if (imageAlign === "left" || imageAlign === "right") { element.style.display = "inline"; element.style.float = imageAlign; element.style.margin = imageAlign === "left" ? "0 8px 8px 0" : "0 0 8px 8px"; }
@@ -316,6 +329,9 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
       if (mediaType) this.setAttribute(element, "type", mediaType, node.id);
       else this.removeAttribute(element, "type", node.id);
       this.setAttribute(element, "aria-label", node.type === "video" ? "Video player" : "Audio player", node.id);
+      if (node.attrs?.status === "error") {
+        this.setAttribute(element, "title", atomErrorTitle(node, `${node.type === "video" ? "Video" : "Audio"} could not be loaded`), node.id);
+      } else this.removeAttribute(element, "title", node.id);
       if (node.type === "video" && node.attrs?.poster) {
         const poster = sanitizeAtomSource(String(node.attrs.poster), { kind: "image" });
         if (poster) this.setAttribute(element, "poster", poster, node.id); else this.removeAttribute(element, "poster", node.id);
@@ -340,9 +356,9 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
     };
     const failed = () => {
       element.setAttribute("data-smart-media-state", "error");
-      element.setAttribute("title", node.type === "block_image" || node.type === "image"
+      element.setAttribute("title", atomErrorTitle(node, node.type === "block_image" || node.type === "image"
         ? "Image could not be loaded"
-        : `${node.type === "video" ? "Video" : "Audio"} could not be loaded`);
+        : `${node.type === "video" ? "Video" : "Audio"} could not be loaded`));
     };
     element.addEventListener("load", clear);
     element.addEventListener("canplay", clear);

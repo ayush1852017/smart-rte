@@ -1,6 +1,6 @@
 # Full 3-browser e2e run intermittently reports "Test not found in the worker process" for one suggestions.spec.ts test, not reproducible in isolation
 
-**Status:** Needs re-verification (observed once; likely Playwright worker-scheduling infra flake, not a product defect — not yet proven to reproduce a second time)
+**Status:** Not reproducible after 3 full-suite runs (2026-08-25 pre-12b punch list). Observed once during the audit that first filed this entry; three subsequent full, unfiltered `pnpm --filter smartrte-react run e2e` runs (443 passed / 7 skipped / 0 failed, each time, 450 tests total) produced zero failures anywhere in the suite. Downgraded from "Needs re-verification" — treat as infra noise, not a live product or harness defect, unless it recurs.
 **Area:** test infra / e2e (Playwright)
 **First reported:** 2026-08-25, during the Phase 9–12a independent audit's full e2e suite run (`pnpm --filter smartrte-react run e2e`, the actual `e2e` script from `packages/react/package.json`, all 10 spec files × 3 browser projects, run exactly as CI/the project defines "full suite" per `docs/bugs/full-e2e-suite-definition-was-incomplete.md`).
 **Related files:** `packages/react/e2e/suggestions.spec.ts` (the affected test, "ambient track-changes mode: the Track changes toggle documents its two excluded cases", declared at line 160), `docs/PHASE_ROADMAP_8B_12B.md` (Phase 12a closeout claims "comments and suggestions e2e specs (including the ambient-mode test) each stable across 3 runs × 3 browsers")
@@ -27,6 +27,8 @@ Full suite: `pnpm --filter smartrte-react run e2e` (no filter) — reproduced on
 
 Not re-run a second time at full-suite scope in this pass (time-boxed audit); flagged as "needs re-verification" rather than "confirmed flake," per this project's own status taxonomy, since a single occurrence isn't yet a demonstrated pattern.
 
+**Re-verification (2026-08-25, pre-12b punch list item 2)**: ran the full, unfiltered `pnpm --filter smartrte-react run e2e` three more times in direct succession (post the working-tree commit in the same session). Every run: 443 passed, 7 skipped (the same pre-existing, explained skips), **0 failed**, 450 tests total each time. `suggestions.spec.ts`'s "the Track changes toggle documents its two excluded cases" (and every other test in the file) passed cleanly on firefox and webkit all three times. No occurrence of the "Test not found in the worker process" message in any of the three runs.
+
 ## Root cause
 
 Not conclusively determined. The evidence (isolated re-run passes cleanly; the reported title doesn't match anything in the actual file; the error is Playwright's own worker-process bookkeeping message rather than a test assertion) is consistent with a Playwright test-list/worker desync under full-suite concurrency (10 spec files × 3 browser projects running with shared workers, `fullyParallel: false`), similar in spirit to `docs/bugs/webkit-full-suite-timeout-flake.md` and `docs/bugs/session-replay-transient-native-selection-flake.md` — both prior instances of "looks like a real failure under full-suite load, doesn't reproduce isolated or on retry" in this same project. Not confirmed to be the identical mechanism as either of those, though.
@@ -35,7 +37,7 @@ This directly contradicts `docs/PHASE_ROADMAP_8B_12B.md`'s Phase 12a closeout cl
 
 ## Fix
 
-Not attempted — this is a test-infra observation, not a diagnosed defect with a known code-level cause. If this reproduces again on a subsequent full-suite run, it would be worth: (a) checking whether it's always the same test/file, (b) checking whether it correlates with worker count or specific adjacent tests in `suggestions.spec.ts`, and (c) considering whether `fullyParallel: false` combined with 10 spec files sharing workers across 3 projects is contributing, the way it was for the WebKit timeout flake.
+Not attempted — this is a test-infra observation, not a diagnosed defect with a known code-level cause. Unlike `webkit-full-suite-timeout-flake.md` (which turned out to have a real, fixable root cause - a harness readiness/focus race), this one was actively checked for a similar concrete cause and none was found: three full-suite re-runs produced zero failures, giving no reproducing instance to root-cause against. If this reproduces again on a future full-suite run, it would be worth: (a) checking whether it's always the same test/file, (b) checking whether it correlates with worker count or specific adjacent tests in `suggestions.spec.ts`, and (c) considering whether `fullyParallel: false` combined with 10 spec files sharing workers across 3 projects is contributing, the way it was for the WebKit timeout flake.
 
 ## Regression coverage
 

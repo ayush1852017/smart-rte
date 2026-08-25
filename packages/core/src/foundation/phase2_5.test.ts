@@ -299,6 +299,26 @@ describe("Phase 2.5 renderer and input pipeline", () => {
     expect(video.getAttribute("title")).toBe("Video could not be loaded");
   });
 
+  it("surfaces the model's specific upload-failure reason as the atom's title, not the generic fallback (docs/bugs/atom-upload-error-reason-not-rendered.md)", () => {
+    const root = document.createElement("div");
+    const failed: SmartDocument = { type: "doc", id: "doc", children: [
+      { type: "block_image", id: "image", attrs: { src: "", alt: "Pixel", status: "error", error: "File exceeds 10MB limit" } },
+      { type: "video", id: "video", attrs: { src: "", status: "error", error: "Host rejected the upload" } },
+      { type: "audio", id: "audio", attrs: { src: "", status: "error" } },
+    ] };
+    const renderer = createSubtreeRenderer(root);
+    renderer.render(failed, { type: "none", anchor: { path: [], offset: 0 }, head: { path: [], offset: 0 } });
+    const image = root.querySelector<HTMLElement>('[data-smart-type="block_image"]')!;
+    const video = root.querySelector<HTMLElement>('[data-smart-type="video"]')!;
+    const audio = root.querySelector<HTMLElement>('[data-smart-type="audio"]')!;
+    // Specific reasons recorded on the model win over the generic fallback...
+    expect(image.getAttribute("title")).toBe("File exceeds 10MB limit");
+    expect(video.getAttribute("title")).toBe("Host rejected the upload");
+    // ...but a node with no specific reason recorded still falls back to a
+    // generic, non-empty message rather than an empty/missing title.
+    expect(audio.getAttribute("title")).toBe("Audio could not be loaded");
+  });
+
   it("creates an editable line when navigating past a trailing block atom", () => {
     const root = document.createElement("div");
     const model: SmartDocument = { type: "doc", id: "doc", children: [
