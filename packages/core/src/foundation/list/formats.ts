@@ -19,6 +19,15 @@ const generatedId = (node: HtmlNode, prefix: string) => attr(node, "data-smart-i
 const isEditorUiNode = (node: HtmlNode) =>
   attr(node, "data-smart-ui") !== undefined || attr(node, "data-srte-check") !== undefined;
 
+/**
+ * Real-world exports (Google Docs, Word, ChatGPT, Sootr) routinely wrap
+ * meaningful block content - most often a <table> - in one or more <div>s
+ * (table-wrapper divs, layout divs) that carry no semantic meaning of
+ * their own. parseBlock has no case for any of these tags; see
+ * parseBlockList below for how they're unwrapped instead of swallowed.
+ */
+const TRANSPARENT_CONTAINER_TAGS = ["div", "section", "article"];
+
 const serializeInline = (node: SmartNode): string => {
   if (!isTextNode(node)) {
     if (node.type === "hard_break") return `<br data-smart-id="${escapeHtml(node.id)}" data-smart-type="hard_break">`;
@@ -177,13 +186,20 @@ const textWithMarks = (node: HtmlNode, inherited: readonly SmartMark[] = []): Sm
     if (declaredAtom === "formula") return [{ type: "formula", id: generatedId(node, "formula"), attrs: { source: attr(node, "data-smart-formula") || rawText(node), notation: attr(node, "data-smart-notation") === "mathml" ? "mathml" : "latex" } }];
     const src = sanitizeAtomSource(attr(node, "src"), { kind: "image", allowBlobPreview: attr(node, "data-smart-status") === "pending" });
     if (src) {
-      const width = Number(attr(node, "width")); const height = Number(attr(node, "height"));
+      // Real-world sources (Google Docs, most web pages, this app's own
+      // exported markup) far more commonly size an <img> via inline
+      // `style="width:...;height:...;"` than the legacy HTML width/height
+      // attributes - style must win when both are present. naturalWidth/
+      // naturalHeight are deliberately not consulted: paste parsing is
+      // synchronous and the image hasn't loaded yet at this point.
+      const width = parsePixelWidth(styleValue(node, "width")) ?? parsePixelWidth(attr(node, "width"));
+      const height = parsePixelWidth(styleValue(node, "height")) ?? parsePixelWidth(attr(node, "height"));
       return [{ type: "image", id: generatedId(node, "image"), attrs: {
         src, alt: attr(node, "alt") || "", status: attr(node, "data-smart-status") || "ready",
         ...(attr(node, "data-smart-decorative") === "true" ? { decorative: true } : {}),
         ...(attr(node, "title") ? { title: attr(node, "title") } : {}),
         ...(attr(node, "data-smart-align") ? { align: attr(node, "data-smart-align") } : {}),
-        ...(Number.isFinite(width) && width > 0 ? { width } : {}), ...(Number.isFinite(height) && height > 0 ? { height } : {}),
+        ...(width !== null ? { width } : {}), ...(height !== null ? { height } : {}),
       } }];
     }
   }
@@ -204,6 +220,26 @@ const textWithMarks = (node: HtmlNode, inherited: readonly SmartMark[] = []): Sm
     href: attr(node, "href") || "",
     ...(attr(node, "target") ? { target: attr(node, "target") } : {}),
   } });
+  // Real-world exports (this includes our own DOCX import - styledImport.ts's
+  // runStyle already emits font-weight/font-style/text-decoration for
+  // <w:b>/<w:i>/<w:u> runs, on the assumption these get parsed back into
+  // marks) commonly signal bold/italic/underline via inline style rather
+  // than <strong>/<em>/<u>. "bolder" is technically relative to the
+  // inherited weight, but without full cascade resolution here, treating it
+  // (and >=700, matching what styledImport.ts itself generates) as bold is
+  // the same approximation color/background-color/font-size/font-family
+  // below already make from raw style values.
+  const weight = styleValue(node, "font-weight")?.toLowerCase();
+  if (weight && !marks.some((mark) => mark.type === "bold") && (weight === "bold" || weight === "bolder" || Number(weight) >= 700)) {
+    push({ type: "bold" });
+  }
+  const style = styleValue(node, "font-style")?.toLowerCase();
+  if (style && !marks.some((mark) => mark.type === "italic") && (style === "italic" || style === "oblique")) {
+    push({ type: "italic" });
+  }
+  const decoration = styleValue(node, "text-decoration")?.toLowerCase();
+  if (decoration?.includes("underline") && !marks.some((mark) => mark.type === "underline")) push({ type: "underline" });
+  if (decoration?.includes("line-through") && !marks.some((mark) => mark.type === "strike")) push({ type: "strike" });
   const declared = attr(node, "data-smart-mark");
   if (declared && !marks.some((mark) => mark.type === declared)) {
     const raw = attr(node, "data-smart-mark-attrs");
@@ -230,6 +266,23 @@ const textWithMarks = (node: HtmlNode, inherited: readonly SmartMark[] = []): Sm
 const elementChildren = (node: HtmlNode) => (node.childNodes || []).filter((child) => Boolean(child.tagName) && !isEditorUiNode(child));
 const styleValue = (node: HtmlNode, property: string) => attr(node, "style")?.split(";").map((part) => part.split(":"))
   .find(([name]) => name?.trim().toLowerCase() === property)?.[1]?.trim();
+
+/**
+ * A bare number (the legacy HTML `width` attribute's convention) or an
+ * explicit "Npx" CSS value - anything else (a percentage, "auto", em,
+ * missing) is rejected rather than guessed at. `Number.parseFloat("50%")`
+ * would silently read as "50 real pixels", a drastic understatement once
+ * a table's own rendered width is pinned to the literal sum of its column
+ * widths (surface/renderer.ts) - this is what previously made a pasted
+ * table with percentage or unspecified column widths shrink far below its
+ * real size instead of being left to render at its natural default.
+ */
+const parsePixelWidth = (raw: string | undefined): number | null => {
+  const match = raw ? /^\s*([\d.]+)\s*(?:px)?\s*$/i.exec(raw) : null;
+  if (!match) return null;
+  const width = Number.parseFloat(match[1]);
+  return Number.isFinite(width) && width > 0 ? width : null;
+};
 
 const withoutListMarkerStyle = (style: string | undefined): string | undefined => {
   if (!style) return undefined;
@@ -263,7 +316,18 @@ const parseBlock = (node: HtmlNode): SmartElementNode | null => {
   const declaredAtom = attr(node, "data-smart-type");
   if (declaredAtom === "block_image") {
     const src = sanitizeAtomSource(attr(node, "src"), { kind: "image" });
-    return src ? { type: "block_image", id: generatedId(node, "image"), attrs: { src, alt: attr(node, "alt") || "", status: attr(node, "data-smart-status") || "ready", ...(attr(node, "data-smart-decorative") === "true" ? { decorative: true } : {}) } } : null;
+    if (!src) return null;
+    // Mirrors the inline `image` atom's width/height parsing just above -
+    // style wins over the legacy HTML attributes, and this is also what
+    // this app's own copy output writes them as (atom/formats.ts's
+    // atomToHtml), so a self-copy/self-paste round-trip depends on this.
+    const width = parsePixelWidth(styleValue(node, "width")) ?? parsePixelWidth(attr(node, "width"));
+    const height = parsePixelWidth(styleValue(node, "height")) ?? parsePixelWidth(attr(node, "height"));
+    return { type: "block_image", id: generatedId(node, "image"), attrs: {
+      src, alt: attr(node, "alt") || "", status: attr(node, "data-smart-status") || "ready",
+      ...(attr(node, "data-smart-decorative") === "true" ? { decorative: true } : {}),
+      ...(width !== null ? { width } : {}), ...(height !== null ? { height } : {}),
+    } };
   }
   if (declaredAtom === "block_formula") return { type: "block_formula", id: generatedId(node, "formula"), attrs: { source: attr(node, "data-smart-formula") || rawText(node), notation: attr(node, "data-smart-notation") === "mathml" ? "mathml" : "latex" } };
   if (tag === "video" || tag === "audio") {
@@ -280,10 +344,18 @@ const parseBlock = (node: HtmlNode): SmartElementNode | null => {
     children: (node.childNodes || []).flatMap((child) => textWithMarks(child)),
   };
   if (tag === "blockquote") {
-    const children = elementChildren(node).flatMap((child) => {
-      const parsed = parseBlock(child);
-      return parsed ? [parsed] : [];
-    });
+    // Real-world exports (Sootr among them) put inline content - <span>
+    // wrapper runs, bare text, <br> - directly inside <blockquote> with no
+    // wrapping <p>. Without this split, elementChildren+parseBlock alone
+    // sent every such child through the generic "unrecognized tag" fallback
+    // at the bottom of this function, producing an unknown block node per
+    // span (rendered as "[Unsupported: span]") instead of parsed text/marks
+    // - the same directInline pattern td/li already use below.
+    const blockTags = ["p", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "blockquote", "pre", "table"];
+    const isBlockLike = (child: HtmlNode) => blockTags.includes(child.tagName || "") || TRANSPARENT_CONTAINER_TAGS.includes(child.tagName || "");
+    const children = parseBlockList(elementChildren(node).filter(isBlockLike));
+    const directInline = (node.childNodes || []).filter((child) => !child.tagName || !isBlockLike(child)).flatMap((child) => textWithMarks(child));
+    if (directInline.length) children.unshift({ type: "paragraph", id: createNodeId(), children: directInline });
     return {
       type: "blockquote", id: generatedId(node, "quote"),
       ...(Object.keys(parsedBlockAttrs(node)).length ? { attrs: parsedBlockAttrs(node) } : {}),
@@ -307,10 +379,18 @@ const parseBlock = (node: HtmlNode): SmartElementNode | null => {
     const rowNodes = elementChildren(node).flatMap((child) => child.tagName === "tr" ? [child]
       : ["thead", "tbody", "tfoot"].includes(child.tagName || "") ? elementChildren(child).filter((candidate) => candidate.tagName === "tr") : []);
     const columns = elementChildren(node).find((child) => child.tagName === "colgroup");
-    const columnWidths = columns ? elementChildren(columns).filter((child) => child.tagName === "col").map((col) => {
-      const width = Number.parseFloat(styleValue(col, "width") || attr(col, "width") || "");
-      return Number.isFinite(width) && width > 0 ? width : 120;
-    }) : [];
+    // All-or-nothing: a table where only some (or none) of its <col>s
+    // specify a real pixel width is rendered at its natural/stretched
+    // default (no columnWidths at all) rather than mixing real values
+    // with a fabricated fallback for the rest - see parsePixelWidth's
+    // comment for why a fallback here caused pasted tables to shrink.
+    const parsedColumnWidths = columns
+      ? elementChildren(columns).filter((child) => child.tagName === "col")
+        .map((col) => parsePixelWidth(styleValue(col, "width")) ?? parsePixelWidth(attr(col, "width")))
+      : [];
+    const columnWidths = parsedColumnWidths.length && parsedColumnWidths.every((width): width is number => width !== null)
+      ? parsedColumnWidths
+      : [];
     const captionNode = elementChildren(node).find((child) => child.tagName === "caption");
     const tableAttrs: Record<string, unknown> = {};
     if (columnWidths.length) tableAttrs.columnWidths = columnWidths;
@@ -342,9 +422,9 @@ const parseBlock = (node: HtmlNode): SmartElementNode | null => {
     if (textColor) cellAttrs.textColor = textColor;
     if (verticalAlign) cellAttrs.verticalAlign = verticalAlign;
     const blockTags = ["p", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "blockquote", "pre", "table"];
-    const children = elementChildren(node).filter((child) => blockTags.includes(child.tagName || ""))
-      .map((child) => parseBlock(child)).filter((child): child is SmartElementNode => Boolean(child));
-    const directInline = (node.childNodes || []).filter((child) => !child.tagName || !blockTags.includes(child.tagName)).flatMap((child) => textWithMarks(child));
+    const isBlockLike = (child: HtmlNode) => blockTags.includes(child.tagName || "") || TRANSPARENT_CONTAINER_TAGS.includes(child.tagName || "");
+    const children = parseBlockList(elementChildren(node).filter(isBlockLike));
+    const directInline = (node.childNodes || []).filter((child) => !child.tagName || !isBlockLike(child)).flatMap((child) => textWithMarks(child));
     if (directInline.length) children.unshift({ type: "paragraph", id: createNodeId(), children: directInline });
     if (!children.length) children.push({ type: "paragraph", id: createNodeId(), children: [] });
     return { type: "table_cell", id: generatedId(node, "cell"), attrs: cellAttrs, children };
@@ -388,10 +468,11 @@ const parseBlock = (node: HtmlNode): SmartElementNode | null => {
     const inlineNodes = (node.childNodes || []).filter((child) => !child.tagName || !blockTags.includes(child.tagName));
     const directText = inlineNodes.flatMap((child) => textWithMarks(child));
     if (directText.length) children.push({ type: "paragraph", id: createNodeId(), children: directText });
-    elementChildren(node).filter((child) => blockTags.includes(child.tagName || "")).forEach((child) => {
-      const parsed = parseBlock(child);
-      if (parsed) children.push(parsed);
-    });
+    // blockTags already lists "div"/"figure" as block-worthy, but parseBlock
+    // itself has no case for either - parseBlockList is what actually
+    // unwraps them (rather than swallowing their content into one opaque
+    // `unknown` node) instead of parsing them directly.
+    children.push(...parseBlockList(elementChildren(node).filter((child) => blockTags.includes(child.tagName || ""))));
     if (!children.length) children.push({ type: "paragraph", id: createNodeId(), children: [] });
     return { type: "list_item", id: generatedId(node, "item"), ...(Object.keys(attrs).length ? { attrs } : {}), children };
   }
@@ -402,14 +483,26 @@ const parseBlock = (node: HtmlNode): SmartElementNode | null => {
   return null;
 };
 
+/**
+ * A thin wrapper around parseBlock for "list of block-level children"
+ * call sites: a transparent container (TRANSPARENT_CONTAINER_TAGS) is
+ * recursed into and its own children spliced in flat, rather than parsed
+ * as one opaque node - a div wrapping N real blocks (a table, N
+ * paragraphs, or nothing at all) produces exactly those N blocks instead
+ * of a single `unknown` placeholder that hides all of them.
+ */
+const parseBlockList = (nodes: readonly HtmlNode[]): SmartElementNode[] =>
+  nodes.flatMap((node) => {
+    if (TRANSPARENT_CONTAINER_TAGS.includes(node.tagName || "")) return parseBlockList(elementChildren(node));
+    const parsed = parseBlock(node);
+    return parsed ? [parsed] : [];
+  });
+
 export const parseCanonicalListHtml = (html: string): SmartDocument => {
   const fragment = parseFragment(html) as unknown as HtmlNode;
   const wrapper = elementChildren(fragment).find((node) => attr(node, "data-smart-document") === "true");
   const source = wrapper || fragment;
-  const children = elementChildren(source).flatMap((node) => {
-    const parsed = parseBlock(node);
-    return parsed ? [parsed] : [];
-  });
+  const children = parseBlockList(elementChildren(source));
   return { type: "doc", id: attr(source, "data-smart-id") || createNodeId(), children: children.length ? children : [{ type: "paragraph", id: createNodeId(), children: [] }] };
 };
 

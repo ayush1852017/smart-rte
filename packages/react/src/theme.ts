@@ -29,6 +29,11 @@ export const SRTE_DEFAULT_CSS = `
   --srte-accent-bg: rgba(2, 132, 199, 0.12);
   --srte-danger: #dc2626;
   --srte-primary: #2563eb;
+  /* --srte-primary on --srte-accent-bg measures 4.43:1, under WCAG AA's
+     4.5:1 for normal text - used only for the pressed toolbar-button state
+     (see .srte-tool-button[aria-pressed="true"]), not a replacement for
+     --srte-primary generally. */
+  --srte-primary-pressed: #1d4ed8;
   --srte-surface-subtle: #f3f4f6;
   --srte-on-primary: #ffffff;
   --srte-cancel-bg: #f3f4f6;
@@ -62,6 +67,7 @@ export const SRTE_DEFAULT_CSS = `
   --srte-accent-bg: rgba(56, 189, 248, 0.16);
   --srte-danger: #ef4444;
   --srte-primary: #3b82f6;
+  --srte-primary-pressed: var(--srte-primary);
   --srte-surface-subtle: #333333;
   --srte-on-primary: #ffffff;
   --srte-cancel-bg: #333333;
@@ -148,7 +154,12 @@ export const SRTE_DEFAULT_CSS = `
 }
 .srte-tool-button.srte-active,
 .srte-tool-button[aria-pressed="true"] {
-  color: var(--srte-primary);
+  /* var(--srte-primary) (#2563eb) on var(--srte-accent-bg) measured 4.43:1,
+     just under WCAG AA's 4.5:1 for normal text (axe-core, Phase 11 Tier 3) -
+     a dedicated, darker pressed-state color keeps the same hue family
+     while clearing the threshold, without changing --srte-primary's other,
+     already-compliant usages (e.g. against solid backgrounds). */
+  color: var(--srte-primary-pressed);
   background: var(--srte-accent-bg);
   border-color: color-mix(in srgb, var(--srte-primary) 35%, transparent);
 }
@@ -501,6 +512,10 @@ export const SRTE_DEFAULT_CSS = `
 .srte-editor [contenteditable] [data-smart-cell-selected="true"] {
   background: color-mix(in srgb, var(--srte-primary) 12%, var(--srte-canvas));
   box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--srte-primary) 65%, transparent);
+}
+.srte-editor [contenteditable][data-smart-cell-selection-active] ::selection {
+  background: transparent;
+  color: inherit;
 }
 .srte-editor [contenteditable] th {
   background: var(--srte-surface-subtle);

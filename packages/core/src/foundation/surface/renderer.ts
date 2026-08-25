@@ -66,7 +66,7 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
   private compositionWrites = 0;
   private liveRegion: HTMLElement | null = null;
 
-  constructor(private readonly root: HTMLElement) {
+  constructor(private readonly root: HTMLElement, private readonly options: { contentVisibility?: boolean } = {}) {
     root.contentEditable = "true";
     root.tabIndex = -1;
     root.setAttribute("data-smart-canonical-surface", "true");
@@ -192,6 +192,55 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
         }
         if (captionElement.textContent !== caption) { captionElement.textContent = caption; this.recordWrite(node.id); }
       } else if (captionElement) { captionElement.remove(); this.recordWrite(node.id); }
+      // table.attrs.columnWidths was, until this pass, written by
+      // setTableColumnWidthCommand but never read by this renderer at all -
+      // a real, until-now-invisible gap (docs/bugs/
+      // table-column-width-not-rendered.md). A <colgroup> is the standard
+      // HTML sizing mechanism, one <col> per grid column, positioned after
+      // <caption> (self-correcting on every render regardless of prior
+      // insertion order) and before row content, matching the legacy DOM
+      // bridge's existing colgroup approach for the same attribute.
+      const widths = Array.isArray(node.attrs?.columnWidths) ? node.attrs.columnWidths as number[] : null;
+      let colgroup = element.querySelector<HTMLElement>(`:scope > colgroup[${SMART_PROJECTION_ATTRIBUTE}="table-colgroup"]`);
+      if (widths && widths.length) {
+        const grid = occupancyGridFor(node);
+        if (!colgroup) {
+          colgroup = element.ownerDocument.createElement("colgroup");
+          colgroup.setAttribute(SMART_PROJECTION_ATTRIBUTE, "table-colgroup");
+          const afterCaption = element.querySelector(":scope > caption");
+          if (afterCaption) afterCaption.after(colgroup); else element.prepend(colgroup);
+          this.recordWrite(node.id);
+        }
+        for (let index = 0; index < grid.columns; index += 1) {
+          let col = colgroup.children[index] as HTMLElement | undefined;
+          if (!col) {
+            col = element.ownerDocument.createElement("col");
+            colgroup.appendChild(col);
+            this.recordWrite(node.id);
+          }
+          const width = widths[index];
+          const value = Number.isFinite(width) && width > 0 ? `${width}px` : "";
+          if (col.style.width !== value) { col.style.width = value; this.recordWrite(node.id); }
+        }
+        while (colgroup.children.length > grid.columns) { colgroup.lastElementChild?.remove(); this.recordWrite(node.id); }
+        // The stylesheet's default `table { width: 100% }` combined with
+        // `table-layout: fixed` makes every <col> width a *proportion* of
+        // the table's rendered width, not a literal pixel value - growing
+        // one column via colgroup shifts everyone else's proportional
+        // share too, moving columns the resize never touched (docs/bugs/
+        // table-resize-moves-unrelated-columns.md). Pinning the table's
+        // own inline width to the literal sum of columnWidths overrides
+        // that default so table-layout: fixed gives each column exactly
+        // its specified pixel width, and resizing one column changes the
+        // table's overall width instead of everyone else's.
+        const totalWidth = widths.slice(0, grid.columns).reduce((sum, width) => sum + (Number.isFinite(width) && width > 0 ? width : 0), 0);
+        const totalValue = totalWidth > 0 ? `${totalWidth}px` : "";
+        if (element.style.width !== totalValue) { element.style.width = totalValue; this.recordWrite(node.id); }
+      } else if (colgroup) {
+        colgroup.remove();
+        if (element.style.width) { element.style.removeProperty("width"); this.recordWrite(node.id); }
+        this.recordWrite(node.id);
+      }
     } else if (node.type === "table_row") {
       const height = Number(node.attrs?.height);
       if (Number.isFinite(height) && height > 0) element.style.height = `${height}px`;
@@ -217,6 +266,13 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
       if (node.attrs?.background) element.style.background = String(node.attrs.background); else element.style.removeProperty("background");
       if (node.attrs?.borders) element.style.border = String(node.attrs.borders); else element.style.removeProperty("border");
       if (node.attrs?.verticalAlign) element.style.verticalAlign = String(node.attrs.verticalAlign); else element.style.removeProperty("vertical-align");
+      // table_cell.attrs.textColor was parsed from HTML import and settable
+      // via table.setCellAttributes, but never read by this renderer at all
+      // - the same "written, never rendered" gap columnWidths had (docs/
+      // bugs/table-column-width-not-rendered.md), found wiring the new
+      // "Cell text color" context menu item, which would otherwise have
+      // applied a value with zero visible effect.
+      if (node.attrs?.textColor) element.style.color = String(node.attrs.textColor); else element.style.removeProperty("color");
     } else if (node.type === "image" || node.type === "block_image") {
       const source = sanitizeAtomSource(String(node.attrs?.src || ""), { kind: "image", allowBlobPreview: node.attrs?.status === "pending" });
       if (source) this.setAttribute(element, "src", source, node.id); else this.removeAttribute(element, "src", node.id);
@@ -533,6 +589,20 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
   /** Cell selections are projected as a DOM-only highlight; cells remain model nodes. */
   private syncCellSelectionProjection(selection: SmartSelection): void {
     this.root.querySelectorAll<HTMLElement>("[data-smart-cell-selected]").forEach((cell) => cell.removeAttribute("data-smart-cell-selected"));
+    // restoreSelection still needs a real, non-collapsed native Range spanning
+    // anchor-to-head so Ctrl+C/native copy commands have something to act on
+    // (handleCopy overrides the actual clipboard payload from the model, so
+    // the Range's exact span never affects copied content) and so a later
+    // selectionchange still matches this cell selection's own anchor/head
+    // (see syncSelectionFromDom's "cell" preservation guard). But that Range
+    // necessarily passes through any cell that sits between the anchor and
+    // head cells in DOM order, and the browser highlights all of it - not
+    // just the two boundary cells - producing a native grey highlight on
+    // cells the [data-smart-cell-selected] rectangle above correctly leaves
+    // unmarked. Suppress the native highlight's rendering entirely while a
+    // cell selection is active; the attribute above is the real indicator.
+    if (selection.type === "cell") this.root.setAttribute("data-smart-cell-selection-active", "true");
+    else this.root.removeAttribute("data-smart-cell-selection-active");
     if (selection.type !== "cell") return;
     const anchor = this.mapping.posToDom(selection.anchor)?.node;
     const head = this.mapping.posToDom(selection.head)?.node;
@@ -627,7 +697,18 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
       region.setAttribute("aria-atomic", "true");
       region.contentEditable = "false";
       region.style.cssText = "position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap";
-      this.root.appendChild(region);
+      // Append outside the contenteditable root, not inside it. A
+      // contenteditable="false" island living as a child of a
+      // contenteditable="true" root - even a visually hidden one - makes
+      // Chromium and WebKit's native Ctrl/Cmd+A (select all) silently
+      // collapse to nothing instead of selecting the document, as soon as
+      // any list item's depth changes (creating the very first list item
+      // already qualifies). Firefox is unaffected, which is why this only
+      // surfaces in Chromium/WebKit-family browsers. The announcement has
+      // no accessibility reason to live inside the editable subtree - an
+      // aria-live region only needs to be present in the document, not
+      // physically nested under the content it describes.
+      (this.root.parentElement || this.root).appendChild(region);
       this.liveRegion = region;
     }
     this.liveRegion.textContent = `List level ${active[1].depth + 1}`;
@@ -649,6 +730,7 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
     if (this.current === document) {
       this.restoreSelection(selection);
       this.syncCellSelectionProjection(selection);
+      this.syncContentVisibility(document, document, selection);
       return;
     }
     const before = this.current;
@@ -661,7 +743,42 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
     if (structural) this.syncTableAccessibility();
     this.restoreSelection(selection);
     this.syncCellSelectionProjection(selection);
+    this.syncContentVisibility(before, document, selection);
     this.announceSelectedLevel(before, document, selection);
+  }
+
+  /**
+   * Renderer-integrated content-visibility (Phase 11 Tier 3): the naive
+   * per-block experiment (stamping content-visibility:auto on every
+   * top-level block unconditionally, including the one actively being
+   * typed into) measured 55-699ms against a 41-46ms baseline and was
+   * disproven - the active block's own containment-recalculation overhead
+   * on every keystroke outweighs any off-screen skip benefit. This keys off
+   * the same reference-identity check diffElement already computes
+   * (`next === previous`, line ~421): a top-level block only gets
+   * content-visibility when it was untouched THIS render pass AND isn't
+   * the selection's own block, so the actively-edited block never carries
+   * the extra containment cost. Opt-in via the `contentVisibility`
+   * constructor option - default behavior for every existing caller and
+   * test is completely unchanged.
+   */
+  private syncContentVisibility(before: SmartDocument | null, after: SmartDocument, selection: SmartSelection): void {
+    if (!this.options.contentVisibility) return;
+    const activeIndex = selection.head.path[0];
+    const domChildren = this.modelChildren(this.root);
+    after.children.forEach((child, index) => {
+      const dom = domChildren[index];
+      if (!(dom instanceof HTMLElement)) return;
+      const unchanged = before?.children[index] === child;
+      const eligible = unchanged && index !== activeIndex;
+      if (eligible) {
+        if (dom.style.contentVisibility !== "auto") dom.style.contentVisibility = "auto";
+        if (!dom.style.containIntrinsicBlockSize) dom.style.containIntrinsicBlockSize = "24px";
+      } else {
+        if (dom.style.contentVisibility) dom.style.removeProperty("content-visibility");
+        if (dom.style.containIntrinsicBlockSize) dom.style.removeProperty("contain-intrinsic-block-size");
+      }
+    });
   }
 
   beginComposition(nodeId: string): void { this.compositionOwner = nodeId; }
@@ -677,4 +794,5 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
   }
 }
 
-export const createSubtreeRenderer = (root: HTMLElement): CanonicalSubtreeRenderer => new FoundationSubtreeRenderer(root);
+export const createSubtreeRenderer = (root: HTMLElement, options?: { contentVisibility?: boolean }): CanonicalSubtreeRenderer =>
+  new FoundationSubtreeRenderer(root, options);

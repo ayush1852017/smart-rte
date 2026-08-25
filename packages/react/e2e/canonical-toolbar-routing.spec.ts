@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import AxeBuilder from "@axe-core/playwright";
 
 const selectFirstText = async (page: Page) => page.evaluate(() => {
   const root = document.querySelector<HTMLElement>('[data-smart-authority="canonical"] [contenteditable="true"]')!;
@@ -37,8 +38,11 @@ const selectCellRange = async (page: Page, start: Locator, end: Locator) => {
   await page.mouse.up();
 };
 
+// Phase 11.5 §2.1: image insertion now opens MediaManager ("Media library")
+// by default instead of the simple DefaultMediaPicker ("Choose image");
+// video/audio are unaffected.
 const chooseMedia = async (page: Page, kind: "image" | "video" | "audio", name: string, mimeType: string) => {
-  const picker = page.getByRole("dialog", { name: `Choose ${kind}` });
+  const picker = page.getByRole("dialog", { name: kind === "image" ? "Media library" : `Choose ${kind}` });
   await picker.locator('input[type="file"]').setInputFiles({
     name,
     mimeType,
@@ -61,23 +65,28 @@ test.describe("canonical toolbar routing", () => {
   });
 
   test("routes lists, links, tables, atoms, resize, import, and export through retained state", async ({ page }) => {
-    let linkPrompt = 0;
     page.on("dialog", (dialog) => {
       const message = dialog.message();
-      const answer = message.includes("Link") ? (linkPrompt++ === 0 ? "https://example.test" : "https://updated.example.test")
-        : message.includes("Formula") ? "E=mc^2"
-            : message.includes("Alt text") ? "Example image" : "";
+      const answer = message.includes("Formula") ? "E=mc^2"
+        : message.includes("Alt text") ? "Example image" : "";
       void dialog.accept(answer);
     });
     await page.goto("/?canonicalAuthority=1&blocks=2");
     const surface = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
 
+    // Phase 11.5: the Link toolbar button now opens LinkEditorPopover
+    // (previously built, tested in isolation, never wired) instead of
+    // window.prompt.
     await selectFirstText(page);
     await page.getByRole("button", { name: "Insert or edit link" }).click();
+    await page.locator("[data-srte-link-href-input]").fill("https://example.test");
+    await page.getByRole("button", { name: "Insert", exact: true }).click();
     await expect(surface.locator("a")).toHaveAttribute("href", "https://example.test");
     await expect(surface.locator("a")).toHaveCSS("text-decoration-line", "underline");
     await placeCaret(page, '[data-smart-authority="canonical"] [contenteditable="true"] a');
     await page.getByRole("button", { name: "Insert or edit link" }).click();
+    await page.locator("[data-srte-link-href-input]").fill("https://updated.example.test");
+    await page.getByRole("button", { name: "Update", exact: true }).click();
     await expect(surface.locator("a")).toHaveAttribute("href", "https://updated.example.test");
 
     await page.getByRole("button", { name: "Bulleted list" }).click();
@@ -139,15 +148,22 @@ test.describe("canonical toolbar routing", () => {
   test("routes attributed marks, block transforms, list presets, and DOCX/PDF workflows", async ({ page }) => {
     page.on("dialog", (dialog) => {
       const message = dialog.message();
-      const answer = message.includes("Text colour") || message.includes("Background colour") ? "#336699"
-        : message.includes("Font size") ? "18"
-          : message.includes("Font family") ? "Inter" : "";
+      // Text/Background colour previously went through window.prompt here;
+      // Phase 11.5 wired ColorPickerPopover instead (handled explicitly
+      // below), so only Font size/Font family still use a dialog.
+      const answer = message.includes("Font size") ? "18"
+        : message.includes("Font family") ? "Inter" : "";
       void dialog.accept(answer);
     });
     await page.goto("/?canonicalAuthority=1&blocks=3");
     const surface = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
     await selectFirstText(page);
-    for (const label of ["Text colour", "Background colour", "Font size", "Font family"]) {
+    for (const label of ["Text colour", "Background colour"]) {
+      await page.getByRole("button", { name: label, exact: true }).click();
+      await page.locator("[data-srte-color-hex-input]").fill("#336699");
+      await page.getByRole("button", { name: "Apply", exact: true }).click();
+    }
+    for (const label of ["Font size", "Font family"]) {
       await page.getByRole("button", { name: label, exact: true }).click();
     }
     for (const mark of ["textColor", "backgroundColor", "fontSize", "fontFamily"]) {
@@ -203,6 +219,71 @@ test.describe("canonical toolbar routing", () => {
     await expect(surface.locator('[data-smart-type="block_image"]')).toHaveAttribute("src", /^https:\/\/media\.playground\.test\//);
   });
 
+  // "when I merge cells despite of horizantal and vertical their content
+  // shouldn't get mixed. it should wrapped down in new line." - merging
+  // cells with real, distinct one-line content previously concatenated
+  // them onto a single shared line (e.g. "Apple"/"Banana" merged into the
+  // unreadable run "AppleBanana") to keep the merged row's height from
+  // growing - see docs/bugs/table-merge-concatenates-cell-content.md.
+  test("merges cells with real content onto separate lines instead of mixing it together, both horizontally and vertically", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    await page.evaluate(() => {
+      const runtime = (window as typeof window & { __smartProductCanonical?: {
+        editor: { schema: { version: number }; state: { revision: number } };
+        replaceValue: (value: unknown) => void;
+      } }).__smartProductCanonical!;
+      const cell = (id: string, text: string) => ({
+        type: "table_cell", id, attrs: { rowspan: 1, colspan: 1, header: false },
+        children: [{ type: "paragraph", id: `${id}-p`, children: text ? [{ type: "text", text }] : [] }],
+      });
+      runtime.replaceValue({
+        schemaVersion: runtime.editor.schema.version,
+        revision: runtime.editor.state.revision + 1,
+        document: { type: "doc", id: "merge-content-doc", children: [
+          // Two independent tables - a horizontal merge on the first, a
+          // vertical merge on the second - so neither selection's
+          // rectangle-snap has to widen to cover a cell outside what's
+          // actually being asserted.
+          { type: "table", id: "merge-content-h-table", attrs: { columnWidths: [150, 150] }, children: [
+            { type: "table_row", id: "merge-content-h-r0", children: [cell("merge-content-h-a0", "Apple"), cell("merge-content-h-b0", "Banana")] },
+          ] },
+          { type: "table", id: "merge-content-v-table", attrs: { columnWidths: [150] }, children: [
+            { type: "table_row", id: "merge-content-v-r0", children: [cell("merge-content-v-a0", "Apple")] },
+            { type: "table_row", id: "merge-content-v-r1", children: [cell("merge-content-v-a1", "Banana")] },
+          ] },
+        ] },
+      });
+    });
+    const surface = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
+    const tables = surface.locator("table");
+
+    // Horizontal merge: two cells in the same row.
+    const a0 = tables.nth(0).locator('[data-smart-id="merge-content-h-a0"]');
+    const b0 = tables.nth(0).locator('[data-smart-id="merge-content-h-b0"]');
+    await selectCellRange(page, a0, b0);
+    await expect(surface.locator('[data-smart-cell-selected="true"]')).toHaveCount(2);
+    await page.getByRole("button", { name: "Merge cells" }).click();
+    const horizontalAnchor = tables.nth(0).locator('[data-smart-id="merge-content-h-a0"]');
+    await expect(horizontalAnchor).toHaveAttribute("colspan", "2");
+    // Each source cell's text survives as its own paragraph/line, not
+    // concatenated into a single "AppleBanana" run.
+    await expect(horizontalAnchor.locator(":scope > p")).toHaveCount(2);
+    await expect(horizontalAnchor.locator(":scope > p").nth(0)).toHaveText("Apple");
+    await expect(horizontalAnchor.locator(":scope > p").nth(1)).toHaveText("Banana");
+
+    // Vertical merge: two cells in the same column, different rows.
+    const v0 = tables.nth(1).locator('[data-smart-id="merge-content-v-a0"]');
+    const v1 = tables.nth(1).locator('[data-smart-id="merge-content-v-a1"]');
+    await selectCellRange(page, v0, v1);
+    await expect(surface.locator('[data-smart-cell-selected="true"]')).toHaveCount(2);
+    await page.getByRole("button", { name: "Merge cells" }).click();
+    const verticalAnchor = tables.nth(1).locator('[data-smart-id="merge-content-v-a0"]');
+    await expect(verticalAnchor).toHaveAttribute("rowspan", "2");
+    await expect(verticalAnchor.locator(":scope > p")).toHaveCount(2);
+    await expect(verticalAnchor.locator(":scope > p").nth(0)).toHaveText("Apple");
+    await expect(verticalAnchor.locator(":scope > p").nth(1)).toHaveText("Banana");
+  });
+
   test("keeps a caret and new text available after a table", async ({ page }) => {
     await page.goto("/?canonicalAuthority=1&blocks=1");
     const surface = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
@@ -221,22 +302,22 @@ test.describe("canonical toolbar routing", () => {
     await placeCaret(page, '[data-smart-authority="canonical"] [contenteditable="true"] > p');
     await page.getByRole("button", { name: "Insert table" }).click();
     const cellParagraph = surface.locator("table tr").first().locator("td,th").first().locator("p");
-    await placeCaret(page, '[data-smart-authority="canonical"] [contenteditable="true"] table tr:first-child td:first-child p');
+    await placeCaret(page, '[data-smart-authority="canonical"] [contenteditable="true"] table tr:first-of-type td:first-child p');
     await page.getByRole("button", { name: "Bulleted list" }).click();
     await expect(cellParagraph.locator("xpath=ancestor::td").locator(":scope > ul > li")).toHaveCount(1);
 
     // A second item must be able to indent without escaping the isolating
     // cell. This is the cross-feature case that a single-item list does not
     // exercise.
-    await placeCaret(page, '[data-smart-authority="canonical"] [contenteditable="true"] table tr:first-child td:first-child p');
+    await placeCaret(page, '[data-smart-authority="canonical"] [contenteditable="true"] table tr:first-of-type td:first-child p');
     await page.keyboard.type("first");
     await page.keyboard.press("Enter");
     await page.keyboard.type("second");
     const secondParagraph = surface.locator("table tr").first().locator("td,th").first().locator("ul > li:nth-child(2) p");
     await expect(secondParagraph).toHaveCount(1);
-    await placeCaret(page, '[data-smart-authority="canonical"] table tr:first-child td:first-child ul > li:nth-child(2) p');
+    await placeCaret(page, '[data-smart-authority="canonical"] table tr:first-of-type td:first-child ul > li:nth-child(2) p');
     await page.getByRole("button", { name: "Indent list item" }).click();
-    await expect(surface.locator("table tr:first-child td:first-child ul > li > ul > li")).toHaveCount(1);
+    await expect(surface.locator("table tr:first-of-type td:first-child ul > li > ul > li")).toHaveCount(1);
   });
 
   test("selects a vertical cell range and merges it", async ({ page }) => {
@@ -252,6 +333,35 @@ test.describe("canonical toolbar routing", () => {
     await expect(page.getByRole("button", { name: "Merge cells" })).toBeEnabled();
     await page.getByRole("button", { name: "Merge cells" }).click();
     await expect(table.locator("tr").first().locator("td,th").first()).toHaveAttribute("rowspan", "2");
+  });
+
+  // A vertical drag from row 1 col 1 to row 2 col 1 forms a native DOM Range
+  // that, in row-major order, also passes through row 1 col 2 (the cell
+  // between the drag's start and end). Confirmed via screenshot: the browser
+  // kept rendering its own grey text-highlight across that untouched cell
+  // even though only the 2 intended cells were part of the logical/model
+  // selection - correct model, misleading native-selection render.
+  test("suppresses the native text-selection highlight while a cell range is selected", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    const surface = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
+    await placeCaret(page, '[data-smart-authority="canonical"] [contenteditable="true"] > p');
+    await page.getByRole("button", { name: "Insert table" }).click();
+    const table = surface.locator("table");
+    const first = table.locator("tr").nth(0).locator("td,th").nth(0);
+    const below = table.locator("tr").nth(1).locator("td,th").nth(0);
+    const untouched = table.locator("tr").nth(0).locator("td,th").nth(1);
+    await selectCellRange(page, first, below);
+    await expect(surface.locator('[data-smart-cell-selected="true"]')).toHaveCount(2);
+    await expect(untouched).not.toHaveAttribute("data-smart-cell-selected", "true");
+    await expect(surface).toHaveAttribute("data-smart-cell-selection-active", "true");
+    const selectionBackground = await surface.evaluate(
+      (root) => getComputedStyle(root, "::selection").backgroundColor,
+    );
+    expect(["transparent", "rgba(0, 0, 0, 0)"]).toContain(selectionBackground);
+    // Splitting back out of the cell selection (click elsewhere) must drop
+    // the suppression again, not leave native selection permanently inert.
+    await placeCaret(page, '[data-smart-authority="canonical"] [contenteditable="true"] > p', true);
+    await expect(surface).not.toHaveAttribute("data-smart-cell-selection-active", "true");
   });
 
   test("moves the caret to an editable line after a block atom", async ({ page }) => {
@@ -330,5 +440,39 @@ test.describe("canonical toolbar routing", () => {
     await expect(ordered).toHaveAttribute("start", "3");
     await page.getByRole("button", { name: "Continue numbering" }).click();
     await expect(ordered).not.toHaveAttribute("start");
+  });
+
+  /**
+   * Phase 11 Tier 3: axe-core coverage was concentrated entirely in
+   * canonical-surface.spec.ts (the lower-level harness); the real product
+   * surface (CanonicalAuthorityEditor, toolbar-routed) had zero axe scans.
+   * This exercises the toolbar itself plus a mixed-feature document
+   * (marks, list, table, heading) in one pass.
+   */
+  test("has no axe violations in the toolbar and a mixed-feature document", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    await page.evaluate(() => {
+      const runtime = (window as typeof window & { __smartProductCanonical?: any }).__smartProductCanonical!;
+      runtime.replaceValue({
+        schemaVersion: runtime.editor.schema.version,
+        revision: runtime.editor.state.revision + 1,
+        document: { type: "doc", id: "axe-doc", children: [
+          { type: "heading", id: "axe-h", attrs: { level: 2 }, children: [{ type: "text", text: "Title" }] },
+          { type: "paragraph", id: "axe-p", children: [{ type: "text", text: "bold and italic", marks: [] }, { type: "text", text: " word", marks: [{ type: "bold" }] }] },
+          { type: "list", id: "axe-list", attrs: { style: "disc" }, children: [
+            { type: "list_item", id: "axe-li", children: [{ type: "paragraph", id: "axe-li-p", children: [{ type: "text", text: "item" }] }] },
+          ] },
+          { type: "table", id: "axe-table", attrs: { columnWidths: [100] }, children: [
+            { type: "table_row", id: "axe-row", children: [
+              { type: "table_cell", id: "axe-cell", attrs: { rowspan: 1, colspan: 1, header: false }, children: [{ type: "paragraph", id: "axe-cell-p", children: [{ type: "text", text: "cell" }] }] },
+            ] },
+          ] },
+        ] },
+      });
+    });
+    const surfaceLocator = page.locator('[data-smart-authority="canonical"]');
+    await expect(surfaceLocator.locator('[contenteditable="true"]')).toBeVisible();
+    const results = await new AxeBuilder({ page }).include('[data-smart-authority="canonical"]').analyze();
+    expect(results.violations).toEqual([]);
   });
 });

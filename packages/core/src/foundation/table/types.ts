@@ -67,7 +67,15 @@ export interface RowParams { readonly position?: "before" | "after"; readonly ro
 export interface ColumnParams { readonly position?: "before" | "after"; readonly columnIndex?: number; readonly cellIds?: readonly string[]; readonly paragraphIds?: readonly string[] }
 export interface HeaderParams { readonly target: "row" | "column" | "both" | "none" }
 export interface CellAttributesParams { readonly attrs: Attrs }
-export interface ColumnWidthParams { readonly index: number; readonly width: number }
+/**
+ * `widths`, when supplied, seeds the full columnWidths array instead of
+ * the command's own `Array(columns).fill(120)` fallback - the command
+ * layer has no way to know a table's real *rendered* per-column widths
+ * (that's DOM state, not model state), so a caller that already measured
+ * them (a resize-handle UI, mid-drag) should pass them through rather
+ * than let every other column silently reset to a fabricated default.
+ */
+export interface ColumnWidthParams { readonly index: number; readonly width: number; readonly widths?: readonly number[] }
 export interface RowHeightParams { readonly index: number; readonly height: number }
 export interface MoveTableAxisParams { readonly direction: "up" | "down" | "left" | "right"; readonly index?: number }
 export interface SplitCellParams { readonly cellIds: readonly string[]; readonly paragraphIds: readonly string[] }

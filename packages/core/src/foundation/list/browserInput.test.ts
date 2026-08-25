@@ -53,10 +53,10 @@ describe("Phase 3 browser-input routing", () => {
     root.focus();
     root.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Tab" }));
     expect(editor.history.undo).toHaveLength(1);
-    expect(root.querySelector('[data-smart-ui="list-level-announcement"]')?.textContent).toBe("List level 2");
+    expect(document.body.querySelector('[data-smart-ui="list-level-announcement"]')?.textContent).toBe("List level 2");
     root.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Tab", shiftKey: true }));
     expect(editor.history.undo).toHaveLength(2);
-    expect(root.querySelector('[data-smart-ui="list-level-announcement"]')?.textContent).toBe("List level 1");
+    expect(document.body.querySelector('[data-smart-ui="list-level-announcement"]')?.textContent).toBe("List level 1");
     expect(document.activeElement).toBe(root);
     expect(editor.undo()).toBe(true);
     expect(editor.undo()).toBe(true);
