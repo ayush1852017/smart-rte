@@ -410,6 +410,140 @@ describe("Phase 2.5 renderer and input pipeline", () => {
     pipeline.destroy();
   });
 
+  it("marks the removed paragraph's removeNode as merged into the surviving paragraph on a real cross-block Backspace (Phase 12a comment-anchor-survival)", () => {
+    // deleteAcrossBlock (the real code path for a collapsed caret at a
+    // block boundary) is distinct from queueRangeDeletion's mergeNode
+    // operation, which only fires for a non-collapsed selection spanning
+    // multiple blocks - this is the far more common interaction (plain
+    // Backspace at the start of a paragraph) and, like table-cell-merge/
+    // list-item-merge, never went through mergeNode at all, so it needs
+    // its own mergedInto marking for AnnotationRange consumers (comments)
+    // to snap instead of silently losing anchors on this edit.
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const editor = createFoundationEditor({ document: documentOf("hello", "world"), selection: caret(0, [1]) });
+    const renderer = createSubtreeRenderer(root);
+    const pipeline = createInputPipeline(editor, renderer, root);
+    const beforeInput = (inputType: string) => root.dispatchEvent(new InputEvent("beforeinput", {
+      bubbles: true, cancelable: true, inputType,
+    }));
+    let committed: readonly SmartOperation[] = [];
+    editor.subscribe((transaction) => { committed = transaction.operations; });
+
+    beforeInput("deleteContentBackward");
+
+    expect(editor.document.children).toEqual([paragraph("p0", "helloworld")]);
+    const removal = committed.find((operation) => operation.type === "removeNode");
+    expect(removal).toMatchObject({ type: "removeNode", node: { id: "p1" }, mergedInto: "p0" });
+    pipeline.destroy();
+  });
+
+  describe("ambient track-changes mode (Phase 12a §2.3 follow-up)", () => {
+    const beforeInputWithData = (root: HTMLElement, inputType: string, data: string | null = null) =>
+      root.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType, data }));
+
+    it("is off by default - ordinary typing edits the document directly", () => {
+      const root = document.createElement("div");
+      document.body.appendChild(root);
+      const editor = createFoundationEditor({ document: documentOf("ab"), selection: caret(2) });
+      const renderer = createSubtreeRenderer(root);
+      const pipeline = createInputPipeline(editor, renderer, root);
+      beforeInputWithData(root, "insertText", "c");
+      expect(editor.document.children[0]).toEqual(paragraph("p0", "abc"));
+      pipeline.destroy();
+    });
+
+    it("marks typed text as a live insert-suggestion at a collapsed caret, instead of editing directly", () => {
+      const root = document.createElement("div");
+      document.body.appendChild(root);
+      const editor = createFoundationEditor({ document: documentOf("ab"), selection: caret(2) });
+      const renderer = createSubtreeRenderer(root);
+      const pipeline = createInputPipeline(editor, renderer, root);
+      pipeline.setTrackChanges(true, "alice");
+
+      beforeInputWithData(root, "insertText", "c");
+
+      expect(editor.document.children[0].children).toEqual([
+        { type: "text", text: "ab" },
+        { type: "text", text: "c", marks: [{ type: "suggestion", attrs: expect.objectContaining({ authorId: "alice", kind: "insert" }) }] },
+      ]);
+      expect(editor.selection.head).toEqual({ path: [0], offset: 3 });
+      expect(validate(editor.document, foundationSchema)).toEqual([]);
+      pipeline.destroy();
+    });
+
+    it("typing over a same-owner selection marks the old text for deletion and inserts the new text as a suggestion, without removing the old text", () => {
+      const root = document.createElement("div");
+      document.body.appendChild(root);
+      const editor = createFoundationEditor({
+        document: documentOf("hello world"),
+        selection: { type: "text", anchor: { path: [0], offset: 0 }, head: { path: [0], offset: 5 } },
+      });
+      const renderer = createSubtreeRenderer(root);
+      const pipeline = createInputPipeline(editor, renderer, root);
+      pipeline.setTrackChanges(true, "alice");
+
+      beforeInputWithData(root, "insertText", "hi");
+
+      const children = editor.document.children[0].children as { text: string; marks?: { type: string; attrs?: Record<string, unknown> }[] }[];
+      expect(children.map((child) => child.text).join("")).toBe("hellohi world");
+      expect(children[0]).toMatchObject({ text: "hello", marks: [{ type: "suggestion", attrs: expect.objectContaining({ kind: "delete" }) }] });
+      expect(children[1]).toMatchObject({ text: "hi", marks: [{ type: "suggestion", attrs: expect.objectContaining({ kind: "insert" }) }] });
+      pipeline.destroy();
+    });
+
+    it("Backspace on a same-owner range marks it for deletion instead of removing it", () => {
+      const root = document.createElement("div");
+      document.body.appendChild(root);
+      const editor = createFoundationEditor({ document: documentOf("hello"), selection: caret(5) });
+      const renderer = createSubtreeRenderer(root);
+      const pipeline = createInputPipeline(editor, renderer, root);
+      pipeline.setTrackChanges(true, "alice");
+
+      beforeInputWithData(root, "deleteContentBackward");
+
+      expect(editor.document.children[0].children).toEqual([
+        { type: "text", text: "hell" },
+        { type: "text", text: "o", marks: [{ type: "suggestion", attrs: expect.objectContaining({ authorId: "alice", kind: "delete" }) }] },
+      ]);
+      // The text is still present (not removed), so the caret conceptually
+      // lands before it - matching where a real deletion would have left it.
+      expect(editor.selection.head).toEqual({ path: [0], offset: 4 });
+      pipeline.destroy();
+    });
+
+    it("falls back to real (non-suggested) editing for a selection crossing paragraphs - a deliberate scope reduction", () => {
+      const root = document.createElement("div");
+      document.body.appendChild(root);
+      const editor = createFoundationEditor({
+        document: documentOf("hello", "world"),
+        selection: { type: "text", anchor: { path: [0], offset: 0 }, head: { path: [1], offset: 5 } },
+      });
+      const renderer = createSubtreeRenderer(root);
+      const pipeline = createInputPipeline(editor, renderer, root);
+      pipeline.setTrackChanges(true, "alice");
+
+      beforeInputWithData(root, "insertText", "x");
+
+      expect(editor.document.children).toEqual([paragraph("p0", "x")]);
+      pipeline.destroy();
+    });
+
+    it("does not change the real cross-block Backspace merge (deleteAcrossBlock) even when enabled", () => {
+      const root = document.createElement("div");
+      document.body.appendChild(root);
+      const editor = createFoundationEditor({ document: documentOf("hello", "world"), selection: caret(0, [1]) });
+      const renderer = createSubtreeRenderer(root);
+      const pipeline = createInputPipeline(editor, renderer, root);
+      pipeline.setTrackChanges(true, "alice");
+
+      beforeInputWithData(root, "deleteContentBackward");
+
+      expect(editor.document.children).toEqual([paragraph("p0", "helloworld")]);
+      pipeline.destroy();
+    });
+  });
+
   it("keeps list exit and backward deletion editable inside a blockquote", () => {
     const quotedList: SmartDocument = { type: "doc", id: "doc", children: [{
       type: "blockquote", id: "quote", children: [{
@@ -650,6 +784,53 @@ describe("Phase 2.5 renderer and input pipeline", () => {
       expect(editor.document.children[0]).toMatchObject({ type: "paragraph", children: [] });
       expect(editor.selection).toEqual(caret(0, [0]));
       expect(validate(editor.document, foundationSchema)).toEqual([]);
+      pipeline.destroy();
+    });
+  });
+
+  it("collapses a whole-document (select-all) selection to the true document end/start with ArrowDown/ArrowUp, regardless of trailing structural content", () => {
+    const plain: SmartDocument = documentOf("first line", "second line");
+    const flatList: SmartDocument = { type: "doc", id: "doc", children: [
+      paragraph("p0", "first line"),
+      { type: "list", id: "list", attrs: { style: "disc" }, children: [
+        { type: "list_item", id: "item0", children: [paragraph("item0-p", "one")] },
+        { type: "list_item", id: "item1", children: [paragraph("item1-p", "two")] },
+      ] },
+    ] };
+    const nestedList: SmartDocument = { type: "doc", id: "doc", children: [
+      paragraph("p0", "first line"),
+      { type: "list", id: "list", attrs: { style: "disc" }, children: [
+        { type: "list_item", id: "item0", children: [
+          paragraph("item0-p", "one"),
+          { type: "list", id: "nested", attrs: { style: "disc" }, children: [
+            { type: "list_item", id: "nested-item", children: [paragraph("nested-p", "nested one")] },
+          ] },
+        ] },
+      ] },
+    ] };
+    const cases: Array<{ label: string; document: SmartDocument; start: SmartSelection["head"]; end: SmartSelection["head"] }> = [
+      { label: "plain paragraphs (control)", document: plain, start: { path: [0], offset: 0 }, end: { path: [1], offset: "second line".length } },
+      { label: "flat (non-nested) list", document: flatList, start: { path: [0], offset: 0 }, end: { path: [1, 1, 0], offset: "two".length } },
+      { label: "nested list", document: nestedList, start: { path: [0], offset: 0 }, end: { path: [1, 0, 1, 0, 0], offset: "nested one".length } },
+    ];
+    cases.forEach(({ label, document: documentValue, start, end }) => {
+      const root = document.createElement("div");
+      document.body.appendChild(root);
+      const wholeDocument: SmartSelection = { type: "text", anchor: { path: [], offset: 0 }, head: { path: [], offset: documentValue.children.length } };
+      const editor = createFoundationEditor({ document: documentValue, selection: wholeDocument });
+      const renderer = createSubtreeRenderer(root);
+      const pipeline = createInputPipeline(editor, renderer, root);
+
+      editor.setSelection(wholeDocument);
+      renderer.render(editor.document, editor.selection);
+      pipeline.handleKeyDown(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+      expect(editor.selection, `${label}: ArrowDown after select-all`).toEqual({ type: "text", anchor: end, head: end });
+
+      editor.setSelection(wholeDocument);
+      renderer.render(editor.document, editor.selection);
+      pipeline.handleKeyDown(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true, cancelable: true }));
+      expect(editor.selection, `${label}: ArrowUp after select-all`).toEqual({ type: "text", anchor: start, head: start });
+
       pipeline.destroy();
     });
   });

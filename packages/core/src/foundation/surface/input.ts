@@ -3,13 +3,12 @@ import {
   backspaceAtListItemStart,
   deleteAtListItemEnd,
   enterInList,
-  indentList,
   listItemAt,
-  outdentList,
   setListChecked,
   type CommandContext,
   type ListInputResult,
 } from "../list/index.js";
+import { resolveShortcut } from "../plugin/dispatch.js";
 import { applyOperations } from "../operations.js";
 import { nodeAtPath, comparePos, inlineGraphemeBoundaries } from "../positions.js";
 import { createScopeIndex } from "../scope/index.js";
@@ -28,7 +27,6 @@ import {
 } from "../marks/index.js";
 import {
   exitCodeBlock,
-  indentInsideCodeBlock,
   insertCodeBlockNewline,
   type CodeBlockInputResult,
 } from "../block/index.js";
@@ -46,10 +44,13 @@ import {
   type RawClipboardPayload,
 } from "../clipboard/index.js";
 import { cellSelectionFromIds } from "../table/selection.js";
+import { occupancyGridFor } from "../table/grid.js";
+import { insertTableRowCommand } from "../table/commands.js";
 import { FoundationTransactionMap } from "../mapping.js";
 import type { CanonicalInputPipelineOptions } from "./types.js";
 import { resolvePrecedingContentTarget } from "../structural/contentTarget.js";
 import { SMART_UI_ATTRIBUTE } from "../modelDom.js";
+import { suggestDeleteRangeOperation, suggestInsertOperation } from "../suggestions/index.js";
 
 interface CompositionState {
   id: string;
@@ -489,6 +490,7 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
   private destroyed = false;
   private internalDrag: InternalDragState | null = null;
   private tableDragAnchor: { id: string; tableId: string } | null = null;
+  private trackChanges: { enabled: boolean; authorId: string } = { enabled: false, authorId: "anonymous" };
 
   constructor(
     readonly editor: FoundationEditor,
@@ -533,6 +535,19 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
       return;
     }
     if (this.composition) return;
+    // Only the primary (left) button starts a drag-selection gesture. A
+    // right-click's mousedown/mouseup pair (button 2) also reaches this
+    // same native listener - without this guard, a real-world imprecise
+    // right-click whose mousedown and mouseup landed in different cells
+    // (easy near a shared cell border, where a human hand's natural
+    // few-pixel wobble between press and release is enough) silently
+    // formed a genuine multi-cell selection the user never intended to
+    // make, rendered as a highlight spanning well past what a single
+    // right-click should ever select.
+    if ((event as MouseEvent).button !== 0) {
+      this.tableDragAnchor = null;
+      return;
+    }
     const cell = this.cellFromNode(event.target);
     this.tableDragAnchor = cell;
   };
@@ -768,15 +783,158 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
     this.renderer.render(this.editor.document, this.editor.selection);
   }
 
+  /** First content-bearing child of a table cell, or the cell itself if somehow childless. */
+  private firstOwnerOf(cell: SmartElementNode): string {
+    const first = cell.children?.[0];
+    return first && !isTextNode(first) ? first.id : cell.id;
+  }
+
+  /**
+   * Tab/Shift+Tab cell-to-cell navigation (Phase 11 Tier 2 - previously
+   * "Tables own Tab navigation" was just a bare `return`, a genuinely
+   * missing feature, not a missing test). `grid.anchors` is already in
+   * reading order, so stepping ±1 through it is next/previous cell;
+   * stepping past the last cell appends a row via insertTableRowCommand and
+   * lands in its first cell, matching the reference precedent Tab already
+   * uses for a list item with no legal indent - always claim the key.
+   */
+  private handleTableTab(tableId: string, currentCellId: string, backward: boolean): void {
+    const resolvedTable = this.editor.positions.positionOf(tableId);
+    const tableNode = resolvedTable?.parent.children?.[resolvedTable.pos.offset] as SmartElementNode | undefined;
+    if (!tableNode || isTextNode(tableNode) || tableNode.id !== tableId) return;
+    const grid = occupancyGridFor(tableNode);
+    const index = grid.anchors.findIndex((cell) => cell.cellId === currentCellId);
+    if (index === -1) return;
+    if (backward) {
+      if (index === 0) return;
+      const target = grid.anchors[index - 1];
+      const ownerId = this.firstOwnerOf(target.node);
+      const content = this.editor.positions.contentRangeOf(ownerId);
+      if (content) {
+        this.editor.setSelection({ type: "text", anchor: content.from, head: content.from }, { source: "keyboard" });
+        this.renderer.render(this.editor.document, this.editor.selection);
+      }
+      return;
+    }
+    if (index < grid.anchors.length - 1) {
+      const target = grid.anchors[index + 1];
+      const ownerId = this.firstOwnerOf(target.node);
+      const content = this.editor.positions.contentRangeOf(ownerId);
+      if (content) {
+        this.editor.setSelection({ type: "text", anchor: content.from, head: content.from }, { source: "keyboard" });
+        this.renderer.render(this.editor.document, this.editor.selection);
+      }
+      return;
+    }
+    // Past the last cell: append a row (no crossing rowspans at the bottom
+    // edge, so cellIds[0]/paragraphIds[0] are guaranteed the new row's
+    // first column-0 cell/paragraph).
+    const cellIds = Array.from({ length: grid.columns }, () => createNodeId());
+    const paragraphIds = Array.from({ length: grid.columns }, () => createNodeId());
+    const tableGridScope = this.editor.resolveScope({ want: "table-grid" });
+    if (!("kind" in tableGridScope) || tableGridScope.kind !== "table-grid") return;
+    const operations = insertTableRowCommand(this.editor.document, tableGridScope, { position: "after", rowId: createNodeId(), cellIds, paragraphIds }, this.commandContext());
+    if (!operations.length) return;
+    const preview = applyOperations(this.editor.document, operations);
+    const lookup = createScopeIndex().positions(preview, this.editor.schema);
+    const content = lookup.contentRangeOf(paragraphIds[0]);
+    if (!content) return;
+    this.editor.transact((builder) => {
+      builder.operations.push(...operations);
+      builder.setSelection({ type: "text", anchor: content.from, head: content.from });
+    }, { source: "keyboard", addToHistory: true });
+    this.renderer.render(this.editor.document, this.editor.selection);
+  }
+
+  /**
+   * Every prefix of a valid SmartPos.path addresses a real ancestor node
+   * (the same property ownerAt already relies on), so walking path prefixes
+   * from longest to shortest finds the nearest enclosing table_cell/table
+   * without any DOM lookup - the model-level equivalent of cellFromNode,
+   * usable from a plain SmartPos rather than a DOM event target.
+   */
+  private tableAncestorsAt(pos: SmartPos): { tableId: string; cellId: string } | null {
+    let cellId: string | null = null;
+    for (let length = pos.path.length; length >= 0; length -= 1) {
+      const node = nodeAtPath(this.editor.document, pos.path.slice(0, length));
+      if (!node || isTextNode(node)) continue;
+      if (!cellId && node.type === "table_cell") cellId = node.id;
+      if (node.type === "table") return cellId ? { tableId: node.id, cellId } : null;
+    }
+    return null;
+  }
+
+  /**
+   * Shift+Arrow rectangular cell-selection expansion (Phase 11 Tier 2 -
+   * previously no table-grid branch existed anywhere in arrow-key handling
+   * at all). Returns false when not applicable (anchor/head aren't both in
+   * the same table), letting the caller fall through to ordinary text-range
+   * arrow handling unchanged. Steps from the head cell's own top-left
+   * anchor corner - a reasonable v1 simplification for merged-cell edges,
+   * matching the existing renderer projection's own merge-snapping
+   * (surface/renderer.ts's syncCellSelectionProjection already snaps
+   * whatever rect the model selection implies through merged cells on
+   * render, so this does not need to duplicate that snapping here).
+   */
+  private handleTableShiftArrow(rowDelta: number, colDelta: number): boolean {
+    const selection = this.editor.selection;
+    const anchorInfo = this.tableAncestorsAt(selection.anchor);
+    const headInfo = this.tableAncestorsAt(selection.head);
+    if (!anchorInfo || !headInfo || anchorInfo.tableId !== headInfo.tableId) return false;
+    const resolvedTable = this.editor.positions.positionOf(anchorInfo.tableId);
+    const tableNode = resolvedTable?.parent.children?.[resolvedTable.pos.offset] as SmartElementNode | undefined;
+    if (!tableNode || isTextNode(tableNode) || tableNode.id !== anchorInfo.tableId) return false;
+    const grid = occupancyGridFor(tableNode);
+    const headCell = grid.anchors.find((cell) => cell.cellId === headInfo.cellId);
+    if (!headCell) return false;
+    const newRow = Math.min(grid.rows - 1, Math.max(0, headCell.top + rowDelta));
+    const newCol = Math.min(grid.columns - 1, Math.max(0, headCell.left + colDelta));
+    const target = grid.at(newRow, newCol);
+    if (!target) return false;
+    const selectionResult = cellSelectionFromIds(anchorInfo.cellId, target.cellId, this.editor.positions);
+    if (!selectionResult) return false;
+    this.editor.setSelection(selectionResult, { source: "keyboard" });
+    this.renderer.render(this.editor.document, this.editor.selection);
+    return true;
+  }
+
   private replaceSelection(text: string): void {
     const selection = this.editor.selection;
     this.commit((builder) => {
+      if (this.trackChanges.enabled) {
+        const suggested = this.suggestReplaceSelection(builder, selection, text);
+        if (suggested) return suggested;
+      }
       const caret = collapsed(selection) ? selection.head : queueRangeDeletion(this.editor, builder, normalizedRange(selection));
       const marks = this.editor.storedMarks || marksAtInsertion(this.editor.document, caret, this.editor.schema);
       if (text) builder.operations.push({ type: "insertText", pos: caret, text, ...(marks.length ? { marks: [...marks] } : {}) });
       const next = { path: [...caret.path], offset: caret.offset + text.length };
       return { type: "text", anchor: next, head: next };
     });
+  }
+
+  /**
+   * Ambient track-changes mode (Phase 12a §2.3 follow-up, 2026-08-25):
+   * typed text becomes a real, live "insert"-kind suggestion mark instead
+   * of a plain insertText, and content it replaces is marked "delete"
+   * instead of actually removed - the same reviewable-suggestion contract
+   * as the explicit Suggest deletion/Suggest insertion toolbar actions,
+   * just applied automatically to ordinary typing. Scoped to a selection
+   * that's collapsed or fully within one inline owner; returns null for a
+   * selection crossing multiple paragraphs, so the caller falls through to
+   * the real (non-suggested) path - proposing a delete that spans several
+   * paragraphs plus an insert needs per-owner handling this pass doesn't
+   * build (see docs/PHASE_ROADMAP_8B_12B.md's Phase 12a status note).
+   */
+  private suggestReplaceSelection(builder: TransactionBuilder, selection: SmartSelection, text: string): SmartSelection | null {
+    const range = normalizedRange(selection);
+    if (!collapsed(selection) && !samePath(range.from.path, range.to.path)) return null;
+    const insertAt = collapsed(selection) ? selection.head : range.to;
+    if (!collapsed(selection)) builder.operations.push(suggestDeleteRangeOperation(range, { authorId: this.trackChanges.authorId }));
+    const marks = this.editor.storedMarks || marksAtInsertion(this.editor.document, insertAt, this.editor.schema);
+    if (text) builder.operations.push(suggestInsertOperation(insertAt, text, { authorId: this.trackChanges.authorId }, marks));
+    const next = { path: [...insertAt.path], offset: insertAt.offset + text.length };
+    return { type: "text", anchor: next, head: next };
   }
 
   private deleteRange(range: SmartRange): void {
@@ -803,6 +961,16 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
         const content = ownerId ? lookup.contentRangeOf(ownerId) : null;
         const caret = content?.from || { path: [], offset: 0 };
         return { type: "text", anchor: caret, head: caret };
+      }
+      // Ambient track-changes mode: a same-owner range (the overwhelming
+      // majority of real Backspace/Delete presses - one character or word
+      // within one paragraph) is marked "delete" instead of removed. The
+      // multi-owner case above (structural) and the cross-block merge in
+      // deleteAcrossBlock are unaffected - see suggestReplaceSelection's
+      // doc comment for why that scope reduction is deliberate.
+      if (this.trackChanges.enabled && samePath(range.from.path, range.to.path)) {
+        builder.operations.push(suggestDeleteRangeOperation(range, { authorId: this.trackChanges.authorId }));
+        return { type: "text", anchor: range.from, head: range.from };
       }
       const caret = queueRangeDeletion(this.editor, builder, range);
       return { type: "text", anchor: caret, head: caret };
@@ -1030,9 +1198,17 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
         ? { path: [...survivingContent.to.path], offset: selectionOffset }
         : { path: [...survivingContent.from.path], offset: selectionOffset },
     };
+    // The removed owner's content was just absorbed into survivingOwner
+    // (targetChildren, above) - mark it so an AnnotationRange anchored
+    // inside it (e.g. a comment) snaps to the survivor instead of silently
+    // failing to resolve. This is the real cross-block Backspace/Delete
+    // merge path (collapsed caret at a block boundary) - distinct from
+    // queueRangeDeletion's mergeNode operation, which only fires for a
+    // non-collapsed selection spanning multiple blocks. Same pattern as
+    // mergeTableCellsCommand/mergeItems.
     const operations: SmartOperation[] = [
       { type: "replaceNode", pos: survivingPosition.pos, before: survivingOwner, after: merged },
-      { type: "removeNode", pos: removedPosition.pos, node: removedOwner },
+      { type: "removeNode", pos: removedPosition.pos, node: removedOwner, mergedInto: survivingOwner.id },
     ];
     // Forward deletion removes the current owner before the target's old
     // path. Map the selection through both operations instead of retaining a
@@ -1230,33 +1406,55 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
     }
     if (event.key === "Tab") {
       const active = this.editor.selection.head;
-      const codeResult = indentInsideCodeBlock(this.editor.document, active);
-      if (codeResult) {
-        event.preventDefault();
-        this.commitStructuralResult(codeResult, "keyboard");
-        return;
-      }
-      const item = listItemAt(this.editor.document, active);
       const description = this.editor.resolveScope({ want: "describe" });
-      if (item && "inTable" in description && !description.inTable) {
-        // Tab inside a list item is always ours to handle, even when there is
-        // no legal indent/outdent (e.g. the first item, or already at the max
-        // legal depth) — preventDefault unconditionally here, or the browser
-        // falls through to its native Tab-to-next-focusable-element behavior
-        // and keyboard focus silently leaves the editor entirely.
+      const inTable = "inTable" in description && Boolean(description.inTable);
+      // Data-driven replacement for the old hardcoded code/list/table
+      // precedence if-chain: try each registered Tab contribution (block's
+      // code-indent, list's indent/outdent - priority 20 before 10, see
+      // block/plugin.ts and list/plugin.ts) in order, actually resolving its
+      // declared scope and running its real command, and only counting it as
+      // a match if that produces real operations. Nothing is declared for
+      // table-grid, so a table caret always falls through unmatched, same as
+      // before. `inTable` short-circuits list contributions specifically:
+      // a list nested inside a table cell still yields Tab to the table,
+      // exactly as the old chain did.
+      const resolved = resolveShortcut(this.editor.keyboardShortcuts, { key: "Tab", shiftKey: event.shiftKey }, (shortcut) => {
+        const command = this.editor.commands.get(shortcut.commandId);
+        if (!command) return null;
+        if (inTable && (shortcut.commandId === "list.indent" || shortcut.commandId === "list.outdent")) return null;
+        const wanted = shortcut.scopeKinds[0];
+        if (wanted === "mixed" || wanted === "empty") return null;
+        const scope = this.editor.resolveScope({ want: wanted });
+        if (!("kind" in scope) || scope.kind !== wanted) return null;
+        const params = shortcut.commandId === "list.indent" ? { nestedListIds: [createNodeId()] }
+          : shortcut.commandId === "list.outdent" ? { splitListIds: [createNodeId()] }
+          : shortcut.params;
+        return command.run(this.editor.document, scope, params, this.commandContext());
+      });
+      if (resolved) {
         event.preventDefault();
-        const scope = this.editor.resolveScope({ want: "list-selection" });
-        if ("kind" in scope) {
-          const operations = event.shiftKey
-            ? outdentList(this.editor.document, scope, { splitListIds: [createNodeId()] }, this.commandContext())
-            : indentList(this.editor.document, scope, { nestedListIds: [createNodeId()] }, this.commandContext());
-          if (operations.length) {
-            this.commitStructuralResult({ operations, selectionTarget: { ownerId: ownerAt(this.editor, active).id, offset: active.offset }, intent: event.shiftKey ? "outdent" : "indent" }, "keyboard");
-          }
-        }
+        const { shortcut, operations } = resolved;
+        const selectionTarget = shortcut.commandId === "block.code.indentTab"
+          ? { ownerId: ownerAt(this.editor, active).id, offset: active.offset + 1 }
+          : { ownerId: ownerAt(this.editor, active).id, offset: active.offset };
+        const intent = shortcut.commandId === "list.outdent" ? "outdent" : "indent";
+        this.commitStructuralResult({ operations: [...operations], selectionTarget, intent } as ListInputResult | CodeBlockInputResult, "keyboard");
         return;
       }
-      // Tables own Tab navigation; the list layer deliberately yields.
+      // Tab inside a list item is always ours to handle, even when there is
+      // no legal indent/outdent (e.g. the first item, or already at the max
+      // legal depth) — preventDefault unconditionally here, or the browser
+      // falls through to its native Tab-to-next-focusable-element behavior
+      // and keyboard focus silently leaves the editor entirely.
+      if (!inTable && listItemAt(this.editor.document, active)) {
+        event.preventDefault();
+        return;
+      }
+      if (inTable && description.inTable) {
+        event.preventDefault();
+        this.handleTableTab(description.inTable.tableId, description.inTable.cellId, event.shiftKey);
+        return;
+      }
       return;
     }
     // Space is ordinary text while the caret is inside a checklist item.  When
@@ -1274,8 +1472,12 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
       }
     }
     if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
-      event.preventDefault();
       const direction = event.key === "ArrowLeft" ? -1 : 1;
+      if (event.shiftKey && this.handleTableShiftArrow(0, direction)) {
+        event.preventDefault();
+        return;
+      }
+      event.preventDefault();
       // Plain arrows collapse a range to its normalized endpoint.  Reading
       // `selection.head` here makes the result depend on drag direction,
       // violating the anchor/head contract and reversing Left/Right for a
@@ -1289,18 +1491,54 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
         return;
       }
       this.moveCaret(direction, modifier || event.altKey);
-    } else if ((event.key === "ArrowUp" || event.key === "ArrowDown") && this.editor.selection.type === "node") {
-      // Native vertical movement has no useful target while a block atom is
-      // selected. Treat it as movement to the preceding/following editable
-      // line, matching left/right atom-boundary navigation.
-      event.preventDefault();
-      this.moveCaret(event.key === "ArrowUp" ? -1 : 1);
+    } else if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+      if (event.shiftKey && this.handleTableShiftArrow(event.key === "ArrowUp" ? -1 : 1, 0)) {
+        event.preventDefault();
+        return;
+      }
+      if (this.editor.selection.type === "node") {
+        // Native vertical movement has no useful target while a block atom is
+        // selected. Treat it as movement to the preceding/following editable
+        // line, matching left/right atom-boundary navigation.
+        event.preventDefault();
+        this.moveCaret(event.key === "ArrowUp" ? -1 : 1);
+      } else if (!event.shiftKey && this.editor.selection.type === "text" && !collapsed(this.editor.selection)
+        && isWholeDocumentRange(this.editor, normalizedRange(this.editor.selection))) {
+        // Native vertical-arrow collapse of a whole-document (Ctrl/Cmd+A)
+        // selection is unreliable once the document contains structural
+        // content (lists, tables): the browser's own notion of where
+        // selection "focus" lands after select-all does not consistently
+        // resolve to the true first/last editable position once nested
+        // containers are involved, so ArrowDown can land mid-document
+        // instead of at the real end (and symmetrically for ArrowUp/start).
+        // Ordinary, non-whole-document vertical movement is deliberately
+        // left native above (real line-based caret movement isn't something
+        // the model layer can replicate) - only this specific, well-defined
+        // state is collapsed deterministically here, reusing the same
+        // document-order editable-owner walk moveCaret already relies on for
+        // cross-container navigation.
+        event.preventDefault();
+        const owners = editableOwners(this.editor.document, [], this.editor.schema);
+        const target = event.key === "ArrowUp" ? owners[0] : owners[owners.length - 1];
+        if (target) {
+          const pos = { path: [...target.path], offset: event.key === "ArrowUp" ? 0 : inlineText(target.node).length };
+          const model: SmartSelection = { type: "text", anchor: pos, head: pos };
+          this.editor.setSelection(model, { source: "keyboard" });
+          this.renderer.render(this.editor.document, model);
+        }
+      }
     } else if (event.key === "Home" || event.key === "End") {
       event.preventDefault();
       const active = this.editor.selection.head;
       const owner = ownerAt(this.editor, active);
       const next = { path: [...active.path], offset: event.key === "Home" ? 0 : inlineText(owner).length };
-      const model: SmartSelection = { type: "text", anchor: next, head: next };
+      // Shift+Home/End is the standard "select to line start/end" gesture -
+      // this previously collapsed to `next` unconditionally, discarding
+      // the existing anchor regardless of the Shift key, so Shift+Home/
+      // End could never actually select anything; it only ever moved the
+      // caret. Preserve the current anchor when extending.
+      const anchor = event.shiftKey ? this.editor.selection.anchor : next;
+      const model: SmartSelection = { type: "text", anchor, head: next };
       this.editor.setSelection(model, { source: "keyboard" });
       this.renderer.render(this.editor.document, model);
     }
@@ -1392,6 +1630,10 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
       const caret = domCaret || { path: state.ownerPath, offset: prefix + inserted.length };
       return { type: "text", anchor: caret, head: caret };
     }, { compositionId: state.id });
+  }
+
+  setTrackChanges(enabled: boolean, authorId?: string): void {
+    this.trackChanges = { enabled, authorId: authorId ?? this.trackChanges.authorId };
   }
 
   syncSelectionFromDom(): void {
