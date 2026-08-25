@@ -6,6 +6,7 @@ settings:
 
 overrides:
   '@xmldom/xmldom': ^0.9.11
+  underscore: ^1.13.8
 
 patchedDependencies:
   mammoth@1.11.0:
@@ -2495,8 +2496,8 @@ packages:
     engines: {node: '>=14.17'}
     hasBin: true
 
-  underscore@1.13.7:
-    resolution: {integrity: sha512-GMXzWtsc57XAtguZgaQViUOzs0KTkk8ojr3/xAxXLITqf/3EMwxC0inyETfDFjH/Krbhuep0HNbbjI9i/q3F3g==}
+  underscore@1.13.8:
+    resolution: {integrity: sha512-DXtD3ZtEQzc7M8m4cXotyHR+FAS18C64asBYY5vqZexfYryNNnDc02W4hKg3rdQuqOYas1jkseX0+nZXjTXnvQ==}
 
   undici-types@6.21.0:
     resolution: {integrity: sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==}
@@ -3842,7 +3843,7 @@ snapshots:
 
   duck@0.1.12:
     dependencies:
-      underscore: 1.13.7
+      underscore: 1.13.8
 
   dunder-proto@1.0.1:
     dependencies:
@@ -4366,7 +4367,7 @@ snapshots:
     dependencies:
       duck: 0.1.12
       option: 0.2.4
-      underscore: 1.13.7
+      underscore: 1.13.8
 
   loupe@3.2.1: {}
 
@@ -4394,7 +4395,7 @@ snapshots:
       jszip: 3.10.1
       lop: 0.4.2
       path-is-absolute: 1.0.1
-      underscore: 1.13.7
+      underscore: 1.13.8
       xmlbuilder: 10.1.1
 
   map-or-similar@1.5.0: {}
@@ -5151,7 +5152,7 @@ snapshots:
 
   typescript@5.9.3: {}
 
-  underscore@1.13.7: {}
+  underscore@1.13.8: {}
 
   undici-types@6.21.0: {}
 

@@ -3,7 +3,6 @@ import { createRoot } from "react-dom/client";
 import { foundationSchema, parseCanonicalListHtml, serializeCanonicalListHtml } from "smartrte-core/foundation";
 import { ClassicEditor as ClassicEditorComponent } from "../components/ClassicEditorAuthority.js";
 import type { SmartEditorHandle } from "../canonicalEditorRuntime.js";
-import type { MediaManagerAdapter } from "../components/MediaManager.js";
 import type { SrteTheme } from "../theme.js";
 
 type InitOptions = {
@@ -19,7 +18,6 @@ type InitOptions = {
   showFontSize?: boolean;
   // Optional: a callback to receive change events
   onChange?: (html: string) => void;
-  mediaManager?: MediaManagerAdapter;
   theme?: SrteTheme;
   className?: string;
 };
@@ -44,7 +42,6 @@ function ClassicEditorHost(
     formula?: boolean;
     showFontSize?: boolean;
     onChange?: (html: string) => void;
-    mediaManager?: MediaManagerAdapter;
     theme?: SrteTheme;
     className?: string;
   },
@@ -112,7 +109,6 @@ function ClassicEditorHost(
         media={props.media}
         formula={props.formula}
         showFontSize={props.showFontSize}
-        mediaManager={props.mediaManager}
         theme={props.theme}
         className={props.className}
       />

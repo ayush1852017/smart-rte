@@ -12,70 +12,14 @@ import type {
   SmartSchema,
   ValidationError,
 } from "./types.js";
-import { listNodeSpecs } from "./list/schema.js";
-import { tableNodeSpecs } from "./table/schema.js";
-import { atomNodeSpecs } from "./atom/schema.js";
 import { repairTableGeometry, validateTableGeometry } from "./table/grid.js";
 import { canonicalMarkOrder, compareMarks } from "./marks/canonical.js";
-import { hardBreakNodeSpec, inlineMarkSpecs } from "./marks/schema.js";
+import { hardBreakNodeSpec } from "./marks/schema.js";
+import { builtInPlugins } from "./plugin/builtins.js";
+import { createPluginRegistry, type PluginRegistry } from "./plugin/registry.js";
+import { parseContentExpression, type Expression, type SchemaContribution } from "./schemaBuilder.js";
 
-type Expression =
-  | { kind: "name"; value: string }
-  | { kind: "sequence"; items: Expression[] }
-  | { kind: "choice"; items: Expression[] }
-  | { kind: "repeat"; item: Expression; min: number; max: number };
-
-const tokenize = (source: string): string[] => {
-  const tokens = source.match(/[A-Za-z_][A-Za-z0-9_-]*|[()|+*?]/g) || [];
-  if (tokens.join("").length !== source.replace(/\s+/g, "").length) {
-    throw new Error(`Invalid content expression "${source}".`);
-  }
-  return tokens;
-};
-
-export const parseContentExpression = (source: string): Expression => {
-  const tokens = tokenize(source);
-  let cursor = 0;
-  const parseChoice = (): Expression => {
-    const items = [parseSequence()];
-    while (tokens[cursor] === "|") {
-      cursor += 1;
-      items.push(parseSequence());
-    }
-    return items.length === 1 ? items[0] : { kind: "choice", items };
-  };
-  const parseSequence = (): Expression => {
-    const items: Expression[] = [];
-    while (cursor < tokens.length && tokens[cursor] !== ")" && tokens[cursor] !== "|") {
-      let item: Expression;
-      if (tokens[cursor] === "(") {
-        cursor += 1;
-        item = parseChoice();
-        if (tokens[cursor] !== ")") throw new Error(`Unclosed group in content expression "${source}".`);
-        cursor += 1;
-      } else {
-        const value = tokens[cursor++];
-        if (!value || /[+*?()|]/.test(value)) throw new Error(`Expected node name in content expression "${source}".`);
-        item = { kind: "name", value };
-      }
-      const quantifier = tokens[cursor];
-      if (quantifier === "+" || quantifier === "*" || quantifier === "?") {
-        cursor += 1;
-        item = {
-          kind: "repeat",
-          item,
-          min: quantifier === "+" ? 1 : 0,
-          max: quantifier === "?" ? 1 : Number.POSITIVE_INFINITY,
-        };
-      }
-      items.push(item);
-    }
-    return items.length === 1 ? items[0] : { kind: "sequence", items };
-  };
-  const expression = parseChoice();
-  if (cursor !== tokens.length) throw new Error(`Unexpected token in content expression "${source}".`);
-  return expression;
-};
+export { createSchema, parseContentExpression, type SchemaContribution } from "./schemaBuilder.js";
 
 const groupForNode = (node: SmartNode, schema: SmartSchema): NodeGroup | undefined => {
   if (node.type === "unknown") {
@@ -128,73 +72,18 @@ const matchExpression = (
 export const contentMatches = (expression: string, children: readonly SmartNode[], schema: SmartSchema): boolean =>
   matchExpression(parseContentExpression(expression), children, 0, schema).has(children.length);
 
-const freezeSpec = <T extends NodeSpec | MarkSpec>(spec: T): Readonly<T> => {
-  const attributes = spec.attributes
-    ? Object.freeze(Object.fromEntries(Object.entries(spec.attributes).map(([name, attribute]) => [name, Object.freeze({ ...attribute })])))
-    : undefined;
-  return Object.freeze({
-    ...spec,
-    ...(attributes ? { attributes } : {}),
-    ...(Array.isArray((spec as NodeSpec).marks) ? { marks: Object.freeze([...(spec as NodeSpec).marks as string[]]) } : {}),
-    ...(Array.isArray((spec as MarkSpec).excludes) ? { excludes: Object.freeze([...(spec as MarkSpec).excludes as string[]]) } : {}),
-  }) as Readonly<T>;
-};
-
-export interface SchemaContribution {
-  nodes?: readonly NodeSpec[];
-  marks?: readonly MarkSpec[];
-}
-
-export const createSchema = (options: {
-  nodes: readonly NodeSpec[];
-  marks?: readonly MarkSpec[];
-  topNode?: string;
-  version: number;
-  extensions?: readonly SchemaContribution[];
-}): SmartSchema => {
-  const nodes: Record<string, Readonly<NodeSpec>> = {};
-  const marks: Record<string, Readonly<MarkSpec>> = {};
-  const addNode = (spec: NodeSpec) => {
-    if (nodes[spec.type]) throw new Error(`Duplicate node type "${spec.type}".`);
-    if (spec.content) parseContentExpression(spec.content);
-    nodes[spec.type] = freezeSpec({ ...spec });
-  };
-  const addMark = (spec: MarkSpec) => {
-    if (marks[spec.type]) throw new Error(`Duplicate mark type "${spec.type}".`);
-    marks[spec.type] = freezeSpec({ ...spec });
-  };
-  options.nodes.forEach(addNode);
-  options.marks?.forEach(addMark);
-  options.extensions?.forEach((extension) => {
-    extension.nodes?.forEach(addNode);
-    extension.marks?.forEach(addMark);
-  });
-  const topNode = options.topNode || "doc";
-  if (!nodes[topNode] || nodes[topNode].group !== "document") throw new Error(`Invalid top node "${topNode}".`);
-  return Object.freeze({
-    nodes: Object.freeze(nodes),
-    marks: Object.freeze(marks),
-    topNode,
-    version: options.version,
-  });
-};
-
 const stringAttr: AttributeSpec = { validate: (value) => typeof value === "string" };
-const alignmentAttr: AttributeSpec = { validate: (value) => ["left", "center", "right", "justify"].includes(String(value)) };
-const indentLevelAttr: AttributeSpec = { validate: (value) => Number.isInteger(value) && Number(value) >= 0 && Number(value) <= 10 };
-const blockAttrs = { align: alignmentAttr, indentLevel: indentLevelAttr };
 
-export const foundationSchema = createSchema({
-  version: 2,
+/**
+ * Node/mark types no feature-family plugin owns and that must exist
+ * regardless of which plugins are registered: the document root, plain
+ * text, hard breaks, and `unknown` itself - the disable-safety passthrough
+ * node type (see repair() below), which would be a chicken-and-egg problem
+ * if any plugin had to own it.
+ */
+export const baseSchema: SchemaContribution = {
   nodes: [
     { type: "doc", group: "document", content: "block+" },
-    { type: "paragraph", group: "block", content: "inline*", attributes: blockAttrs },
-    { type: "heading", group: "block", content: "inline*", attributes: { ...blockAttrs, level: { required: true, default: 1, validate: (v) => Number.isInteger(v) && Number(v) >= 1 && Number(v) <= 6 } } },
-    { type: "blockquote", group: "block", content: "block+", attributes: blockAttrs, defining: true },
-    { type: "code_block", group: "block", content: "text*", marks: "", attributes: { ...blockAttrs, language: stringAttr }, defining: true },
-    ...listNodeSpecs,
-    ...tableNodeSpecs,
-    ...atomNodeSpecs,
     { type: "text", group: "inline", marks: "_all" },
     hardBreakNodeSpec,
     { type: "unknown", group: "block", atomic: true, isolating: true, selectable: true, attributes: {
@@ -204,8 +93,32 @@ export const foundationSchema = createSchema({
       editable: { default: false, validate: (v) => v === false },
     } },
   ],
-  marks: [...inlineMarkSpecs],
-});
+  marks: [
+    /**
+     * The mark-side equivalent of the "unknown" node type above: a
+     * base-registered (not plugin-owned) passthrough for a mark type the
+     * current schema doesn't recognize, preserving it verbatim through
+     * repair() instead of silently dropping it (see repair()'s
+     * mark-filtering loop below and restoreUnknownMarks()).
+     */
+    { type: "unknown-mark", attributes: {
+      originalType: { required: true, ...stringAttr },
+      originalAttrs: {},
+    } },
+  ],
+};
+
+/**
+ * The "all built-ins" preset, now derived from the plugin registry
+ * (plugin/registry.ts, plugin/builtins.ts) rather than a hand-maintained
+ * literal - Phase 10's runtime plugin registration applies to the default
+ * editor construction too, not just custom plugin lists. Computed once and
+ * exported alongside `foundationSchema` so editor.ts can default
+ * FoundationEditorOptions.commands/keyboardShortcuts to the same registry
+ * instance instead of recomputing it.
+ */
+export const foundationRegistry: PluginRegistry = createPluginRegistry(builtInPlugins, { baseSchema, schemaVersion: 2 });
+export const foundationSchema: SmartSchema = foundationRegistry.schema;
 
 const own = (value: object, key: string) => Object.prototype.hasOwnProperty.call(value, key);
 
@@ -325,14 +238,26 @@ export const repair = (
       const accepted: SmartMark[] = [];
       child.marks.forEach((mark) => {
         const markSpec = schema.marks[mark.type];
+        if (!markSpec) {
+          // Unlike a mark that's registered but locally disallowed/invalid
+          // (handled below, and still correctly dropped), a mark type the
+          // schema has never heard of is preserved verbatim as an
+          // unknown-mark sentinel - the mark-side counterpart of repair()'s
+          // node-side "preserve-unknown" passthrough - rather than deleted.
+          const unknown: SmartMark = { type: "unknown-mark", attrs: { originalType: mark.type, ...(mark.attrs ? { originalAttrs: mark.attrs } : {}) } };
+          accepted.push(unknown);
+          repairs.push({ path: [...path, index], code: "preserve-unknown-mark", message: `Preserved unrecognized mark "${mark.type}" as unknown-mark.`, before: mark, after: unknown });
+          return;
+        }
         const allowed = spec.marks !== "" && (!Array.isArray(spec.marks) || spec.marks.includes(mark.type));
         const attributeErrors: ValidationError[] = [];
-        if (markSpec) validateAttributes(mark.attrs, markSpec.attributes, [...path, index], attributeErrors);
-        const excluded = Boolean(markSpec?.excludes?.some((type) => accepted.some((candidate) => candidate.type === type)));
-        if (markSpec && allowed && !attributeErrors.length && !excluded) accepted.push(mark);
+        validateAttributes(mark.attrs, markSpec.attributes, [...path, index], attributeErrors);
+        const excluded = Boolean(markSpec.excludes?.some((type) => accepted.some((candidate) => candidate.type === type)));
+        if (allowed && !attributeErrors.length && !excluded) accepted.push(mark);
         else repairs.push({ path: [...path, index], code: "remove-invalid-mark", message: `Removed invalid or disallowed mark "${mark.type}".`, before: mark });
       });
-      return accepted.length ? { ...child, marks: accepted } : { type: "text", text: child.text };
+      const ordered = canonicalMarkOrder(accepted);
+      return ordered.length ? { ...child, marks: ordered } : { type: "text", text: child.text };
     });
     const preserveMisplaced = (node: SmartNode, original: SmartNode, originalGroup: "inline" | "block"): SmartElementNode => {
       const unknown: SmartElementNode = {
@@ -403,6 +328,55 @@ export const repair = (
   const doc = root as SmartDocument;
   assertUniqueNodeIds(doc);
   return { doc, repairs };
+};
+
+/**
+ * The reverse of repair()'s "preserve-unknown" case: a node whose type is
+ * now recognized by `schema` (e.g. its owning plugin was re-enabled) is
+ * restored verbatim from the `unknown` wrapper's `raw` attribute, recursing
+ * into the restored subtree in case it too contains a now-restorable
+ * `unknown` node. This is the disable-safety round trip's other half -
+ * repair() already existed and demotes unrecognized content to `unknown`
+ * without any Phase 10 changes; this direction did not exist before.
+ */
+export const restoreUnknownNodes = (document: SmartDocument, schema: SmartSchema): SmartDocument => {
+  const restoreNode = (node: SmartNode): SmartNode => {
+    if (isTextNode(node)) return node;
+    if (node.type === "unknown") {
+      const originalType = node.attrs?.originalType;
+      const raw = node.attrs?.raw as SmartNode | undefined;
+      if (typeof originalType === "string" && schema.nodes[originalType] && raw) return restoreNode(cloneNode(raw));
+    }
+    return node.children ? { ...node, children: node.children.map(restoreNode) } : node;
+  };
+  const restored = restoreNode(document) as SmartDocument;
+  assertUniqueNodeIds(restored);
+  return restored;
+};
+
+/**
+ * The mark-side counterpart of restoreUnknownNodes(): a text node's
+ * "unknown-mark" sentinels (see repair()'s mark-filtering loop above) are
+ * restored to their real mark type once `schema` recognizes it again,
+ * re-sorted into canonical order since the restored type string can sort
+ * differently than "unknown-mark" did.
+ */
+export const restoreUnknownMarks = (document: SmartDocument, schema: SmartSchema): SmartDocument => {
+  const restoreNode = (node: SmartNode): SmartNode => {
+    if (isTextNode(node)) {
+      if (!node.marks?.length) return node;
+      const restored = node.marks.map((mark) => {
+        if (mark.type !== "unknown-mark") return mark;
+        const originalType = mark.attrs?.originalType;
+        if (typeof originalType !== "string" || !schema.marks[originalType]) return mark;
+        const originalAttrs = mark.attrs?.originalAttrs as Record<string, unknown> | undefined;
+        return { type: originalType, ...(originalAttrs ? { attrs: originalAttrs } : {}) };
+      });
+      return { ...node, marks: canonicalMarkOrder(restored) };
+    }
+    return node.children ? { ...node, children: node.children.map(restoreNode) } : node;
+  };
+  return restoreNode(document) as SmartDocument;
 };
 
 export const serializePersistedDocument = (value: { schemaVersion: number; revision: number; document: SmartDocument }): string =>

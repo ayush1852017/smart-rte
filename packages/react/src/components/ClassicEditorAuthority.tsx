@@ -16,14 +16,17 @@ export type ClassicEditorProps = Omit<CanonicalAuthorityEditorProps, "onChange">
   // (this was already true before Phase 8b closeout — canonical mode never
   // read these). Kept accepted, not typed against the removed legacy
   // component, purely so existing call sites keep compiling.
+  //
+  // `features`/`plugins`/`formats`/`formatDefinitions`/`mediaManager` (the
+  // legacy pluginRuntime.ts/SmartRtePlugin surface) were removed here in
+  // Phase 10, which retired that system entirely - see
+  // docs/PLUGIN_ARCHITECTURE.md and the new createPluginRegistry-based
+  // system exported from packages/core/src/foundation/plugin/. A caller
+  // still passing these legacy props now gets a type error surfacing the
+  // rename, rather than a silent no-op.
   table?: unknown;
   media?: unknown;
   formula?: unknown;
-  features?: unknown;
-  plugins?: unknown;
-  formats?: unknown;
-  formatDefinitions?: unknown;
-  mediaManager?: unknown;
   fonts?: unknown;
   defaultFont?: unknown;
   preserveFontFamily?: unknown;
@@ -45,7 +48,6 @@ export type ClassicEditorProps = Omit<CanonicalAuthorityEditorProps, "onChange">
  */
 export const ClassicEditor = forwardRef<SmartEditorHandle, ClassicEditorProps>(function ClassicEditor(props, ref) {
   const { value, table: _table, media: _media, formula: _formula,
-    features: _features, plugins: _plugins, formats: _formats, formatDefinitions: _definitions, mediaManager: _manager,
     fonts: _fonts, defaultFont: _font, preserveFontFamily: _preserveFont, preserveColors: _preserveColors,
     preserveDocxStyles: _preserveDocx, theme: _theme, showFontSize: _showFontSize, ...canonical } = props;
   return <CanonicalAuthorityEditor
