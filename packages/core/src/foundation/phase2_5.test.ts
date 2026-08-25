@@ -13,6 +13,7 @@ import {
   resolveScope,
   validate,
   type SmartDocument,
+  type SmartElementNode,
   type SmartOperation,
   type SmartSchema,
   type SmartSelection,
@@ -456,6 +457,118 @@ describe("Phase 2.5 renderer and input pipeline", () => {
     const removal = committed.find((operation) => operation.type === "removeNode");
     expect(removal).toMatchObject({ type: "removeNode", node: { id: "p1" }, mergedInto: "p0" });
     pipeline.destroy();
+  });
+
+  describe("partial cross-paragraph selection delete (URGENT, 2026-08-26)", () => {
+    // A selection covering the tail of one paragraph, all of zero or more
+    // middle paragraphs, and the head of a later paragraph, with at least
+    // one further paragraph completely untouched - deleteRange's routing
+    // was sending this to structuralDeletionPlan (via a block-range/
+    // container-tree scope, which treats any block the selection merely
+    // touches as fully in scope) instead of queueRangeDeletion (which
+    // already correctly trims each end and merges). Result: both
+    // partially-selected paragraphs were deleted in their ENTIRETY,
+    // including their unselected prefix/suffix text, while the untouched
+    // paragraph survived - real data loss beyond the selection, not just a
+    // surprising-looking merge. Fixed via FoundationInputPipeline's new
+    // canMergeAsSiblings guard.
+    const beforeInput = (root: HTMLElement, inputType: string) => root.dispatchEvent(new InputEvent("beforeinput", {
+      bubbles: true, cancelable: true, inputType,
+    }));
+
+    it("Delete: merges the two partially-selected paragraphs, leaves the untouched third paragraph exactly alone", () => {
+      const root = document.createElement("div");
+      document.body.appendChild(root);
+      const editor = createFoundationEditor({
+        document: documentOf("AAAA", "BBBBCCCC", "DDDD"),
+        selection: { type: "text", anchor: { path: [0], offset: 2 }, head: { path: [1], offset: 4 } },
+      });
+      const renderer = createSubtreeRenderer(root);
+      const pipeline = createInputPipeline(editor, renderer, root);
+
+      beforeInput(root, "deleteContentForward");
+
+      expect(editor.document.children).toEqual([paragraph("p0", "AACCCC"), paragraph("p2", "DDDD")]);
+      expect(editor.selection.head).toEqual({ path: [0], offset: 2 });
+      expect(validate(editor.document, foundationSchema)).toEqual([]);
+      pipeline.destroy();
+    });
+
+    it("Backspace: identical result to Delete for the same selection", () => {
+      const root = document.createElement("div");
+      document.body.appendChild(root);
+      const editor = createFoundationEditor({
+        document: documentOf("AAAA", "BBBBCCCC", "DDDD"),
+        selection: { type: "text", anchor: { path: [0], offset: 2 }, head: { path: [1], offset: 4 } },
+      });
+      const renderer = createSubtreeRenderer(root);
+      const pipeline = createInputPipeline(editor, renderer, root);
+
+      beforeInput(root, "deleteContentBackward");
+
+      expect(editor.document.children).toEqual([paragraph("p0", "AACCCC"), paragraph("p2", "DDDD")]);
+      pipeline.destroy();
+    });
+
+    it("a selection spanning more than two paragraphs removes the fully-covered middle ones and still merges the trimmed ends", () => {
+      const root = document.createElement("div");
+      document.body.appendChild(root);
+      const editor = createFoundationEditor({
+        document: documentOf("AAAA", "BBBB", "CCCC", "DDDDEEEE"),
+        selection: { type: "text", anchor: { path: [0], offset: 2 }, head: { path: [3], offset: 4 } },
+      });
+      const renderer = createSubtreeRenderer(root);
+      const pipeline = createInputPipeline(editor, renderer, root);
+
+      beforeInput(root, "deleteContentForward");
+
+      expect(editor.document.children).toEqual([paragraph("p0", "AAEEEE")]);
+      pipeline.destroy();
+    });
+
+    it("the same shape in a 2-paragraph document (no untouched third paragraph) also merges correctly", () => {
+      const root = document.createElement("div");
+      document.body.appendChild(root);
+      const editor = createFoundationEditor({
+        document: documentOf("AAAA", "BBBBCCCC"),
+        selection: { type: "text", anchor: { path: [0], offset: 2 }, head: { path: [1], offset: 4 } },
+      });
+      const renderer = createSubtreeRenderer(root);
+      const pipeline = createInputPipeline(editor, renderer, root);
+
+      beforeInput(root, "deleteContentForward");
+
+      expect(editor.document.children).toEqual([paragraph("p0", "AACCCC")]);
+      pipeline.destroy();
+    });
+
+    it("does not affect a genuinely structural selection (different list items) - still fully removes them", () => {
+      const listDocument: SmartDocument = { type: "doc", id: "doc", children: [{
+        type: "list", id: "list", children: [
+          { type: "list_item", id: "item0", children: [paragraph("item0-p", "one")] },
+          { type: "list_item", id: "item1", children: [paragraph("item1-p", "two")] },
+          { type: "list_item", id: "item2", children: [paragraph("item2-p", "three")] },
+        ],
+      }] };
+      const root = document.createElement("div");
+      document.body.appendChild(root);
+      const editor = createFoundationEditor({
+        document: listDocument,
+        selection: { type: "text", anchor: { path: [0, 0, 0], offset: 1 }, head: { path: [0, 1, 0], offset: 2 } },
+      });
+      const renderer = createSubtreeRenderer(root);
+      const pipeline = createInputPipeline(editor, renderer, root);
+
+      beforeInput(root, "deleteContentForward");
+
+      // A cross-list-item selection remains structural (different
+      // parents - each list_item is its own parent for its paragraph) -
+      // this fix must not change that existing, separately-tested behavior.
+      const list = editor.document.children[0] as SmartElementNode;
+      expect(list.children?.length).toBeLessThan(3);
+      expect(validate(editor.document, foundationSchema)).toEqual([]);
+      pipeline.destroy();
+    });
   });
 
   describe("ambient track-changes mode (Phase 12a §2.3 follow-up)", () => {

@@ -937,6 +937,33 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
     return { type: "text", anchor: next, head: next };
   }
 
+  /**
+   * True exactly when queueRangeDeletion's own same-parent forward-sibling
+   * path can handle this range (see its cross-parent/type/order checks,
+   * which this mirrors) - i.e. the two endpoints are different children of
+   * the very same parent, with compatible owner types, in forward order.
+   * Deliberately does not attempt to be more permissive than
+   * queueRangeDeletion itself; anything this returns false for keeps
+   * falling through to structuralDeletionPlan exactly as before.
+   */
+  private canMergeAsSiblings(range: SmartRange): boolean {
+    const fromParent = range.from.path.slice(0, -1);
+    const toParent = range.to.path.slice(0, -1);
+    if (!samePath(fromParent, toParent)) return false;
+    const fromIndex = range.from.path[range.from.path.length - 1];
+    const toIndex = range.to.path[range.to.path.length - 1];
+    if (fromIndex >= toIndex) return false;
+    let fromOwner: SmartElementNode;
+    let toOwner: SmartElementNode;
+    try {
+      fromOwner = ownerAt(this.editor, range.from);
+      toOwner = ownerAt(this.editor, range.to);
+    } catch {
+      return false;
+    }
+    return fromOwner.type === toOwner.type;
+  }
+
   private deleteRange(range: SmartRange): void {
     if (samePos(range.from, range.to)) return;
     this.commit((builder) => {
@@ -944,12 +971,28 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
         const caret = queueWholeDocumentDeletion(this.editor, builder);
         return { type: "text", anchor: caret, head: caret };
       }
-      // A node/cell selection, or a text selection crossing structural
-      // parents, is not an inline range. Resolve its semantic scope and remove
-      // the selected IDs; otherwise queueRangeDeletion would either silently
-      // do nothing (node selection) or throw on a legitimate nested list.
+      // A node/cell selection, or a text selection genuinely crossing
+      // structural parents (different list items, table cells, etc.), is
+      // not an inline range - resolve its semantic scope and remove the
+      // selected IDs; otherwise queueRangeDeletion would either silently do
+      // nothing (node selection) or throw on a legitimate nested list.
+      //
+      // A text selection whose endpoints are merely different SIBLINGS
+      // under the same parent (the ordinary "select from partway into one
+      // paragraph through partway into the next" gesture) is NOT such a
+      // case - queueRangeDeletion already handles it correctly (trims each
+      // end, removes any fully-covered siblings between them, merges the
+      // remainder). Routing it here instead was a real bug: block-range/
+      // container-tree scope resolution treats any block the selection
+      // merely touches as fully "in scope" (correct for a property-setting
+      // command like "make these headings," wrong for deletion, where
+      // partial coverage must mean trim-and-merge, not whole-block
+      // removal) - structuralDeletionPlan would then delete both siblings
+      // in their entirety, silently destroying the unselected prefix of
+      // the first and unselected suffix of the last. canMergeAsSiblings
+      // excludes exactly this case from the structural path.
       const structural = (this.editor.selection.type !== "text"
-        || !samePath(range.from.path, range.to.path))
+        || (!samePath(range.from.path, range.to.path) && !this.canMergeAsSiblings(range)))
         ? structuralDeletionPlan(this.editor, this.editor.selection, range)
         : null;
       if (structural) {
