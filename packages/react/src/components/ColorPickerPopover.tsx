@@ -69,6 +69,15 @@ export function ColorPickerPopover({ x, y, label, initialValue = "#000000", onAp
   // than tuning another magic number that will just go stale again next
   // time the content changes.
   const [placement, setPlacement] = useState<{ left: number; top: number; maxHeight: number } | null>(null);
+  // CanonicalAuthorityEditor passes a fresh onCancel closure on every
+  // render - reading it through a ref (rather than depending on it
+  // directly) keeps the outside-click listener mounted exactly once for
+  // this popover's lifetime, the same fix ContextMenu.tsx's own
+  // outside-click listener needed (see docs/bugs/
+  // context-menu-outside-click-dismiss-untested.md) rather than a fresh
+  // teardown/reattach on every parent re-render.
+  const onCancelRef = useRef(onCancel);
+  onCancelRef.current = onCancel;
 
   useLayoutEffect(() => {
     const el = rootRef.current;
@@ -91,6 +100,21 @@ export function ColorPickerPopover({ x, y, label, initialValue = "#000000", onAp
     hexRef.current?.focus();
     hexRef.current?.select();
   }, [placement]);
+
+  useEffect(() => {
+    const dismissIfOutside = (event: Event) => {
+      if (rootRef.current && !rootRef.current.contains(event.target as Node)) onCancelRef.current();
+    };
+    // Both pointerdown and mousedown, same defense-in-depth reasoning as
+    // ContextMenu.tsx: pointerdown is the primary signal, mousedown covers
+    // any embedding context that isn't guaranteed to dispatch PointerEvents.
+    window.addEventListener("pointerdown", dismissIfOutside, true);
+    window.addEventListener("mousedown", dismissIfOutside, true);
+    return () => {
+      window.removeEventListener("pointerdown", dismissIfOutside, true);
+      window.removeEventListener("mousedown", dismissIfOutside, true);
+    };
+  }, []);
 
   const apply = (value: string) => {
     if (!HEX_PATTERN.test(value)) {

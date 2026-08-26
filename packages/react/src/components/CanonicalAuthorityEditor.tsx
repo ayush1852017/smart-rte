@@ -234,6 +234,7 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
   const [colorPopover, setColorPopover] = useState<{
     x: number; y: number;
     target: { kind: "mark"; markId: "textColor" | "backgroundColor" } | { kind: "cell"; attr: "background" | "textColor" };
+    initialValue?: string;
   } | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   // Tracks the exact caret position (path+offset) the link overlay was
@@ -582,6 +583,27 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
    * table.setCellAttributes instead of a mark - a different command, not
    * a different UI.
    */
+  /**
+   * The color picker previously always opened blank ("#000000") regardless
+   * of the caret's or cell's actual current color - these compute what to
+   * seed it with, read at the moment the popover opens (not re-derived
+   * while it stays open, since the underlying selection/cell isn't
+   * expected to change out from under an open picker).
+   */
+  const currentMarkColor = (markId: "textColor" | "backgroundColor"): string | undefined => {
+    const description = runtime.editor.resolveScope({ want: "describe" }) as SelectionDescription;
+    const value = description.marks.find((entry) => entry.mark.type === markId)?.mark.attrs?.value;
+    return typeof value === "string" ? value : undefined;
+  };
+
+  const currentCellColor = (attr: "background" | "textColor"): string | undefined => {
+    const scope = tableScope();
+    if (!("kind" in scope) || scope.kind !== "table-grid" || !(scope as TableGridScope).cellIds.length) return undefined;
+    const cell = findNode(runtime.editor.document, (scope as TableGridScope).cellIds[0]);
+    const value = cell?.attrs?.[attr];
+    return typeof value === "string" ? value : undefined;
+  };
+
   const applyColor = (hex: string) => {
     if (!colorPopover) return;
     if (colorPopover.target.kind === "mark") {
@@ -770,12 +792,12 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
         {
           id: "table.contextMenu.cellBackgroundColor",
           label: "Cell background colour",
-          onSelect: () => setColorPopover({ x: openX, y: openY, target: { kind: "cell", attr: "background" } }),
+          onSelect: () => setColorPopover({ x: openX, y: openY, target: { kind: "cell", attr: "background" }, initialValue: currentCellColor("background") }),
         },
         {
           id: "table.contextMenu.cellTextColor",
           label: "Cell text colour",
-          onSelect: () => setColorPopover({ x: openX, y: openY, target: { kind: "cell", attr: "textColor" } }),
+          onSelect: () => setColorPopover({ x: openX, y: openY, target: { kind: "cell", attr: "textColor" }, initialValue: currentCellColor("textColor") }),
         },
       );
     }
@@ -1151,7 +1173,7 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
         onClick={(event) => {
           if (tool.id === "textColor" || tool.id === "backgroundColor") {
             const rect = event.currentTarget.getBoundingClientRect();
-            setColorPopover({ x: rect.left, y: rect.bottom + 4, target: { kind: "mark", markId: tool.id } });
+            setColorPopover({ x: rect.left, y: rect.bottom + 4, target: { kind: "mark", markId: tool.id }, initialValue: currentMarkColor(tool.id) });
           } else if (tool.id === "fontSize" || tool.id === "fontFamily") applyAttributedMark(tool.id);
           else { executeMarkTool(runtime.editor, tool, "toggle"); runtime.focus(); }
         }}
@@ -1352,6 +1374,7 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
       label={colorPopover.target.kind === "mark"
         ? (colorPopover.target.markId === "textColor" ? "Text colour" : "Background colour")
         : (colorPopover.target.attr === "textColor" ? "Cell text colour" : "Cell background colour")}
+      {...(colorPopover.initialValue ? { initialValue: colorPopover.initialValue } : {})}
       onApply={applyColor}
       onCancel={() => { setColorPopover(null); runtime.focus(); }}
     />}

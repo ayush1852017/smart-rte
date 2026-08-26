@@ -3864,6 +3864,62 @@ test.describe("Phase 8b canonical product authority", () => {
   });
 
   /**
+   * The color picker previously always opened blank ("#000000") regardless
+   * of the caret's or cell's actual current color, and never dismissed on
+   * an outside click (unlike ContextMenu.tsx, which already had that fix -
+   * docs/bugs/context-menu-outside-click-dismiss-untested.md - this popover
+   * never got the equivalent).
+   */
+  test("color picker reflects the existing colour when reopened, and closes on an outside click", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    const editor = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
+    const colorPopover = page.locator('[data-srte-color-popover="true"]');
+
+    // Mark case: apply a text colour, reopen the picker on that same text,
+    // confirm it now seeds with the applied colour rather than #000000.
+    await page.evaluate(() => {
+      const root = document.querySelector<HTMLElement>('[data-smart-authority="canonical"] [contenteditable="true"]')!;
+      const text = document.createTreeWalker(root, NodeFilter.SHOW_TEXT).nextNode() as Text;
+      const range = document.createRange();
+      range.selectNodeContents(text);
+      const selection = window.getSelection()!;
+      selection.removeAllRanges();
+      selection.addRange(range);
+      document.dispatchEvent(new Event("selectionchange"));
+    });
+    await page.getByRole("button", { name: "Text colour", exact: true }).click();
+    await expect(colorPopover).toBeVisible();
+    await pickNativeColor(page, "#e03131");
+    await expect(colorPopover).not.toBeVisible();
+
+    await page.getByRole("button", { name: "Text colour", exact: true }).click();
+    await expect(colorPopover).toBeVisible();
+    await expect(page.locator('[data-srte-color-native-input="true"]')).toHaveValue("#e03131");
+    await expect(page.locator("[data-srte-color-hex-input]")).toHaveValue("#e03131");
+
+    // Outside click dismisses (this same open popover, no explicit close).
+    await editor.click({ position: { x: 5, y: 5 } });
+    await expect(colorPopover).not.toBeVisible();
+
+    // Cell case: same reopened-value expectation, via the table context menu.
+    await page.getByRole("button", { name: "Insert table", exact: true }).click();
+    const cell = editor.locator('[data-smart-type="table"] td').first();
+    await cell.click({ button: "right" });
+    const menu = page.locator('[data-srte-context-menu="true"]');
+    await expect(menu).toBeVisible();
+    await menu.locator('[data-srte-context-menu-item="table.contextMenu.cellBackgroundColor"]').click();
+    await expect(colorPopover).toBeVisible();
+    await pickNativeColor(page, "#ffc9c9");
+    await expect(colorPopover).not.toBeVisible();
+
+    await cell.click({ button: "right" });
+    await expect(menu).toBeVisible();
+    await menu.locator('[data-srte-context-menu-item="table.contextMenu.cellBackgroundColor"]').click();
+    await expect(colorPopover).toBeVisible();
+    await expect(page.locator('[data-srte-color-native-input="true"]')).toHaveValue("#ffc9c9");
+  });
+
+  /**
    * Codex work order (3 confirmed table bugs), item 1: "Adding a column to
    * a table copied from Sootr shrinks the table". Same fabricated-fallback
    * pattern docs/bugs/table-resize-shrinks-table-with-no-prior-
