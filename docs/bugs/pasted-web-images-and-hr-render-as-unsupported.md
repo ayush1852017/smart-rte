@@ -1,0 +1,47 @@
+# Images and horizontal rules pasted from generic web pages render as [Unsupported: ...]
+
+**Status:** Fixed
+**Area:** clipboard / HTML import / list/formats.ts parser / atom schema
+**First reported:** 2026-08-26 (pasted "Codex prompt," reported alongside the color picker gaps)
+**Related files:** `packages/core/src/foundation/list/formats.ts` (`parseBlock`, `TRANSPARENT_CONTAINER_TAGS`), `packages/core/src/foundation/atom/schema.ts` (new `divider` node type), `packages/core/src/foundation/atom/formats.ts`, `packages/core/src/foundation/surface/renderer.ts`, `packages/react/e2e/fixtures/web-image-only-clipboard.html` (new real fixture), `docs/bugs/html-import-span-and-div-wrapped-content-lost.md` (the precedent this is the same class as)
+
+## Symptom
+
+Copying an image from an arbitrary web page (not Sootr, not Word/Google Docs) and pasting into the editor showed `[Unsupported: img]` (or, depending on exactly how the image was copied, `[Unsupported: figure]` or `[Unsupported: a]`) instead of the image. Separately reported mid-investigation: pasting a horizontal rule (`<hr>`) showed `[Unsupported: hr]`.
+
+## Reproduction
+
+**Per the standing "use real captured HTML" rule**: no browser extension access was available in this environment, so real clipboard HTML was captured by scripting an actual Chromium instance (Playwright + `context.grantPermissions(["clipboard-read","clipboard-write"])`, navigate to a real, live Wikipedia article, select real rendered content, `document.execCommand("copy")`, then read back `navigator.clipboard.read()` - the same underlying mechanism a real Ctrl+C uses, not synthesized markup). Two real captures, both against the same live photo (Golden Gate Bridge infobox image):
+
+1. **Selecting a range of page content that happens to include an image** (`<td>`/`<span>`-wrapped, Wikipedia's own markup shape) - this specific capture already parsed correctly (`textWithMarks`'s inline `img` branch already handles an image nested inside a paragraph/cell). Not a bug for this shape.
+2. **Selecting just the image element and copying it** (the closest scriptable equivalent of a real right-click "Copy image", arguably the more common real gesture for "copy an image from a web page") - the captured payload was a bare `<a href="..."><img ...></a>`, no other wrapper at all. This **did** reproduce `[Unsupported: a]` (the same failure class as the reported `[Unsupported: img]`). Kept permanently as `packages/react/e2e/fixtures/web-image-only-clipboard.html`, exercised end-to-end in `canonical-authority.spec.ts`.
+
+Two further shapes were confirmed via direct source-level reproduction using the real captured image's own URL/attributes (not needing a fresh live capture, since the mechanism is identical): a bare `<img>` sitting directly at block level (between two `<p>`s, no wrapper at all), and an `<img>` wrapped in a `<figure>` - both are the ordinary way most real websites (blogs, CMSes, plain HTML pages) place a standalone content photo, and both also produced `[Unsupported: ...]`.
+
+`<hr>` was reproduced trivially: `parseCanonicalListHtml("<p>Before</p><hr><p>After</p>")` produced `{type: "unknown", attrs: {originalType: "hr"}}`.
+
+## Root cause
+
+**Images**: `parseBlock` (`list/formats.ts`) had no case at all for a bare `<img>` tag, or for an `<a>` wrapping only an image, at block level - every recognized block tag (`p`, blockquote, table, the app's own `data-smart-type="block_image"` round-trip format, etc.) was checked first, and a genuinely third-party `<img>` (not wrapped in a `<p>`, not carrying this app's own round-trip markers) matched none of them, falling to the generic "unrecognized tag" fallback. `<figure>` wasn't in `TRANSPARENT_CONTAINER_TAGS` either, so a figure-wrapped image was swallowed as one opaque `unknown` block before even reaching the (also-missing) bare-`<img>` case. This is the same class of gap as `html-import-span-and-div-wrapped-content-lost.md` (a recognizable real-world shape with no parser case, found via real content rather than incidentally) - `textWithMarks`'s *inline* `img` handling was already solid; the gap was entirely at the *block* level, which only this project's own round-tripped `data-smart-type="block_image"` export had ever exercised before.
+
+**`<hr>`**: no schema node type for a horizontal rule existed anywhere in this project - not a parsing gap in an existing type, a genuinely missing capability.
+
+## Fix
+
+`packages/core/src/foundation/list/formats.ts`:
+- `TRANSPARENT_CONTAINER_TAGS` gained `"figure"` (alongside the existing `div`/`section`/`article`), so a figure-wrapped image's `<img>` reaches `parseBlock` directly instead of the whole figure becoming one opaque block. (`<figcaption>` itself remains a known, deliberately out-of-scope minor gap - it still has no block-level case of its own, so it becomes a separate `unknown` node; the image itself no longer disappears, which was the actual reported symptom.)
+- `parseBlock` gained a `tag === "img"` case (mirrors the inline `image` atom's own `src`/width/height parsing, producing a `block_image`) and a `tag === "a"` case that unwraps to the contained image when the link's only child is exactly one `<img>` (the real "Copy image" capture's shape) - the link target itself is intentionally dropped rather than represented some other way, since a `block_image` is atomic and doesn't carry marks/links.
+- `parseBlock` gained a `tag === "hr"` case producing a new `divider` node type.
+
+New node type, `packages/core/src/foundation/atom/schema.ts`: `{ type: "divider", group: "block", atomic: true, selectable: true, marks: "" }` - no attributes, matching a real `<hr>`'s lack of meaningful state. Wired through everywhere an atomic block type needs to be known: `modelDom.ts`/`surface/renderer.ts`'s `atomTypes` sets, `surface/renderer.ts`'s `tagForNode` (→ `"hr"`) and `installMediaDiagnostics` (excluded - an `<hr>` never fires load/error events), and `atom/formats.ts`'s `atomToHtml`/`atomFromHtmlElement`/`atomToMarkdown`/`atomToDocx`/`atomToPdf` (previously `atomToHtml` would have thrown `Unsupported atom type "divider"` on export had a divider node existed without this).
+
+## Regression coverage
+
+`packages/core/src/foundation/list/formats.test.ts`: bare block-level `<img>` and figure-wrapped `<img>` both parse to `block_image` with correct attrs and pass schema `validate`; the real captured `web-image-only-clipboard.html` fixture parses to exactly one `block_image` with the real URL/width/height; `<hr>` parses to `divider` and round-trips through HTML export back to `divider`. `packages/core/src/foundation/phase2_5.test.ts`: a `divider` node renders as a real `<hr>` DOM element. `packages/react/e2e/canonical-authority.spec.ts`: two new tests pasting the real fixture (asserts no "Unsupported" text, exactly one real `<img>` with the expected `src`) and a synthetic-but-minimal `<hr>` paste (asserts no "Unsupported" text, exactly one real `<hr>`) - both go through the actual `handlePaste` pipeline, not a bypassed parser call. Stable across 2 runs × 3 browsers. Core 703/703 (was 699), react 130/130 (unchanged), lint clean. Full e2e suite: 454 passed / 7 skipped / 4 failed - all 4 failures confirmed non-reproducing in isolation (2 are the already-documented Firefox clipboard-seeding quirk from the same day's urgent partial-selection-delete fix; 2 are known-flaky drag-resize timing tests, the same class as `webkit-full-suite-timeout-flake.md`, unrelated to any change in this pass).
+
+## Related/similar issues
+
+- [html-import-span-and-div-wrapped-content-lost](html-import-span-and-div-wrapped-content-lost.md) - the direct precedent: a recognizable real-world HTML shape with no parser case, found via real content, not incidentally.
+- [pasted-image-size-dropped-on-paste](pasted-image-size-dropped-on-paste.md) - a different (already-fixed) image-parsing gap found via the same general "does the parser handle this real shape" methodology, reused here (style-wins-over-attribute width/height parsing) for the new bare-`<img>`/`<a>`-wrapped cases.
+- **Known, explicitly out-of-scope remaining gap**: `<figcaption>` still has no block-level parse case of its own (falls to `unknown`) - the image inside a `<figure>` no longer disappears, but its caption text still shows as a placeholder. Not fixed in this pass; revisit if reported.
+- **Not investigated in this pass**: `<picture>`/`<source>` (responsive image variants) and lazy-load `data-src`-only patterns, both named as hypotheses in the original report. Neither was present in the real capture actually obtained during this investigation, so neither is confirmed to be broken or fixed - the confirmed root cause (bare block-level `<img>`/`<a>`, `<figure>` wrapping) is independent of either hypothesis and was verified against real captured evidence instead.

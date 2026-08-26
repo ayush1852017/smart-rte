@@ -3090,6 +3090,61 @@ test.describe("Phase 8b canonical product authority", () => {
   });
 
   /**
+   * 2026-08-26: "images copied from the web render as [Unsupported: img]".
+   * fixtures/web-image-only-clipboard.html is a real, unmodified clipboard
+   * capture - selecting a live Wikipedia photo element and copying it (the
+   * closest scriptable equivalent of a native right-click "Copy image")
+   * produced a bare `<a href="..."><img ...></a>` fragment, no <p>/<td>
+   * wrapper at all. parseBlock had no case for a block-level <img> (the
+   * ordinary shape for a standalone photo on most real sites - a bare
+   * <img> between paragraphs, or one wrapped in <figure>/<a>) at all, so
+   * it fell to the generic "unrecognized tag" fallback. See
+   * docs/bugs/pasted-web-images-and-hr-render-as-unsupported.md.
+   */
+  test("pastes an image copied from a generic web page (not Sootr/Word/Google Docs) without showing [Unsupported: ...]", async ({ page }) => {
+    const fixtureHtml = readFileSync("e2e/fixtures/web-image-only-clipboard.html", "utf8");
+
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    const editor = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
+    await placeCaretAtEnd(page);
+    await page.evaluate((html) => {
+      const runtime = (window as typeof window & { __smartProductCanonical?: {
+        surface: { pipeline: { handlePaste: (event: ClipboardEvent) => void } | null };
+      } }).__smartProductCanonical!;
+      const transfer = new DataTransfer();
+      transfer.setData("text/html", html);
+      transfer.setData("text/plain", "");
+      runtime.surface.pipeline!.handlePaste({ clipboardData: transfer, preventDefault: () => undefined } as unknown as ClipboardEvent);
+    }, fixtureHtml);
+
+    await expect(editor).not.toContainText("Unsupported");
+    await expect(editor.locator("img")).toHaveCount(1);
+    await expect(editor.locator("img")).toHaveAttribute("src", /Golden_Gate_Bridge/);
+  });
+
+  /**
+   * Same report, second item: <hr> also had no node type at all and fell
+   * to "[Unsupported: hr]".
+   */
+  test("pastes a horizontal rule as a real divider instead of [Unsupported: hr]", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    const editor = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
+    await placeCaretAtEnd(page);
+    await page.evaluate(() => {
+      const runtime = (window as typeof window & { __smartProductCanonical?: {
+        surface: { pipeline: { handlePaste: (event: ClipboardEvent) => void } | null };
+      } }).__smartProductCanonical!;
+      const transfer = new DataTransfer();
+      transfer.setData("text/html", "<p>Before</p><hr><p>After</p>");
+      transfer.setData("text/plain", "");
+      runtime.surface.pipeline!.handlePaste({ clipboardData: transfer, preventDefault: () => undefined } as unknown as ClipboardEvent);
+    });
+
+    await expect(editor).not.toContainText("Unsupported");
+    await expect(editor.locator("hr")).toHaveCount(1);
+  });
+
+  /**
    * Post-Phase-11.5 bug batch item 2: the completion report's §A described
    * ContextMenu.tsx as "click-outside-to-close", but that claim had no
    * dedicated regression test - every existing context-menu e2e test

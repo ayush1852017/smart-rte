@@ -300,6 +300,20 @@ describe("Phase 2.5 renderer and input pipeline", () => {
     expect(video.getAttribute("title")).toBe("Video could not be loaded");
   });
 
+  it("renders a divider atom as a real <hr> element (docs/bugs/pasted-web-images-and-hr-render-as-unsupported.md)", () => {
+    const root = document.createElement("div");
+    const withDivider: SmartDocument = { type: "doc", id: "doc", children: [
+      paragraph("before", "before"),
+      { type: "divider", id: "rule" },
+      paragraph("after", "after"),
+    ] };
+    const renderer = createSubtreeRenderer(root);
+    renderer.render(withDivider, { type: "none", anchor: { path: [], offset: 0 }, head: { path: [], offset: 0 } });
+    const hr = root.querySelector('[data-smart-id="rule"]');
+    expect(hr?.tagName).toBe("HR");
+    expect(hr?.getAttribute("data-smart-type")).toBe("divider");
+  });
+
   it("surfaces the model's specific upload-failure reason as the atom's title, not the generic fallback (docs/bugs/atom-upload-error-reason-not-rendered.md)", () => {
     const root = document.createElement("div");
     const failed: SmartDocument = { type: "doc", id: "doc", children: [

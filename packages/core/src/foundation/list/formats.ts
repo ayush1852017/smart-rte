@@ -26,7 +26,7 @@ const isEditorUiNode = (node: HtmlNode) =>
  * their own. parseBlock has no case for any of these tags; see
  * parseBlockList below for how they're unwrapped instead of swallowed.
  */
-const TRANSPARENT_CONTAINER_TAGS = ["div", "section", "article"];
+const TRANSPARENT_CONTAINER_TAGS = ["div", "section", "article", "figure"];
 
 const serializeInline = (node: SmartNode): string => {
   if (!isTextNode(node)) {
@@ -85,7 +85,7 @@ const serializeBlock = (node: SmartElementNode, includeIds: boolean, listDepth =
     if (typeof raw?.html === "string") return raw.html;
   }
   const id = includeIds ? ` data-smart-id="${escapeHtml(node.id)}"` : "";
-  if (["block_image", "block_formula", "video", "audio"].includes(node.type)) return atomToHtml(node);
+  if (["block_image", "block_formula", "video", "audio", "divider"].includes(node.type)) return atomToHtml(node);
   if (node.type === "paragraph" || node.type === "heading") {
     const tag = node.type === "heading" ? `h${String(node.attrs?.level || 1)}` : "p";
     return `<${tag}${id}${blockAttributes(node)}>${(node.children || []).map(serializeInline).join("")}</${tag}>`;
@@ -330,6 +330,48 @@ const parseBlock = (node: HtmlNode): SmartElementNode | null => {
     } };
   }
   if (declaredAtom === "block_formula") return { type: "block_formula", id: generatedId(node, "formula"), attrs: { source: attr(node, "data-smart-formula") || rawText(node), notation: attr(node, "data-smart-notation") === "mathml" ? "mathml" : "latex" } };
+  if (tag === "hr") return { type: "divider", id: generatedId(node, "divider") };
+  // A third-party <img> sitting directly at block level (not wrapped in a
+  // <p>) - the ordinary shape for a standalone content photo on most real
+  // websites, e.g. a bare <img> between paragraphs or inside a <figure>
+  // (now a TRANSPARENT_CONTAINER_TAGS entry, so its <img> reaches here
+  // directly). Previously had no case at all - every recognized block tag
+  // above and below is checked first, and a bare "img" tag matches none of
+  // them, so it fell all the way to the generic "unrecognized tag"
+  // fallback at the bottom of this function, producing "[Unsupported:
+  // img]"/"[Unsupported: figure]" instead of an actual image. Mirrors the
+  // inline `image` atom's own src/width/height parsing just above in
+  // textWithMarks (declaredAtom === "block_image" above only fires for
+  // this app's own round-tripped export, which explicitly marks the tag -
+  // third-party HTML never does).
+  if (tag === "img") {
+    const src = sanitizeAtomSource(attr(node, "src"), { kind: "image" });
+    if (src) {
+      const width = parsePixelWidth(styleValue(node, "width")) ?? parsePixelWidth(attr(node, "width"));
+      const height = parsePixelWidth(styleValue(node, "height")) ?? parsePixelWidth(attr(node, "height"));
+      return { type: "block_image", id: generatedId(node, "image"), attrs: {
+        src, alt: attr(node, "alt") || "", status: "ready",
+        ...(width !== null ? { width } : {}), ...(height !== null ? { height } : {}),
+      } };
+    }
+  }
+  // Real, captured evidence (an actual browser "select the image element,
+  // copy" gesture - the closest scriptable equivalent of a native
+  // right-click "Copy image" - against a live Wikipedia photo): the
+  // clipboard payload was a bare <a href="..."><img ...></a>, no <p>/<td>
+  // wrapper at all. A link wrapping nothing but a single image, sitting at
+  // block level, unwraps to that image the same way the bare-<img> case
+  // above does - the link target (usually the source page/file, not
+  // meaningful to preserve as a clickable wrapper around an atomic block
+  // image in this schema) is intentionally dropped rather than attempted
+  // to be represented some other way.
+  if (tag === "a") {
+    const onlyChild = elementChildren(node);
+    if (onlyChild.length === 1 && onlyChild[0].tagName === "img") {
+      const image = parseBlock(onlyChild[0]);
+      if (image) return image;
+    }
+  }
   if (tag === "video" || tag === "audio") {
     const src = sanitizeAtomSource(attr(node, "src"), { kind: tag });
     return src ? { type: tag, id: generatedId(node, tag), attrs: { src, status: "ready", ...(tag === "video" && attr(node, "poster") ? { poster: attr(node, "poster") } : {}) } } : null;
@@ -537,7 +579,7 @@ const markdownList = (list: SmartElementNode, depth: number): string[] => (list.
 });
 
 const markdownBlock = (node: SmartElementNode): string[] => {
-  if (["block_image", "block_formula", "video", "audio"].includes(node.type)) return [atomToMarkdown(node)];
+  if (["block_image", "block_formula", "video", "audio", "divider"].includes(node.type)) return [atomToMarkdown(node)];
   if (node.type === "list") return markdownList(node, 0);
   if (node.type === "heading") return [`${"#".repeat(Math.max(1, Math.min(6, Number(node.attrs?.level) || 1)))} ${markdownInlineText(node)}`];
   if (node.type === "code_block") {

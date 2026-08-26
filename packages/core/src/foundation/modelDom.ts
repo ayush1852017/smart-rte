@@ -4,7 +4,7 @@ import type { ModelDomMapping, SmartDocument, SmartElementNode, SmartNode, Smart
 import { renderMarkedText } from "./marks/dom.js";
 import { sanitizeAtomSource } from "./atom/security.js";
 
-const atomTypes = new Set(["image", "block_image", "formula", "block_formula", "video", "audio"]);
+const atomTypes = new Set(["image", "block_image", "formula", "block_formula", "video", "audio", "divider"]);
 
 export const SMART_UI_ATTRIBUTE = "data-smart-ui";
 export const SMART_PROJECTION_ATTRIBUTE = "data-smart-projection";

@@ -25,4 +25,9 @@ export const atomNodeSpecs: readonly NodeSpec[] = [
   { type: "block_formula", group: "block", atomic: true, selectable: true, marks: "", attributes: formulaAttrs },
   { type: "video", group: "block", atomic: true, selectable: true, marks: "", attributes: mediaAttrs },
   { type: "audio", group: "block", atomic: true, selectable: true, marks: "", attributes: mediaAttrs },
+  // A horizontal rule (<hr>) - no content, no attrs, just a block-level
+  // separator atom. Previously unrecognized entirely (parseBlock had no
+  // case for "hr"), so every pasted <hr> fell to the generic
+  // "unrecognized tag" fallback and rendered as "[Unsupported: hr]".
+  { type: "divider", group: "block", atomic: true, selectable: true, marks: "" },
 ];

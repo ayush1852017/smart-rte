@@ -1,3 +1,4 @@
+import { readFileSync } from "fs";
 import { describe, expect, it } from "vitest";
 import {
   canonicalListPdfText,
@@ -8,6 +9,7 @@ import {
   serializeCanonicalListHtml,
   serializeCanonicalListMarkdown,
   foundationSchema,
+  validate,
   type SmartDocument,
 } from "../index.js";
 
@@ -243,6 +245,70 @@ describe("Phase 3 list format fidelity", () => {
     const table = doc.children.find((node) => node.type === "table") as SmartDocument | undefined;
     expect(table).toBeDefined();
     expect(table?.children).toHaveLength(1);
+  });
+
+  /**
+   * 2026-08-26: reported as "images copied from the web render as
+   * [Unsupported: img]". Confirmed via real captured clipboard HTML (an
+   * actual Ctrl+C from a live Wikipedia page's infobox photo, driven
+   * through Playwright's clipboard permissions - not synthesized) that
+   * this specific real image already parsed fine (Wikipedia always wraps
+   * its images inside a <td>/<span>, which textWithMarks's inline path
+   * already handled) - the real gap was a THIRD-PARTY <img> sitting
+   * directly at block level (not wrapped in a <p>), which parseBlock had
+   * no case for at all. This is the ordinary shape for a standalone
+   * content photo on most real sites (a bare <img> between paragraphs, or
+   * one wrapped in a <figure>, which is now a transparent container).
+   */
+  it("parses a bare block-level <img> (and one wrapped in <figure>) into a block_image instead of falling back to unknown", () => {
+    const src = "https://upload.wikimedia.org/wikipedia/commons/thumb/b/bf/Golden_Gate_Bridge_as_seen_from_Battery_East.jpg";
+    const bare = parseCanonicalListHtml(`<p>Some text before.</p><img src="${src}" width="290" height="181" alt="A bridge"><p>Some text after.</p>`);
+    expect(bare.children.map((node) => node.type)).toEqual(["paragraph", "block_image", "paragraph"]);
+    expect((bare.children[1] as SmartDocument).attrs).toMatchObject({ src, width: 290, height: 181, alt: "A bridge" });
+    expect(validate(bare, foundationSchema)).toEqual([]);
+
+    // <figcaption> itself is a known, accepted remaining gap (not a
+    // recognized block tag, so it still falls to "unknown") - out of
+    // scope for this fix, which is specifically about the image no longer
+    // disappearing. <figure> being flattened as a transparent container
+    // means the image now parses independently of that caption's fate.
+    const figureWrapped = parseCanonicalListHtml(`<figure><img src="${src}" width="290" height="181" alt="A bridge"><figcaption>Caption</figcaption></figure>`);
+    expect(figureWrapped.children.some((node) => node.type === "block_image")).toBe(true);
+    expect(validate(figureWrapped, foundationSchema)).toEqual([]);
+  });
+
+  /**
+   * The more common real gesture ("right-click an image, Copy image", not
+   * select-a-range-then-copy) produces an even sparser clipboard payload -
+   * confirmed via an actual browser capture (selecting just the image
+   * element and copying it, the closest scriptable equivalent of that
+   * native command, against the same live Wikipedia photo): a bare
+   * `<a href="..."><img ...></a>`, no other wrapper at all. `packages/
+   * react/e2e/fixtures/web-image-only-clipboard.html` is that literal,
+   * unmodified capture, kept permanently per this project's real-fixture
+   * convention. A link wrapping nothing but a single image, at block
+   * level, unwraps to the image the same way the bare-<img> case does.
+   */
+  it("parses a real captured 'copy image' clipboard payload (<a> wrapping only an <img>) into a block_image", () => {
+    const html = readFileSync(new URL("../../../../react/e2e/fixtures/web-image-only-clipboard.html", import.meta.url), "utf8");
+    const doc = parseCanonicalListHtml(html);
+    expect(doc.children.map((node) => node.type)).toEqual(["block_image"]);
+    expect((doc.children[0] as SmartDocument).attrs).toMatchObject({
+      src: expect.stringContaining("Golden_Gate_Bridge"), width: 290, height: 181,
+    });
+    expect(validate(doc, foundationSchema)).toEqual([]);
+  });
+
+  /** Same report, second item: <hr> also fell to "[Unsupported: hr]" - no node type existed for it at all. */
+  it("parses <hr> into a divider atom and round-trips it through HTML export", () => {
+    const doc = parseCanonicalListHtml("<p>Before</p><hr><p>After</p>");
+    expect(doc.children.map((node) => node.type)).toEqual(["paragraph", "divider", "paragraph"]);
+    expect(validate(doc, foundationSchema)).toEqual([]);
+
+    const exported = serializeCanonicalListHtml(doc);
+    expect(exported).toContain("<hr");
+    const reparsed = parseCanonicalListHtml(exported);
+    expect(reparsed.children.map((node) => node.type)).toEqual(["paragraph", "divider", "paragraph"]);
   });
 
   /**

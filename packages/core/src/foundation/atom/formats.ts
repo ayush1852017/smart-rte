@@ -19,6 +19,7 @@ export const atomToHtml = (node: SmartElementNode): string => {
     const src = sanitizeAtomSource(String(node.attrs?.src || ""), { kind: node.type }) || "";
     return `<${node.type} data-smart-id="${escape(node.id)}" data-smart-type="${node.type}" src="${escape(src)}" controls${dimensions(node)}${node.type === "video" ? attr("poster", node.attrs?.poster) : ""}></${node.type}>`;
   }
+  if (node.type === "divider") return `<hr data-smart-id="${escape(node.id)}" data-smart-type="divider">`;
   throw new Error(`Unsupported atom type "${node.type}".`);
 };
 
@@ -40,6 +41,7 @@ export const atomFromHtmlElement = (element: Element): SmartElementNode | null =
     if (!src) return null;
     return { type, id, attrs: { src, status: "ready", ...(type === "video" && element.getAttribute("poster") ? { poster: element.getAttribute("poster")! } : {}), ...(number("width") ? { width: number("width") } : {}), ...(number("height") ? { height: number("height") } : {}) } };
   }
+  if (type === "divider" || element.tagName === "HR") return { type: "divider", id };
   return null;
 };
 
@@ -48,6 +50,7 @@ export const atomToMarkdown = (node: SmartElementNode): string => {
   if (node.type === "formula" || node.type === "block_formula") return node.type === "formula" ? `$${String(node.attrs?.source || "")}$` : `$$\n${String(node.attrs?.source || "")}\n$$`;
   // Media is unsupported in Markdown. Preserve a readable link instead of dropping content.
   if (node.type === "video" || node.type === "audio") return `[${node.type}: ${String(node.attrs?.src || "")}](${String(node.attrs?.src || "")})`;
+  if (node.type === "divider") return "---";
   return "";
 };
 
@@ -63,10 +66,13 @@ export const atomToDocx = (node: SmartElementNode): AtomDocxRun => node.type ===
   ? { kind: "text", source: String(node.attrs?.source || "") }
   : node.type === "image" || node.type === "block_image"
     ? { kind: "image", source: String(node.attrs?.src || ""), alt: String(node.attrs?.alt || "") }
-    : { kind: "text", source: `[${node.type}: ${String(node.attrs?.src || "")}]` };
+    : node.type === "divider"
+      ? { kind: "text", source: "---" }
+      : { kind: "text", source: `[${node.type}: ${String(node.attrs?.src || "")}]` };
 
 export const atomToPdf = (node: SmartElementNode): { kind: "image" | "text"; value: string } =>
   node.type === "formula" || node.type === "block_formula" ? { kind: "text", value: String(node.attrs?.source || "") }
     : node.type === "video" ? { kind: "image", value: String(node.attrs?.poster || node.attrs?.src || "") }
       : node.type === "image" || node.type === "block_image" ? { kind: "image", value: String(node.attrs?.src || "") }
-        : { kind: "text", value: String(node.attrs?.src || "") };
+        : node.type === "divider" ? { kind: "text", value: "---" }
+          : { kind: "text", value: String(node.attrs?.src || "") };
