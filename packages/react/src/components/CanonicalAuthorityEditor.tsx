@@ -409,6 +409,15 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
     ? runtime.surface.renderer?.mapping.nodeToDom((currentAtomScope as { nodeId: string }).nodeId) as HTMLElement | undefined
     : undefined;
   const selectedAtomNode = atomSelected ? findNode(runtime.editor.document, (currentAtomScope as { nodeId: string }).nodeId) : null;
+  // A divider (<hr>) is atomic/selectable (so ordinary caret/Backspace/
+  // Delete behavior around it works, and the toolbar's "Delete selected
+  // atom" button applies to it), but it has no src/alt/width/height at
+  // all - MediaOverlay and the media-specific Edit/Resize actions assume
+  // every atom is a real media item, and unconditionally showing them for
+  // a divider surfaced nonsensical empty/undefined values with no
+  // sensible edit or resize target. Media-only UI is gated on this
+  // instead of plain atomSelected; delete stays available for any atom.
+  const mediaAtomSelected = atomSelected && selectedAtomNode?.type !== "divider";
   // Context menu scope reduction: link no longer gets a right-click menu -
   // LinkEditorPopover (already built and wired for the toolbar's Link
   // button, per §1's investigation) auto-appears, anchored to the link's
@@ -1253,9 +1262,9 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
       <button type="button" className="srte-tool-button" aria-label="Insert video" disabled={readOnly || !mediaProvider} onMouseDown={(event) => event.preventDefault()} onClick={() => setMediaKind("video")}>Video</button>
       <button type="button" className="srte-tool-button" aria-label="Insert audio" disabled={readOnly || !mediaProvider} onMouseDown={(event) => event.preventDefault()} onClick={() => setMediaKind("audio")}>Audio</button>
       <button type="button" className="srte-tool-button" aria-label="Insert formula" disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={insertInlineFormula}>Formula</button>
-      <button type="button" className="srte-tool-button" aria-label="Edit selected atom" disabled={readOnly || !atomSelected} onMouseDown={(event) => event.preventDefault()} onClick={() => editSelectedAtom()}>Edit media</button>
-      <button type="button" className="srte-tool-button" aria-label="Grow selected atom" disabled={readOnly || !atomSelected} onMouseDown={(event) => event.preventDefault()} onClick={() => editSelectedAtom(20)}>Resize +</button>
-      <button type="button" className="srte-tool-button" aria-label="Shrink selected atom" disabled={readOnly || !atomSelected} onMouseDown={(event) => event.preventDefault()} onClick={() => editSelectedAtom(-20)}>Resize −</button>
+      <button type="button" className="srte-tool-button" aria-label="Edit selected atom" disabled={readOnly || !mediaAtomSelected} onMouseDown={(event) => event.preventDefault()} onClick={() => editSelectedAtom()}>Edit media</button>
+      <button type="button" className="srte-tool-button" aria-label="Grow selected atom" disabled={readOnly || !mediaAtomSelected} onMouseDown={(event) => event.preventDefault()} onClick={() => editSelectedAtom(20)}>Resize +</button>
+      <button type="button" className="srte-tool-button" aria-label="Shrink selected atom" disabled={readOnly || !mediaAtomSelected} onMouseDown={(event) => event.preventDefault()} onClick={() => editSelectedAtom(-20)}>Resize −</button>
       <button type="button" className="srte-tool-button" aria-label="Delete selected atom" disabled={readOnly || !atomSelected} onMouseDown={(event) => event.preventDefault()} onClick={() => runtime.executeOperations(deleteAtom(runtime.editor.document, atomScope(), {}, blockContext()))}>Delete media</button>
       <input ref={importRef} type="file" accept=".html,.htm,.md,.markdown,.docx,.pdf,text/html,text/markdown,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf" hidden onChange={(event) => {
         const file = event.currentTarget.files?.[0];
@@ -1356,7 +1365,7 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
         runtime.focus();
       }}
     />}
-    {!readOnly && atomSelected && selectedAtomElement && <MediaOverlay
+    {!readOnly && mediaAtomSelected && selectedAtomElement && <MediaOverlay
       atomElement={selectedAtomElement}
       alt={typeof selectedAtomNode?.attrs?.alt === "string" ? selectedAtomNode.attrs.alt : ""}
       width={typeof selectedAtomNode?.attrs?.width === "number" ? selectedAtomNode.attrs.width : undefined}

@@ -3145,6 +3145,43 @@ test.describe("Phase 8b canonical product authority", () => {
   });
 
   /**
+   * Follow-up to the divider fix above: making `divider` atomic+selectable
+   * (needed so ordinary caret/Backspace/Delete behave correctly around an
+   * `<hr>`) also made it satisfy the same "atomic node selected" scope that
+   * unconditionally rendered MediaOverlay - a component with Edit/Resize
+   * buttons and an Alt-text/Size/Source panel that assumes every atom is
+   * real media with src/width/height/alt, none of which a divider has.
+   * Selecting a divider must not surface that popup at all; selecting a
+   * real image must still surface it exactly as before.
+   */
+  test("selecting a divider does not surface the media overlay, but selecting an image still does", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    const editor = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
+    await placeCaretAtEnd(page);
+    await page.evaluate(() => {
+      const runtime = (window as typeof window & { __smartProductCanonical?: {
+        surface: { pipeline: { handlePaste: (event: ClipboardEvent) => void } | null };
+      } }).__smartProductCanonical!;
+      // A data: URI (rather than a real network URL) so the image renders
+      // immediately and identically across browsers with no load-timing
+      // flakiness - only the atom-selection/overlay-gating behavior below
+      // is under test here.
+      const pixel = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+      const transfer = new DataTransfer();
+      transfer.setData("text/html", `<p>Before</p><hr><p><img src="${pixel}" alt="" width="100" height="80"></p>`);
+      transfer.setData("text/plain", "");
+      runtime.surface.pipeline!.handlePaste({ clipboardData: transfer, preventDefault: () => undefined } as unknown as ClipboardEvent);
+    });
+
+    const overlay = page.locator('[data-srte-media-overlay="true"]');
+    await editor.locator("hr").click();
+    await expect(overlay).not.toBeVisible();
+
+    await editor.locator("img").click();
+    await expect(overlay).toBeVisible();
+  });
+
+  /**
    * Post-Phase-11.5 bug batch item 2: the completion report's §A described
    * ContextMenu.tsx as "click-outside-to-close", but that claim had no
    * dedicated regression test - every existing context-menu e2e test
