@@ -23,8 +23,8 @@ The native input's `onChange` now only stages the value (`setHex`), the same way
 
 ## Regression coverage
 
-`packages/react/e2e/canonical-authority.spec.ts` - "applies text color via the native picker and background color via a custom hex value" and "sets cell background and text colour via the right-click context menu" both now go through a `pickNativeColor` helper that drives the native input via its change event *and* an explicit Apply click, asserting the popover closes only after Apply - not on the native input's own change event alone.
+`packages/react/e2e/canonical-authority.spec.ts` - "applies text color via the native picker and background color via a custom hex value" and "sets cell background and text colour via the right-click context menu" both now go through a `pickNativeColor` helper that drives the native input via its own event *and* an explicit Apply click, asserting the popover closes only after Apply - not on the native input's own event alone. (Updated when live preview was added - see below - to dispatch `input` rather than `change`, matching the event React's onChange actually maps to; the assertion this test protects, "only Apply commits," is unchanged.)
 
 ## Related/similar issues
 
-None prior - this was introduced by the native color input added in the immediately preceding round of fixes (`docs/POST_PHASE_11_5_BUG_BATCH_2_REPORT.md`, item 6), caught before it had a chance to ship separately from that.
+- [color-preview-render-steals-focus-from-popover](color-preview-render-steals-focus-from-popover.md) - this exact invariant ("no native color-input event ever auto-commits") was re-threatened and had to be re-affirmed when live drag-preview was added on top of this fix - a `change`-triggers-commit design was tried first (to mirror `TableResizeHandles`' pointerup-commit pattern), reintroduced this bug's exact symptom, and was reverted in favor of keeping Apply/Enter as the only commit triggers, unchanged from this fix.

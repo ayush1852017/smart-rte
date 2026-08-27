@@ -330,7 +330,13 @@ export class CanonicalEditorRuntime implements SmartEditorHandle {
       addToHistory: opts.addToHistory ?? true,
       ...(opts.historyGroup ? { historyGroup: opts.historyGroup } : {}),
     });
-    this.focus();
+    // Skipped for a non-history (preview) operation: focusing the main
+    // editor surface would steal keyboard/pointer focus away from whatever
+    // UI is driving the preview (e.g. ColorPickerPopover's native color
+    // input mid-drag) on every single preview frame - breaking Escape-to-
+    // cancel and, in a real browser, potentially interrupting the drag
+    // itself. A real, history-eligible commit still focuses as before.
+    if (opts.addToHistory ?? true) this.focus();
   }
   createCheckpoint(): SmartEditorCheckpoint {
     return {

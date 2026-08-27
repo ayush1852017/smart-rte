@@ -5,6 +5,16 @@ export interface ColorPickerPopoverProps {
   y: number;
   label: string;
   initialValue?: string;
+  /**
+   * Continuous live-preview callback, fired on every native color input
+   * drag frame (its `input` event, which is what React's own `onChange`
+   * already maps to for this element type - see the native-input `onChange`
+   * handler below) - distinct from `onApply`, which only fires once, on a
+   * genuine, deliberate commit.
+   */
+  onPreview?: (hex: string) => void;
+  /** Small MRU row of previously-committed colors for this same picker context, most-recent first. Optional/omittable - an empty or absent list simply renders no row. */
+  recentColors?: readonly string[];
   onApply: (hex: string) => void;
   onCancel: () => void;
 }
@@ -56,7 +66,7 @@ const buttonStyle: React.CSSProperties = {
  * finish picking a color. The explicit Apply button (already existed for
  * the hex input) is now the single, unambiguous commit action.
  */
-export function ColorPickerPopover({ x, y, label, initialValue = "#000000", onApply, onCancel }: ColorPickerPopoverProps) {
+export function ColorPickerPopover({ x, y, label, initialValue = "#000000", recentColors, onPreview, onApply, onCancel }: ColorPickerPopoverProps) {
   const [hex, setHex] = useState(initialValue);
   const [error, setError] = useState("");
   const hexRef = useRef<HTMLInputElement | null>(null);
@@ -178,7 +188,38 @@ export function ColorPickerPopover({ x, y, label, initialValue = "#000000", onAp
           data-srte-color-native-input="true"
           aria-label="Pick a colour"
           value={HEX_PATTERN.test(hex) && hex.length === 7 ? hex : "#000000"}
-          onChange={(event) => setHex(event.target.value)}
+          onChange={(event) => {
+            // React's onChange for an <input> fires on the native `input`
+            // event, not `change` - this already fires continuously during
+            // a drag inside the native picker (see docs/bugs/
+            // color-popover-closes-on-first-native-picker-interaction.md,
+            // which is exactly why that bug happened: an earlier version of
+            // this handler called onApply directly here). Live-preview the
+            // value as it changes; deliberately never auto-commits from
+            // here or from any native event on this input - only the
+            // explicit Apply button (or Enter in the hex field) commits and
+            // closes the popover, exactly as that fix established. Some
+            // browsers/OSes fire a "final" native event well before the
+            // user is actually done choosing (the same root cause the
+            // linked bug had), so nothing native-event-driven can be
+            // trusted as "the user is finished."
+            const target = event.currentTarget;
+            setHex(target.value);
+            onPreview?.(target.value);
+            // onPreview synchronously re-renders the live document (a real,
+            // non-history model update, so a multi-node mark selection
+            // previews correctly - not a DOM-only style hack). Syncing that
+            // render's selection into the contenteditable surface is itself
+            // what steals focus here: setting a native Selection range
+            // inside a focusable contenteditable element focuses it as a
+            // browser-intrinsic side effect, independent of any explicit
+            // .focus() call in this codebase. Reclaiming focus immediately
+            // afterward, still within this same synchronous handler, undoes
+            // that before the browser paints or the user notices - without
+            // this, every drag frame silently kicks focus back to the main
+            // editor, breaking Escape-to-cancel and interrupting the drag.
+            target.focus();
+          }}
           style={{
             width: 48, height: 48, padding: 0, border: "1px solid var(--srte-input-border)",
             borderRadius: 8, background: "none", cursor: "pointer",
@@ -211,6 +252,34 @@ export function ColorPickerPopover({ x, y, label, initialValue = "#000000", onAp
       {error && (
         <div id={errorId} data-srte-color-error="true" role="alert" style={{ color: "var(--srte-danger)", fontSize: 12, marginBottom: 10 }}>
           {error}
+        </div>
+      )}
+
+      {recentColors && recentColors.length > 0 && (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Recently used</div>
+          <div data-srte-recent-colors="true" style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {recentColors.map((swatch) => (
+              <button
+                key={swatch}
+                type="button"
+                data-srte-recent-color={swatch}
+                aria-label={`Recently used colour ${swatch}`}
+                title={swatch}
+                // A recent swatch is a single, complete, deliberate choice -
+                // the same reasoning the removed preset grid used to apply
+                // (see this file's module doc comment) - so it stages and
+                // commits in one click via the same `apply` the hex input's
+                // Enter/Apply button already uses, rather than only staging.
+                onClick={() => apply(swatch)}
+                style={{
+                  width: 24, height: 24, padding: 0, borderRadius: 6,
+                  border: "1px solid var(--srte-input-border)",
+                  background: swatch, cursor: "pointer",
+                }}
+              />
+            ))}
+          </div>
         </div>
       )}
 

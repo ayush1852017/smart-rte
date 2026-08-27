@@ -94,6 +94,7 @@ import { printSmartDocumentAsPdf } from "../adapters/pdfPrint.js";
 import {
   CanonicalEditorRuntime,
   type SmartEditorChange,
+  type SmartEditorCheckpoint,
   type SmartEditorHandle,
 } from "../canonicalEditorRuntime.js";
 
@@ -183,6 +184,24 @@ const downloadBlob = (ownerDocument: Document, name: string, blob: Blob) => {
 
 const CONTEXT_MENU_DANGER_COMMANDS = new Set(["table.remove", "table.removeRow", "table.removeColumn", "atom.delete"]);
 
+/**
+ * Recently-used colors are bucketed by "text-like" vs "background-like"
+ * rather than by the 4 exact target shapes (mark.textColor, mark.
+ * backgroundColor, cell.textColor, cell.background) - a user picking "our
+ * brand navy" almost always means the same thing whether it's landing on a
+ * text selection or a table cell, and a combined-across-everything list
+ * would mix genuinely different intents (a text color next to a page
+ * background color) into one row. In-memory only, for the current editor
+ * instance's lifetime: this project has no existing pattern for persisting
+ * light UI preference state across sessions (no localStorage/sessionStorage
+ * usage anywhere in the codebase), and building new persistence
+ * infrastructure for this one feature would be disproportionate.
+ */
+const RECENT_COLOR_LIMIT = 6;
+type ColorBucket = "text" | "background";
+const colorBucketFor = (target: { kind: "mark"; markId: "textColor" | "backgroundColor" } | { kind: "cell"; attr: "background" | "textColor" }): ColorBucket =>
+  target.kind === "mark" ? (target.markId === "textColor" ? "text" : "background") : (target.attr === "textColor" ? "text" : "background");
+
 const isCollapsedTextSelection = (selection: SmartSelection): boolean =>
   selection.type === "text" && selection.anchor.offset === selection.head.offset
     && selection.anchor.path.length === selection.head.path.length
@@ -236,6 +255,13 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
     target: { kind: "mark"; markId: "textColor" | "backgroundColor" } | { kind: "cell"; attr: "background" | "textColor" };
     initialValue?: string;
   } | null>(null);
+  const [recentColors, setRecentColors] = useState<{ text: string[]; background: string[] }>({ text: [], background: [] });
+  // Set once the native color input's first live-preview frame fires for
+  // the currently-open popover, cleared on commit/cancel - lets both paths
+  // tell "a preview is in progress that needs to be unwound" from "the user
+  // never touched the native input at all" (the latter needs no unwinding,
+  // since nothing was ever applied to the model).
+  const colorPreviewCheckpointRef = useRef<SmartEditorCheckpoint | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   // Tracks the exact caret position (path+offset) the link overlay was
   // last dismissed at (Escape/outside click) - suppresses an instant
@@ -556,12 +582,16 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
   };
 
   /** Shared by the prompt-based fontSize/fontFamily path and the popover-based color path below. */
-  const applyMarkAttrs = (id: string, attrs: Record<string, unknown> | undefined) => {
+  const applyMarkAttrs = (id: string, attrs: Record<string, unknown> | undefined, options: { addToHistory?: boolean } = {}) => {
     const declaration = inlineToolDeclarations.find((tool) => tool.id === id);
     if (!declaration || !attrs) return;
     try {
-      executeMarkTool(runtime.editor, declaration, "apply", attrs);
-      runtime.focus();
+      executeMarkTool(runtime.editor, declaration, "apply", attrs, options);
+      // Skipped during a live preview (addToHistory: false) - see the
+      // matching comment in canonicalEditorRuntime.ts's executeOperations,
+      // same reasoning: focusing the main editor mid-drag would steal focus
+      // away from the color popover's own native input.
+      if (options.addToHistory ?? true) runtime.focus();
     } catch (error) {
       window.alert(error instanceof Error ? error.message : "Invalid formatting value.");
     }
@@ -613,19 +643,74 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
     return typeof value === "string" ? value : undefined;
   };
 
-  const applyColor = (hex: string) => {
+  const recordRecentColor = (bucket: ColorBucket, hex: string) => {
+    setRecentColors((current) => ({
+      ...current,
+      [bucket]: [hex, ...current[bucket].filter((existing) => existing.toLowerCase() !== hex.toLowerCase())].slice(0, RECENT_COLOR_LIMIT),
+    }));
+  };
+
+  /** Applies `hex` to whatever colorPopover.target currently points at - shared by both the live-preview path and the real commit path below, differing only in `addToHistory`. */
+  const applyColorToTarget = (hex: string, options: { addToHistory: boolean }) => {
     if (!colorPopover) return;
     if (colorPopover.target.kind === "mark") {
-      applyMarkAttrs(colorPopover.target.markId, { value: hex });
+      applyMarkAttrs(colorPopover.target.markId, { value: hex }, options);
     } else {
       const attrKey = colorPopover.target.attr;
+      // executeOperations itself focuses on a real commit and skips it
+      // during a preview (addToHistory: false) - see its own comment.
       runtime.executeOperations(
         setTableCellAttributesCommand(runtime.editor.document, tableScope(), { attrs: { [attrKey]: hex } }, blockContext()),
-        { preserveSelectionById: true },
+        { preserveSelectionById: true, ...options },
       );
-      runtime.focus();
+    }
+  };
+
+  /**
+   * Live preview while dragging the native color input, mirroring
+   * TableResizeHandles' own live-preview-then-commit-once pattern: every
+   * `input` event re-applies the color for real (so a multi-node mark
+   * selection, not just a single element's style, previews correctly), but
+   * always starting from a checkpoint of the state from *before* any
+   * preview began, and always with `addToHistory: false` - so however many
+   * drag frames fire, none of them become their own undo step, and each one
+   * fully supersedes the last rather than compounding on top of it. The
+   * checkpoint is created lazily, on the first preview frame, so a picker
+   * session that never touches the native input (types an exact hex and
+   * clicks Apply) never creates or restores anything extra.
+   */
+  const previewColor = (hex: string) => {
+    if (!colorPopover) return;
+    if (!colorPreviewCheckpointRef.current) colorPreviewCheckpointRef.current = runtime.createCheckpoint();
+    runtime.restoreCheckpoint(colorPreviewCheckpointRef.current);
+    applyColorToTarget(hex, { addToHistory: false });
+  };
+
+  const applyColor = (hex: string) => {
+    if (!colorPopover) return;
+    // Undo whatever the live preview left in the (non-history) model state
+    // before making the real, history-eligible change - re-applying a
+    // setNodeAttributes-style operation on top of an already-previewed
+    // value would compute a before/after diff against the *previewed*
+    // state, not the true original, which would either no-op or corrupt
+    // the resulting undo step depending on the target.
+    if (colorPreviewCheckpointRef.current) {
+      runtime.restoreCheckpoint(colorPreviewCheckpointRef.current);
+      colorPreviewCheckpointRef.current = null;
+    }
+    applyColorToTarget(hex, { addToHistory: true });
+    recordRecentColor(colorBucketFor(colorPopover.target), hex);
+    setColorPopover(null);
+  };
+
+  /** Escape / outside-click / Cancel / the popover's own close button - revert any in-progress live preview instead of leaving an uncommitted change applied. */
+  const cancelColorPopover = () => {
+    if (colorPreviewCheckpointRef.current) {
+      runtime.restoreCheckpoint(colorPreviewCheckpointRef.current);
+      colorPreviewCheckpointRef.current = null;
     }
     setColorPopover(null);
+    runtime.focus();
   };
 
   const toggleBlockquote = () => {
@@ -1384,8 +1469,10 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
         ? (colorPopover.target.markId === "textColor" ? "Text colour" : "Background colour")
         : (colorPopover.target.attr === "textColor" ? "Cell text colour" : "Cell background colour")}
       {...(colorPopover.initialValue ? { initialValue: colorPopover.initialValue } : {})}
+      recentColors={recentColors[colorBucketFor(colorPopover.target)]}
+      onPreview={previewColor}
       onApply={applyColor}
-      onCancel={() => { setColorPopover(null); runtime.focus(); }}
+      onCancel={cancelColorPopover}
     />}
     {!readOnly && selectedTableElement && <TableResizeHandles
       tableElement={selectedTableElement}

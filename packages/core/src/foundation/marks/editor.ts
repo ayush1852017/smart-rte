@@ -36,6 +36,7 @@ export const executeMarkTool = (
   declaration: InlineToolDeclaration,
   intent: MarkIntent,
   attrs?: Attrs,
+  options: { addToHistory?: boolean } = {},
 ): SmartOperation[] => {
   const scope = editor.resolveScope({ want: "inline-range" });
   if (!("kind" in scope) || scope.kind !== "inline-range") return [];
@@ -59,6 +60,6 @@ export const executeMarkTool = (
   if (operations.length) editor.transact((builder) => {
     builder.operations.push(...operations);
     builder.setSelection(editor.selection);
-  }, { source: "toolbar", addToHistory: true });
+  }, { source: "toolbar", addToHistory: options.addToHistory ?? true });
   return operations;
 };

@@ -105,14 +105,20 @@ const chooseMedia = async (page: import("@playwright/test").Page, kind: "image" 
 // request) - the native <input type="color"> is the primary picker now.
 // React overrides the native `value` setter and won't fire a synthetic
 // onChange for a directly-assigned value; going through the native
-// prototype setter and dispatching "change" (what the native input's own
-// onChange handler is keyed to) is the standard workaround for driving a
-// controlled React input from outside React's own event system.
+// prototype setter and dispatching "input" (what the native input's own
+// onChange handler is keyed to - React maps onChange to the native `input`
+// event, not `change`) is the standard workaround for driving a controlled
+// React input from outside React's own event system. This only *previews*
+// the color (see the live-preview regression test below) - no native event
+// on this input ever auto-commits (some browsers/OSes fire what looks like
+// a "final" event well before the user is actually done choosing, which is
+// exactly what docs/bugs/color-popover-closes-on-first-native-picker-
+// interaction.md was), so an explicit Apply click is still required.
 const pickNativeColor = async (page: import("@playwright/test").Page, hex: string) => {
   await page.locator('[data-srte-color-native-input="true"]').evaluate((element: HTMLInputElement, value: string) => {
     const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
     setter.call(element, value);
-    element.dispatchEvent(new Event("change", { bubbles: true }));
+    element.dispatchEvent(new Event("input", { bubbles: true }));
   }, hex);
   await page.getByRole("button", { name: "Apply", exact: true }).click();
 };
@@ -2783,6 +2789,126 @@ test.describe("Phase 8b canonical product authority", () => {
     await page.locator("[data-srte-color-hex-input]").fill("not-a-color");
     await page.getByRole("button", { name: "Apply", exact: true }).click();
     await expect(page.locator('[data-srte-color-error="true"]')).toBeVisible();
+  });
+
+  /**
+   * Live preview while dragging the native color input: mirrors
+   * TableResizeHandles' own live-preview-then-commit-once pattern
+   * (CanonicalAuthorityEditor.tsx's previewColor/applyColor). Each drag
+   * frame ("input" event) must visibly update the selection's color in real
+   * time without creating an undo step, and exactly one real, undoable
+   * transaction must exist once the user actually commits (Apply) -
+   * regardless of how many preview frames preceded it.
+   */
+  test("live-previews the native color picker while dragging, without creating an undo step, and commits exactly once on Apply", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    const editor = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
+    await selectFirstText(page);
+
+    const undoCount = () => page.evaluate(() => {
+      const runtime = (window as typeof window & { __smartProductCanonical: import("../src/canonicalEditorRuntime.js").CanonicalEditorRuntime }).__smartProductCanonical;
+      return runtime.editor.history.undo.length;
+    });
+    const dispatchDragFrame = (hex: string) => page.locator('[data-srte-color-native-input="true"]').evaluate((element: HTMLInputElement, value: string) => {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
+      setter.call(element, value);
+      element.dispatchEvent(new Event("input", { bubbles: true }));
+    }, hex);
+
+    const before = await undoCount();
+    await page.getByRole("button", { name: "Text colour", exact: true }).click();
+    const colorPopover = page.locator('[data-srte-color-popover="true"]');
+    await expect(colorPopover).toBeVisible();
+
+    await dispatchDragFrame("#1a2b3c");
+    await expect(editor.locator('[data-smart-mark="textColor"]')).toHaveCount(1);
+    await expect(editor.locator('[data-smart-mark="textColor"]')).toHaveCSS("color", "rgb(26, 43, 60)");
+    expect(await undoCount()).toBe(before);
+
+    // A later drag frame supersedes the earlier one rather than compounding.
+    await dispatchDragFrame("#4c5c6c");
+    await expect(editor.locator('[data-smart-mark="textColor"]')).toHaveCount(1);
+    await expect(editor.locator('[data-smart-mark="textColor"]')).toHaveCSS("color", "rgb(76, 92, 108)");
+    expect(await undoCount()).toBe(before);
+    await expect(colorPopover).toBeVisible();
+
+    await page.getByRole("button", { name: "Apply", exact: true }).click();
+    await expect(colorPopover).not.toBeVisible();
+    await expect(editor.locator('[data-smart-mark="textColor"]')).toHaveCSS("color", "rgb(76, 92, 108)");
+    expect(await undoCount()).toBe(before + 1);
+
+    await page.keyboard.press(process.platform === "darwin" ? "Meta+z" : "Control+z");
+    await expect(editor.locator('[data-smart-mark="textColor"]')).toHaveCount(0);
+  });
+
+  test("canceling the color popover after a live preview reverts to the original (uncolored) state", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    const editor = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
+    await selectFirstText(page);
+    const undoCount = () => page.evaluate(() => {
+      const runtime = (window as typeof window & { __smartProductCanonical: import("../src/canonicalEditorRuntime.js").CanonicalEditorRuntime }).__smartProductCanonical;
+      return runtime.editor.history.undo.length;
+    });
+    const before = await undoCount();
+
+    await page.getByRole("button", { name: "Text colour", exact: true }).click();
+    const colorPopover = page.locator('[data-srte-color-popover="true"]');
+    await expect(colorPopover).toBeVisible();
+    await page.locator('[data-srte-color-native-input="true"]').evaluate((element: HTMLInputElement, value: string) => {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
+      setter.call(element, value);
+      element.dispatchEvent(new Event("input", { bubbles: true }));
+    }, "#1a2b3c");
+    await expect(editor.locator('[data-smart-mark="textColor"]')).toHaveCount(1);
+
+    await page.keyboard.press("Escape");
+    await expect(colorPopover).not.toBeVisible();
+    await expect(editor.locator('[data-smart-mark="textColor"]')).toHaveCount(0);
+    expect(await undoCount()).toBe(before);
+  });
+
+  test("recently-used colors: appears after commit, oldest drops off past the retention limit, and clicking one applies it directly", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    const editor = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
+    const colorPopover = page.locator('[data-srte-color-popover="true"]');
+    const recentRow = page.locator('[data-srte-recent-colors="true"]');
+
+    await selectFirstText(page);
+    await page.getByRole("button", { name: "Text colour", exact: true }).click();
+    await expect(colorPopover).toBeVisible();
+    // No commit has happened yet for this bucket - no recent-colors row at all.
+    await expect(recentRow).toHaveCount(0);
+    await page.locator("[data-srte-color-hex-input]").fill("#111111");
+    await page.getByRole("button", { name: "Apply", exact: true }).click();
+
+    await selectFirstText(page);
+    await page.getByRole("button", { name: "Text colour", exact: true }).click();
+    await expect(recentRow).toBeVisible();
+    await expect(page.locator('[data-srte-recent-color="#111111"]')).toHaveCount(1);
+    await page.keyboard.press("Escape");
+
+    // 6 more distinct commits (retention limit) - #111111 should fall off the end.
+    const hexes = ["#222222", "#333333", "#444444", "#555555", "#666666", "#777777"];
+    for (const hex of hexes) {
+      await selectFirstText(page);
+      await page.getByRole("button", { name: "Text colour", exact: true }).click();
+      await page.locator("[data-srte-color-hex-input]").fill(hex);
+      await page.getByRole("button", { name: "Apply", exact: true }).click();
+    }
+    await selectFirstText(page);
+    await page.getByRole("button", { name: "Text colour", exact: true }).click();
+    await expect(page.locator('[data-srte-recent-color="#111111"]')).toHaveCount(0);
+    for (const hex of hexes) await expect(page.locator(`[data-srte-recent-color="${hex}"]`)).toHaveCount(1);
+
+    // Clicking a recent swatch applies it directly (stage + commit in one click, same as a preset swatch).
+    await page.locator('[data-srte-recent-color="#333333"]').click();
+    await expect(colorPopover).not.toBeVisible();
+    await expect(editor.locator('[data-smart-mark="textColor"]')).toHaveCSS("color", "rgb(51, 51, 51)");
+
+    // Background colors are tracked in a separate bucket from text colors.
+    await selectFirstText(page);
+    await page.getByRole("button", { name: "Background colour", exact: true }).click();
+    await expect(page.locator('[data-srte-recent-colors="true"]')).toHaveCount(0);
   });
 
   /**

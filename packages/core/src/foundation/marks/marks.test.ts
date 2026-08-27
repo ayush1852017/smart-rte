@@ -64,6 +64,22 @@ describe("Phase 4 generic mark engine", () => {
     ]);
   });
 
+  it("options.addToHistory: false applies the mark without creating an undo step, still leaving it undoable via a later real commit", () => {
+    const declaration: InlineToolDeclaration = { id: "textColor", markType: "textColor", inclusive: true };
+    const editor = createFoundationEditor({ document: paragraphDocument([{ type: "text", text: "hello" }]), selection: selection(0, 5) });
+    executeMarkTool(editor, declaration, "apply", { value: "#111111" }, { addToHistory: false });
+    expect(editor.document.children[0].children).toEqual([
+      { type: "text", text: "hello", marks: [{ type: "textColor", attrs: { value: "#111111" } }] },
+    ]);
+    expect(editor.history.undo).toHaveLength(0);
+
+    // A second, real (default addToHistory) call - simulating the color
+    // picker's own checkpoint-restore-then-recommit sequence, not tested
+    // here - is the only thing that should ever land on the undo stack.
+    executeMarkTool(editor, declaration, "apply", { value: "#222222" });
+    expect(editor.history.undo).toHaveLength(1);
+  });
+
   it("removes on all coverage and applies across mixed coverage", () => {
     const marked = paragraphDocument([{ type: "text", text: "hello", marks: [{ type: "bold" }] }]);
     const all = inlineScope(marked, 0, 5);

@@ -1,0 +1,38 @@
+# Live color preview closed the popover on Escape / stole keyboard focus mid-drag
+
+**Status:** Fixed
+**Area:** react / ColorPickerPopover.tsx / canonicalEditorRuntime.ts
+**First reported:** 2026-08-27, live, mid-implementation ("As soon I selects the color from picker overlay get close. That way how to select color by dragging?") - caught before the live-preview feature was ever fully committed.
+**Related files:** `packages/react/src/components/ColorPickerPopover.tsx`, `packages/react/src/components/CanonicalAuthorityEditor.tsx`, `packages/react/src/canonicalEditorRuntime.ts` (`executeOperations`), `docs/bugs/color-popover-closes-on-first-native-picker-interaction.md` (the direct precedent - same symptom class, different mechanism)
+
+## Symptom
+
+Two related, sequential symptoms found while building live color preview (dragging the native `<input type="color">` should preview the color on the selection in real time, without committing until Apply):
+
+1. **First attempt**: the popover closed the instant the native color input was touched, before a color could actually be dragged/chosen - reported live by the user, mid-implementation.
+2. **After fixing (1)**: a dedicated regression test found that pressing Escape after a live-preview drag frame no longer closed the popover at all (it should always cancel and revert).
+
+## Reproduction
+
+(1): drag inside the native color swatch in a real browser. (2): `packages/react/e2e/canonical-authority.spec.ts`, "canceling the color popover after a live preview reverts to the original (uncolored) state" - dispatch one live-preview `input` event on the native color input, then press Escape; the popover stayed visible on all 3 browsers. Debugged by checking `document.activeElement` before/after the preview frame: it moved from the popover's own input to the main contenteditable `<div>` after every single preview frame.
+
+## Root cause
+
+Two independent causes, found in sequence:
+
+1. Implementing "commit once, on the native input's `change`/blur event" (mirroring `TableResizeHandles`' pointerup-commits pattern, as literally requested) reintroduced the exact failure `color-popover-closes-on-first-native-picker-interaction.md` already fixed: some browsers/OSes fire what looks like a "final" native event on the color input well before the user is actually done dragging. Native `change` cannot be trusted as "the user is finished," full stop - not just `onChange`/`input` (which that earlier fix already correctly stopped trusting).
+2. Live preview works by re-applying the color as a real (non-history) document mutation and re-rendering, via a checkpoint-restore-then-reapply cycle (`CanonicalAuthorityEditor.tsx`'s `previewColor`) - a real model change, not a DOM-only style hack, was needed so a multi-node text-mark selection previews correctly. But every render syncs the model selection into the DOM via `Selection.setBaseAndExtent`/`addRange` (`surface/renderer.ts`) - and setting a native Selection range inside a focusable contenteditable element focuses that element as an intrinsic **browser** side effect, completely independent of any explicit `.focus()` call in this codebase. Two explicit-but-now-redundant `runtime.focus()` calls (one in `CanonicalAuthorityEditor.tsx`'s `applyMarkAttrs`, one unconditional inside `canonicalEditorRuntime.ts`'s `executeOperations`) were removed as part of investigating this, but did **not** fix it alone - the render's own selection-sync was the real, unavoidable-by-removing-focus-calls culprit.
+
+## Fix
+
+- Reverted (1): no native event on the color input ever auto-commits. `ColorPickerPopover.tsx`'s only commit paths remain the explicit Apply button and Enter in the hex field - unchanged from the original fix's invariant. Live preview only ever calls the new `onPreview` prop, wired to React's `onChange` (which fires on the native `input` event, confirmed continuous during a drag).
+- Fixed (2) two ways: `canonicalEditorRuntime.ts`'s `executeOperations` and `CanonicalAuthorityEditor.tsx`'s `applyMarkAttrs` both now skip their `runtime.focus()` call when `addToHistory` is `false` (a preview should never fight for focus the way a real commit legitimately does) - but since the *renderer's own* selection-sync still refocuses the contenteditable regardless of any explicit call, `ColorPickerPopover.tsx`'s native-input `onChange` handler also explicitly reclaims focus (`event.currentTarget.focus()`) immediately after calling `onPreview`, within the same synchronous handler - invisible to the user since it all happens in one JS tick before the browser paints.
+
+## Regression coverage
+
+`packages/react/e2e/canonical-authority.spec.ts`: "live-previews the native color picker while dragging, without creating an undo step, and commits exactly once on Apply" (asserts the popover stays open and focused through multiple preview frames, no undo entry until Apply, exactly one undo entry after); "canceling the color popover after a live preview reverts to the original (uncolored) state" (the exact Escape-after-preview repro above). All 15 pre-existing color e2e tests re-verified passing unchanged, `pickNativeColor` updated to dispatch a real `input` event (previously only `change`) so it exercises the same live-preview path these new tests target.
+
+## Related/similar issues
+
+- [color-popover-closes-on-first-native-picker-interaction](color-popover-closes-on-first-native-picker-interaction.md) - the direct precedent for symptom (1); this entry is that same invariant ("no native color-input event ever auto-commits") being re-threatened and re-affirmed by a later feature addition, not a new invariant.
+- Symptom (2)'s root cause - a non-history render's selection-sync silently stealing focus from whatever DOM element outside the editor initiated it - is a genuinely new finding, not specific to color: any future feature built on the same "checkpoint-restore-then-reapply for live preview" pattern (e.g. a similar live-preview for font size/family, or table cell styling) will need the same explicit-refocus-after-preview treatment this fix introduced.
