@@ -320,6 +320,16 @@ const shiftPath = (pos: SmartPos, parent: SmartPos, delta: number): SmartPos => 
 export const mapPosThroughOperation = (pos: SmartPos, operation: SmartOperation, bias: -1 | 1 = 1): { pos: SmartPos; deleted: boolean } => {
   if (operation.type === "insertNode") {
     if (samePath(pos.path, operation.pos.path) && pos.offset === operation.pos.offset) return { pos: { ...pos, offset: pos.offset + (bias > 0 ? 1 : 0) }, deleted: false };
+    // A second position/operation at the *same* parent, past the insertion
+    // point, needs its own offset bumped directly - shiftPath only handles a
+    // position strictly *deeper* than the insertion point (pos.path.length >
+    // parent.path.length), so a same-depth sibling reference (e.g. another
+    // insertNode's own .pos.offset into the identical array) fell through
+    // unshifted. removeNode's branch below already has this same-path check;
+    // insertNode's was missing it - see the TP1 property test that caught
+    // this (two sibling insertNode ops at offsets 2 and 5 diverged depending
+    // on transform order).
+    if (samePath(pos.path, operation.pos.path) && pos.offset > operation.pos.offset) return { pos: { ...pos, offset: pos.offset + 1 }, deleted: false };
     return { pos: shiftPath(pos, operation.pos, 1), deleted: false };
   }
   if (operation.type === "removeNode") {
@@ -413,9 +423,56 @@ export const mapPosThroughOperation = (pos: SmartPos, operation: SmartOperation,
   return { pos: { path: [...pos.path], offset: pos.offset }, deleted: false };
 };
 
-export const mapOperation = (operation: SmartOperation, through: SmartOperation): SmartOperation | null => {
-  const map = (pos: SmartPos, bias: -1 | 1 = 1) => mapPosThroughOperation(pos, through, bias);
+/**
+ * `tieBreakBias` only affects the exact-tie case (operation's own structural
+ * position coincides exactly with `through`'s insertion point - e.g. two
+ * concurrent insertNode ops at the identical offset) - every other case's
+ * bias is unaffected. Defaults to 1 (through's content sorts first),
+ * preserving this function's existing, already-tested behavior exactly for
+ * every caller that doesn't pass it. A concurrent-rebase caller should
+ * derive this from a total order over the two operations' authors (e.g.
+ * lexicographic authorId comparison) so both transform directions agree:
+ * mapOperation(A, B, {tieBreakBias: A-sorts-first ? -1 : 1}) and
+ * mapOperation(B, A, {tieBreakBias: B-sorts-first ? -1 : 1}) must reach the
+ * same final order regardless of which one is "operation" and which is
+ * "through". This does not affect the addMark/removeMark range-endpoint
+ * biases below (-1/+1), which serve an unrelated purpose (range-growth
+ * semantics at an insertion boundary) and are deliberately left hardcoded.
+ */
+export const mapOperation = (operation: SmartOperation, through: SmartOperation, options: { tieBreakBias?: -1 | 1 } = {}): SmartOperation | null => {
+  // tieBreakBias only overrides the default when this is a genuine tie
+  // between two operations of the *same* kind competing for the identical
+  // insertion point (insertNode-vs-insertNode, insertText-vs-insertText).
+  // For every other pairing (e.g. removeNode vs. insertNode at a
+  // numerically coincidental offset), the default (1) is always correct
+  // regardless of authorship - removeNode identifies its target by node
+  // identity, not by an ordering competition, so "which one sorts first"
+  // has no meaning there; forcing the override through anyway (confirmed
+  // via a TP1 property test) shifted a removeNode's target to the wrong
+  // slot depending on which author happened to sort first.
+  const isGenuineTie = operation.type === through.type && (operation.type === "insertNode" || operation.type === "insertText");
+  const structuralBias = isGenuineTie ? options.tieBreakBias ?? 1 : 1;
+  const map = (pos: SmartPos, bias: -1 | 1 = structuralBias) => mapPosThroughOperation(pos, through, bias);
   if (operation.type === "insertNode" || operation.type === "removeNode" || operation.type === "replaceNode") {
+    // removeNode/replaceNode's `.pos` addresses an *occupied* slot (the
+    // node currently there); insertNode's `.pos` addresses a *gap* (the
+    // boundary before an index) - two structurally different meanings that
+    // happen to share the same {path, offset} shape. `mapPosThroughOperation`
+    // is generic pure position arithmetic with no idea which convention a
+    // given `pos` follows, so an exact-offset coincidence between the two
+    // conventions is not a real "same target" match (confirmed via a TP1
+    // property test: an insertNode and a removeNode at the identical offset
+    // are two unrelated actions - "insert before index 4" and "remove index
+    // 4" - not a conflict over the same node). This check is therefore
+    // scoped here, at the one call site that actually knows both
+    // operations' real types, rather than inside the shared, type-blind
+    // position mapper - only removeNode-vs-removeNode/replaceNode (both
+    // occupied-slot semantics) can mean "the exact same node," e.g. two
+    // concurrent removeNode ops targeting the identical node.
+    if (operation.type !== "insertNode" && (through.type === "removeNode" || through.type === "replaceNode")
+      && samePath(operation.pos.path, through.pos.path) && operation.pos.offset === through.pos.offset) {
+      return null;
+    }
     const result = map(operation.pos);
     return result.deleted ? null : { ...operation, pos: result.pos };
   }

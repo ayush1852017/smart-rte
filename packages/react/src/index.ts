@@ -7,6 +7,7 @@ export type { SmartEditorChange, SmartEditorCheckpoint, SmartEditorHandle } from
 export type { MediaManagerAdapter, MediaItem, MediaSearchQuery } from './components/MediaManager.js'
 export type { MediaFilters, MediaKind, MediaProvider, UploadOptions } from './mediaProvider.js'
 export type { VersionListEntry, VersionProvider } from './versionProvider.js'
+export type { CollabTransport, PresenceUpdate } from './collabTransport.js'
 export type { DocumentVersion, CommentThread, CommentReply } from 'smartrte-core/foundation'
 export type { CommentProvider } from './commentProvider.js'
 export type { InlineSuggestionSummary, StructuralSuggestion, SuggestionKind } from 'smartrte-core/foundation'

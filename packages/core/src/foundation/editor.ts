@@ -5,7 +5,8 @@ import { applyOperations } from "./operations.js";
 import { createTransactionMap } from "./mapping.js";
 import { resolvePos } from "./positions.js";
 import { foundationRegistry, foundationSchema, repair, validate } from "./schema.js";
-import { applyTransactionAtomic } from "./transactions.js";
+import { applyTransactionAtomic, RebaseConflictError, ResyncRequiredError } from "./transactions.js";
+import { rebaseTransaction } from "./collab/rebase.js";
 import { FoundationScopeIndex } from "./scope/resolveScope.js";
 import { migrateNewlineTextToHardBreaks } from "./marks/hardBreak.js";
 import { canonicalMarkOrder, createMarkNormalizer, marksAtInsertion } from "./marks/index.js";
@@ -135,6 +136,15 @@ export interface FoundationEditorOptions {
   historyByteLimit?: number;
   coalescenceWindowMs?: number;
   storedMarks?: readonly SmartMark[];
+  /**
+   * How many committed transactions to retain for rebasing an incoming
+   * transaction whose baseRevision is behind current (Phase 12b-client -
+   * without a real transport, single-writer usage never falls behind, so
+   * this never matters). Unbounded retention isn't viable for a long-lived
+   * session; a transaction behind this window fails with
+   * ResyncRequiredError rather than attempting a partial rebase.
+   */
+  revisionLogLimit?: number;
 }
 
 export interface ReplaceFoundationStateOptions {
@@ -176,6 +186,16 @@ export class FoundationEditor {
   private readonly semanticIndex = new FoundationScopeIndex();
   private readonly historyOptions: Pick<FoundationEditorOptions, "historyLimit" | "historyByteLimit" | "coalescenceWindowMs">;
   lastNormalization: NormalizationRun | null = null;
+  /**
+   * Every committed transaction since this instance was created or last
+   * replaceState'd, oldest first, bounded to `revisionLogLimit` - the
+   * "missed operations" source for rebasing an incoming stale transaction
+   * (see dispatch()). Index i holds the transaction that advanced the
+   * document from revision (current.revision - revisionLog.length + i) to
+   * the next.
+   */
+  private revisionLog: SmartTransaction[] = [];
+  private readonly revisionLogLimit: number;
 
   constructor(options: FoundationEditorOptions) {
     this.schema = options.schema || foundationSchema;
@@ -212,6 +232,7 @@ export class FoundationEditor {
       byteLimit: options.historyByteLimit,
       coalescenceWindowMs: options.coalescenceWindowMs,
     });
+    this.revisionLogLimit = Math.max(1, Math.floor(options.revisionLogLimit ?? 500));
   }
 
   get state(): FoundationEditorState { return structuredClone(this.current); }
@@ -267,6 +288,11 @@ export class FoundationEditor {
         coalescenceWindowMs: this.historyOptions.coalescenceWindowMs,
       });
     }
+    // The revision counter is jumping to a new, unrelated baseline
+    // (envelope.revision, not before.revision + 1) - nothing in the old log
+    // could ever be correctly composed with transactions issued against
+    // this new baseline, so it's discarded rather than carried forward.
+    this.revisionLog = [];
     const replacement: SmartTransaction = {
       id: createNodeId(),
       baseRevision: before.revision,
@@ -331,10 +357,30 @@ export class FoundationEditor {
     return transaction;
   }
 
+  /**
+   * Transactions committed since revision `sinceRevision`, oldest first -
+   * the same source `dispatch()` itself uses to rebase an incoming stale
+   * transaction, exposed so a host-implemented CollabTransport can answer
+   * `getRevisionHistory` without this editor needing to know anything about
+   * transports. Returns null when `sinceRevision` is older than what this
+   * instance retained (see `revisionLogLimit`) - the caller must resync.
+   */
+  getTransactionsSince(sinceRevision: number): readonly SmartTransaction[] | null {
+    const behindBy = this.current.revision - sinceRevision;
+    if (behindBy < 0) return null;
+    if (behindBy > this.revisionLog.length) return null;
+    return structuredClone(this.revisionLog.slice(this.revisionLog.length - behindBy));
+  }
+
   dispatch(input: SmartTransaction): void {
     if (input.baseRevision !== this.current.revision) {
-      applyTransactionAtomic(this.current, input, this.schema);
-      return;
+      const missed = this.getTransactionsSince(input.baseRevision);
+      if (missed === null) throw new ResyncRequiredError(this.current.revision);
+      const rebased = rebaseTransaction(input, missed, this.current.revision);
+      if (rebased.kind === "conflict") throw new RebaseConflictError(rebased.reasons);
+      if (rebased.kind === "resync-required") throw new ResyncRequiredError(rebased.atRevision);
+      if (rebased.kind === "dropped") return;
+      input = rebased.transaction;
     }
     const historyAttributeUpdates = input.metadata.addToHistory ? [] : input.operations.flatMap((operation) => {
       if (operation.type !== "setNodeAttributes") return [];
@@ -368,6 +414,11 @@ export class FoundationEditor {
     historyAttributeUpdates.forEach((update) => {
       this.currentHistory = rebaseHistoryNodeAttributes(this.currentHistory, update.nodeId, update.before, update.after);
     });
+    // Recorded regardless of addToHistory (unlike currentHistory/undo) -
+    // this log exists to rebase *other* incoming transactions, which needs
+    // every committed change, not just the user-undoable ones.
+    this.revisionLog.push(transaction);
+    if (this.revisionLog.length > this.revisionLogLimit) this.revisionLog.splice(0, this.revisionLog.length - this.revisionLogLimit);
     this.notify(transaction);
   }
 

@@ -11,6 +11,39 @@ export class StaleTransactionError extends Error {
   }
 }
 
+/**
+ * A transaction was behind the current revision, but not too far behind to
+ * rebase - and at least one of its operations could not be safely
+ * transformed against what was committed in the meantime (see
+ * collab/transform.ts's doc comment for exactly which shapes this covers:
+ * concurrent moves sharing an array, or a concurrent edit to content a
+ * merge absorbed). The transaction is rejected outright rather than
+ * partially or incorrectly applied - the caller (a real transport
+ * implementation, in 12b-server/transport) decides what happens to the
+ * user's edit from here (e.g. surface it for manual resolution, retry as a
+ * fresh transaction against current state, or convert it to a suggestion).
+ */
+export class RebaseConflictError extends Error {
+  constructor(readonly reasons: readonly { readonly operationIndex: number; readonly reason: string }[]) {
+    super(`Transaction could not be rebased: ${reasons.map((entry) => entry.reason).join("; ")}`);
+    this.name = "RebaseConflictError";
+  }
+}
+
+/**
+ * A transaction's baseRevision is older than anything this editor instance
+ * has retained (see FoundationEditor's revisionLogLimit) - there is not
+ * enough history left to rebase through. The caller must resync (reload
+ * the full document at the current revision, e.g. via replaceState) rather
+ * than attempt a partial rebase against an incomplete operation log.
+ */
+export class ResyncRequiredError extends Error {
+  constructor(readonly atRevision: number) {
+    super(`Transaction is too far behind to rebase (current revision ${atRevision}); a full resync is required.`);
+    this.name = "ResyncRequiredError";
+  }
+}
+
 export const invertTransaction = (transaction: SmartTransaction): SmartTransaction => ({
   id: `inverse:${transaction.id}`,
   baseRevision: transaction.baseRevision + 1,
