@@ -376,7 +376,18 @@ export const mapPosThroughOperation = (pos: SmartPos, operation: SmartOperation,
     const targetPath = operation.pos.path.slice(0, operation.pos.path.length - operation.depth);
     const parentPath = targetPath.slice(0, -1);
     const targetIndex = targetPath[targetPath.length - 1];
-    if (samePath(pos.path, targetPath) && pos.offset > operation.pos.offset) {
+    // Exact-tie case (bias>0 mirrors insertNode's/insertText's own tie
+    // handling above): two concurrent splitNode ops at the identical
+    // boundary had no resolution at all before this - pos.offset ===
+    // operation.pos.offset satisfied neither this branch (originally
+    // `>` only) nor any other, silently falling through to "unchanged" at
+    // the bottom of this function, which produced a swapped-identity
+    // divergence (found via a TP1 property test: whichever split ends up
+    // empty differs depending on transform order). Merging the tie into
+    // this existing shift condition, rather than adding a separate branch,
+    // keeps the same formula for both the tie and the already-correct
+    // greater-than case.
+    if (samePath(pos.path, targetPath) && (pos.offset > operation.pos.offset || (pos.offset === operation.pos.offset && bias > 0))) {
       return { pos: { path: [...parentPath, targetIndex + 1], offset: pos.offset - operation.pos.offset }, deleted: false };
     }
     if (samePath(pos.path, parentPath) && pos.offset > targetIndex) {
@@ -450,7 +461,7 @@ export const mapOperation = (operation: SmartOperation, through: SmartOperation,
   // has no meaning there; forcing the override through anyway (confirmed
   // via a TP1 property test) shifted a removeNode's target to the wrong
   // slot depending on which author happened to sort first.
-  const isGenuineTie = operation.type === through.type && (operation.type === "insertNode" || operation.type === "insertText");
+  const isGenuineTie = operation.type === through.type && (operation.type === "insertNode" || operation.type === "insertText" || operation.type === "splitNode");
   const structuralBias = isGenuineTie ? options.tieBreakBias ?? 1 : 1;
   const map = (pos: SmartPos, bias: -1 | 1 = structuralBias) => mapPosThroughOperation(pos, through, bias);
   if (operation.type === "insertNode" || operation.type === "removeNode" || operation.type === "replaceNode") {

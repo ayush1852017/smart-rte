@@ -228,3 +228,132 @@ describe("Phase 12b-client TP1 property: suggestion marks", () => {
     expect(text && "text" in text ? text.text : null).toBe("LOWHIGH");
   });
 });
+
+/**
+ * Required follow-up to mapoperation-position-arithmetic-gaps.md finding
+ * #1 (2026-08-28): `mapOperation` had no explicit handling for a native
+ * `mergeNode`/`splitNode` transforming through a *concurrent*
+ * `mergeNode`/`splitNode` - exactly the operation pair Phase 12a's
+ * merge-orphan work was built around. Three distinct, separately-verified
+ * outcomes (not one generic "merge/split coverage" case - each has its own
+ * root cause and needed its own fix or confirmation):
+ */
+describe("Phase 12b-client TP1 property: concurrent mergeNode/splitNode (required follow-up)", () => {
+  const p = (id: string, children: SmartElementNode["children"]): SmartElementNode => ({ type: "paragraph", id, children });
+  const t = (text: string, bold = false) => ({ type: "text" as const, text, ...(bold ? { marks: [{ type: "bold" as const }] } : {}) });
+  const doc4 = (): SmartDocument => ({
+    type: "doc", id: "doc",
+    children: [p("p0", [t("AA"), t("aa", true)]), p("p1", [t("BB"), t("bb", true)]), p("p2", [t("CC"), t("cc", true)]), p("p3", [t("DD"), t("dd", true)])],
+  });
+
+  /**
+   * Case A: two mergeNode ops retiring *adjacent* siblings (A retires p1
+   * into p0; B retires p2 into p1) crashed in one transform direction
+   * ("mergeNode requires structurally compatible siblings and the exact
+   * split offset") and silently produced a *different* document in the
+   * other - a genuine TP1 violation, not a cosmetic inconsistency. Root
+   * cause: B's `splitOffset` (a *child count*, not a character count - see
+   * applyOperation's own `splitOffset !== left.children.length` check) was
+   * computed against p1's original child count; after A's merge, B's
+   * rebased target's implicit left neighbor is p0-post-merge, whose child
+   * count has changed, but nothing in the position-arithmetic transform
+   * ever revisits `splitOffset` to notice. Fixed by flagging this as an
+   * explicit conflict (collab/transform.ts) rather than attempting to
+   * recompute a payload `mapOperation` has no document access to validate.
+   */
+  it("Case A: concurrent mergeNode ops retiring adjacent siblings conflict explicitly, not a crash or silent divergence", () => {
+    const base = doc4();
+    const A: SmartOperation = { type: "mergeNode", pos: { path: [], offset: 1 }, depth: 0, retiredId: "p1", splitOffset: 2 };
+    const B: SmartOperation = { type: "mergeNode", pos: { path: [], offset: 2 }, depth: 0, retiredId: "p2", splitOffset: 2 };
+    const a = tx([A], "author-a");
+    const b = tx([B], "author-b");
+    expect(rebaseTransaction(b, [a], 1).kind).toBe("conflict");
+    expect(rebaseTransaction(a, [b], 1).kind).toBe("conflict");
+  });
+
+  /**
+   * Case B: a mergeNode retiring p1 into p0, concurrent with a splitNode
+   * targeting p1 itself (splitting its two children apart) - both orders
+   * converge to the identical document. Understood, not just observed:
+   * `mapPosThroughOperation`'s mergeNode-as-through branch has an explicit
+   * case for a position whose *own full path* exactly equals the retired
+   * node's path (as splitNode's target-container reference is), redirecting
+   * it into the survivor with correctly-recomputed offset arithmetic - a
+   * real position recomputation, not a stale cached payload the way
+   * mergeNode's own `splitOffset` is. This is *why* Case A needed a
+   * conflict and Case B does not: the existing redirect only exists for
+   * this "exact full-path" shape, which mergeNode's own sibling-level
+   * `.pos` field never has (it's a parent+index reference, not a full-path
+   * one). Kept as an explicit passing case (not just relying on this
+   * falling out of generic coverage) so a future change to the fallback
+   * path can't silently break it without a test noticing.
+   */
+  it("Case B: mergeNode vs. splitNode of the exact node being retired converges via the existing redirect - not a conflict", () => {
+    const base = doc4();
+    const A: SmartOperation = { type: "mergeNode", pos: { path: [], offset: 1 }, depth: 0, retiredId: "p1", splitOffset: 2 };
+    const B: SmartOperation = { type: "splitNode", pos: { path: [1], offset: 1 }, depth: 0, newId: "p1-right" };
+    const a = tx([A], "author-a");
+    const b = tx([B], "author-b");
+    const { leftDoc, rightDoc, leftResult, rightResult } = assertConverges(base, a, b);
+    expect(leftResult.kind).toBe("ok");
+    expect(rightResult.kind).toBe("ok");
+    expect(leftDoc).toEqual(rightDoc);
+  });
+
+  /**
+   * Case C: two splitNode ops at the *identical* boundary of the same node
+   * (a genuine tie, not a staleness problem) previously had no tie-break at
+   * all - `mapPosThroughOperation`'s splitNode-as-through branch only
+   * handled `offset >`, never `offset ===`, so the tied position fell
+   * through unchanged in both directions, producing a "swapped identity"
+   * divergence (whichever split's own newId ends up on the empty side
+   * differed depending on transform order). Fixed by extending the same
+   * bias-driven tie-break mechanism insertNode/insertText already use
+   * (operations.ts's `isGenuineTie`) to splitNode.
+   */
+  it("Case C: concurrent splitNode ops at the identical boundary converge via authorId tie-break", () => {
+    const base = doc4();
+    const A: SmartOperation = { type: "splitNode", pos: { path: [1], offset: 1 }, depth: 0, newId: "p1-right-a" };
+    const B: SmartOperation = { type: "splitNode", pos: { path: [1], offset: 1 }, depth: 0, newId: "p1-right-b" };
+    const a = tx([A], "aaa-author");
+    const b = tx([B], "zzz-author");
+    const { leftDoc, rightDoc, leftResult, rightResult } = assertConverges(base, a, b);
+    expect(leftResult.kind).toBe("ok");
+    expect(rightResult.kind).toBe("ok");
+    expect(leftDoc).toEqual(rightDoc);
+  });
+
+  it("non-adjacent concurrent mergeNode ops (no shared slot) still converge - Case A's conflict rule is not over-broad", () => {
+    const doc5: SmartDocument = { type: "doc", id: "doc", children: [p("p0", [t("A")]), p("p1", [t("B")]), p("p2", [t("C")]), p("p3", [t("D")]), p("p4", [t("E")])] };
+    const A: SmartOperation = { type: "mergeNode", pos: { path: [], offset: 1 }, depth: 0, retiredId: "p1", splitOffset: 1 };
+    const B: SmartOperation = { type: "mergeNode", pos: { path: [], offset: 3 }, depth: 0, retiredId: "p3", splitOffset: 1 };
+    const a = tx([A], "author-a");
+    const b = tx([B], "author-b");
+    const { leftDoc, rightDoc, leftResult, rightResult } = assertConverges(doc5, a, b);
+    expect(leftResult.kind).toBe("ok");
+    expect(rightResult.kind).toBe("ok");
+    expect(leftDoc).toEqual(rightDoc);
+  });
+
+  it("mergeNode vs. a concurrent removeNode of its own left/survivor node conflicts explicitly, not a crash", () => {
+    const base = doc4();
+    const A: SmartOperation = { type: "mergeNode", pos: { path: [], offset: 1 }, depth: 0, retiredId: "p1", splitOffset: 2 };
+    const B: SmartOperation = { type: "removeNode", pos: { path: [], offset: 0 }, node: base.children[0] };
+    const a = tx([A], "author-a");
+    const b = tx([B], "author-b");
+    expect(rebaseTransaction(b, [a], 1).kind).toBe("conflict");
+    expect(rebaseTransaction(a, [b], 1).kind).toBe("conflict");
+  });
+
+  it("mergeNode vs. an unrelated insertNode (gap semantics, not touching survivor identity) still converges", () => {
+    const base = doc4();
+    const A: SmartOperation = { type: "mergeNode", pos: { path: [], offset: 1 }, depth: 0, retiredId: "p1", splitOffset: 2 };
+    const B: SmartOperation = { type: "insertNode", pos: { path: [], offset: 0 }, node: p("new", [t("ZZ")]) };
+    const a = tx([A], "author-a");
+    const b = tx([B], "author-b");
+    const { leftDoc, rightDoc, leftResult, rightResult } = assertConverges(base, a, b);
+    expect(leftResult.kind).toBe("ok");
+    expect(rightResult.kind).toBe("ok");
+    expect(leftDoc).toEqual(rightDoc);
+  });
+});

@@ -16,6 +16,45 @@ const isWithinSubtree = (pos: SmartPos, subtreeRoot: SmartPos): boolean => {
 const isExactlyAtSlot = (pos: SmartPos, subtreeRoot: SmartPos): boolean =>
   samePath(pos.path, subtreeRoot.path) && pos.offset === subtreeRoot.offset;
 
+/**
+ * The two "occupied slot" references a mergeNode operation cares about:
+ * the surviving left sibling (`pos.offset - 1`) and the retired right
+ * sibling (`pos` itself). `applyOperation`'s own mergeNode handling
+ * validates `splitOffset === left.children.length` and that left/right are
+ * structurally compatible - both checks depend on the *actual identity* of
+ * whatever currently occupies these two slots, not just their positions.
+ */
+const mergeNodeSlots = (op: Extract<SmartOperation, { type: "mergeNode" }>): [SmartPos, SmartPos] => [
+  { path: op.pos.path, offset: op.pos.offset - 1 },
+  { path: op.pos.path, offset: op.pos.offset },
+];
+
+/**
+ * The exact-slot reference for operation types that identify a node by
+ * "parent + child index" (the same convention mergeNode's own slots use) -
+ * restricted to the types where an exact offset match genuinely means "the
+ * same node," which excludes insertNode (a *gap* reference, not an
+ * occupied slot - two different conventions sharing the same {path,
+ * offset} shape, the same distinction already established for the
+ * removeNode/replaceNode exact-match fix in mapOperation) and excludes
+ * splitNode/setNodeAttributes/insertText/deleteText/addMark (deeper or
+ * differently-conventioned references that `mapPosThroughOperation`'s own
+ * mergeNode-as-through branch already redirects safely - confirmed via a
+ * property test that a splitNode targeting the exact node a concurrent
+ * mergeNode retires converges correctly without needing to be flagged
+ * here).
+ */
+const occupiedSlotsOf = (op: SmartOperation): SmartPos[] | null => {
+  if (op.type === "removeNode" || op.type === "replaceNode") return [op.pos];
+  if (op.type === "mergeNode") return mergeNodeSlots(op);
+  // moveNode.from/.to use the same "occupied slot" convention, but any
+  // moveNode paired with a mergeNode already shares a parent array (the
+  // merge's own path) and is caught unconditionally by the broader moveNode
+  // conflict rule above, before this function is reached - listing it here
+  // too would be redundant, not incorrect.
+  return null;
+};
+
 const operationTouchesSubtree = (operation: SmartOperation, subtreeRoot: SmartPos): { exact: boolean; within: boolean } => {
   if (operation.type === "insertNode" || operation.type === "removeNode" || operation.type === "replaceNode"
     || operation.type === "setNodeAttributes" || operation.type === "setNodeType"
@@ -78,6 +117,31 @@ const operationTouchesSubtree = (operation: SmartOperation, subtreeRoot: SmartPo
  *    survivor's actual attrs. Flagged as a conflict, consistent with
  *    decision 1, rather than attempting a redirect whose correctness isn't
  *    established.
+ * 3. **Concurrent mergeNode vs. anything occupying its left (survivor) or
+ *    right (retired) slot** (2026-08-28, required follow-up to finding #1
+ *    in mapoperation-position-arithmetic-gaps.md). `applyOperation`'s own
+ *    mergeNode handling validates `splitOffset === left.children.length`
+ *    and that left/right are structurally compatible - both checks depend
+ *    on the actual identity of whatever occupies those two slots.
+ *    `mapPosThroughOperation`'s mergeNode-as-through branch only tracks a
+ *    single explicit position (`operation.pos`/`.from`/`.to`), so an
+ *    ordinary sibling-index shift correctly keeps a *retiring* target
+ *    reachable but has no way to notice that a node's *identity* changed
+ *    underneath an *implicit* left-neighbor reference. Confirmed
+ *    empirically: two mergeNode ops retiring adjacent siblings (A retires
+ *    node N into its left neighbor, B retires N's *next* sibling into N)
+ *    crashed in one transform direction and silently produced a different
+ *    document in the other; a mergeNode composed with a concurrent
+ *    `removeNode` of its own left/survivor node crashed both ways. A
+ *    concurrent `splitNode` targeting the *exact* node a mergeNode retires
+ *    was checked and found *not* to need this treatment - it already gets
+ *    `mapPosThroughOperation`'s explicit "this position IS the retired
+ *    node, redirect into the survivor" case, which correctly recomputes an
+ *    in-bounds position rather than carrying a stale content-derived
+ *    payload the way `mergeNode.splitOffset` does. Same reasoning as
+ *    finding 1 above: not narrowed further, since fixing this generally
+ *    would mean giving `mapOperation` document access it deliberately
+ *    doesn't have.
  */
 export const transformOperation = (
   operation: SmartOperation,
@@ -98,6 +162,18 @@ export const transformOperation = (
       const sharesArray = otherParents.some((otherPath) => moveParents.some((movePath) => samePath(otherPath, movePath)));
       if (sharesArray) {
         return { kind: "conflict", reason: `Concurrent structural change shares an array with moveNode of "${moveOperation.nodeId}".` };
+      }
+    }
+  }
+  if (operation.type === "mergeNode" || through.type === "mergeNode") {
+    const mergeOperation = operation.type === "mergeNode" ? operation : through.type === "mergeNode" ? through : null;
+    const other = mergeOperation === operation ? through : operation;
+    if (mergeOperation) {
+      const mergeSlots = mergeNodeSlots(mergeOperation);
+      const otherSlots = occupiedSlotsOf(other);
+      const overlaps = otherSlots?.some((otherSlot) => mergeSlots.some((mergeSlot) => isExactlyAtSlot(otherSlot, mergeSlot)));
+      if (overlaps) {
+        return { kind: "conflict", reason: "Concurrent operation occupies the same slot a mergeNode's left or right side depends on." };
       }
     }
   }
