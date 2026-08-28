@@ -156,11 +156,10 @@ describe("Phase 12b-client TP1 property: suggestion marks", () => {
       const base: SmartDocument = { type: "doc", id: "doc", children: [{ type: "paragraph", id: "p", children: [{ type: "text", text: "0123456789" }] }] };
       const range = (start: number, end: number) => ({ from: { path: [0], offset: start }, to: { path: [0], offset: end } });
       const suggestA: SmartOperation = { type: "addMark", range: range(0, 3), mark: { type: "suggestion", attrs: { kind: "insert", authorId: "author-a", suggestionId: `s-a-${run}` } } };
-      // Offset 4..7 only - deliberately excludes the exact boundary (offset
-      // 3), which is a known, separately-documented divergence (see the
-      // dedicated test below), not something this general sweep should
-      // paper over by accident.
-      const insertB: SmartOperation = { type: "insertText", pos: { path: [0], offset: 4 + Math.floor(random() * 4) }, text: "X" };
+      // Offset 3..7: includes the exact mark-end boundary (offset 3), fixed
+      // by the addMark bias correction below (see the dedicated boundary
+      // test) - no longer needs excluding from general random coverage.
+      const insertB: SmartOperation = { type: "insertText", pos: { path: [0], offset: 3 + Math.floor(random() * 5) }, text: "X" };
       const a = tx([suggestA], "author-a");
       const b = tx([insertB], "author-b");
       const { leftDoc, rightDoc, leftResult, rightResult } = assertConverges(base, a, b);
@@ -171,27 +170,27 @@ describe("Phase 12b-client TP1 property: suggestion marks", () => {
   });
 
   /**
-   * Known, disclosed limitation (not fixed in this phase): a concurrent
-   * plain-text insertion landing *exactly* at a mark's own end boundary
-   * diverges depending on transform order. `mapOperation`'s addMark/
-   * removeMark range-endpoint bias is hardcoded (`to` uses bias=+1, "grow
-   * to include an insertion exactly at this boundary" - see operations.ts's
-   * own doc comment on `mapOperation`), which disagrees with `insertText`'s
-   * own, independent boundary convention inside `applyToSession` (new,
-   * unmarked text inserted exactly at the end of a marked run joins the
-   * *following* unmarked run, not the preceding marked one). Whichever
-   * operation is applied "live" first wins with its own convention; whoever
-   * is rebased through the other inherits mapOperation's hardcoded +1
-   * instead. This is a pre-existing inconsistency between two independently
-   * built mechanisms (confirmed not introduced by this phase - `mapOperation`
-   * has zero production callers before this phase), not something specific
-   * to suggestion marks - it would surface identically for a comment or a
-   * structural-suggestion range's endpoint. Changing the hardcoded bias
-   * risks regressing whatever behavior comments/structural-suggestions
-   * currently rely on it for, which is out of this phase's scope to
-   * investigate. Documented here rather than silently passed over.
+   * Fixed (2026-08-28): a concurrent plain-text insertion landing *exactly*
+   * at a mark's own end boundary used to diverge depending on transform
+   * order - `mapOperation`'s addMark/removeMark `to` endpoint hardcoded
+   * bias=+1 ("grow to include an insertion exactly at this boundary"),
+   * which disagreed with `insertText`'s own, independently-established
+   * ground truth inside `applyToSession` (splitInlineAt: a plain,
+   * marks-less insertion at an exact run boundary lands on the *following*
+   * side, never absorbing the preceding run's marks). This test's own seed
+   * exposed the divergence via a direct TP1 check (apply-A-then-rebased-B
+   * vs. apply-B-then-rebased-A did not produce the same document) before
+   * any fix existed - confirmed via `docs/bugs/
+   * addmark-boundary-bias-inconsistent-with-inserttext.md`. Fixed by
+   * changing `to`'s hardcoded bias from 1 to -1 in `mapOperation`
+   * (operations.ts), matching insertText's resolution rather than
+   * inventing a new one. Not caught by the general seeded sweep above on
+   * its own (that sweep never happened to land exactly on the boundary
+   * offset until this exact case was added and the sweep's own range was
+   * widened to include it) - the reason this needs to be a permanent,
+   * named case, not just generic random coverage.
    */
-  it("known limitation: concurrent insertion exactly at a mark's end boundary is order-dependent", () => {
+  it("a concurrent insertion exactly at a mark's end boundary now converges (was a known, disclosed divergence)", () => {
     const base: SmartDocument = { type: "doc", id: "doc", children: [{ type: "paragraph", id: "p", children: [{ type: "text", text: "0123456789" }] }] };
     const range = (start: number, end: number) => ({ from: { path: [0], offset: start }, to: { path: [0], offset: end } });
     const suggestA: SmartOperation = { type: "addMark", range: range(0, 3), mark: { type: "suggestion", attrs: { kind: "insert", authorId: "author-a", suggestionId: "s-a" } } };
@@ -201,7 +200,16 @@ describe("Phase 12b-client TP1 property: suggestion marks", () => {
     const { leftDoc, rightDoc, leftResult, rightResult } = assertConverges(base, a, b);
     expect(leftResult.kind).toBe("ok");
     expect(rightResult.kind).toBe("ok");
-    expect(leftDoc).not.toEqual(rightDoc); // documents the divergence; flip to toEqual if this is ever fixed
+    expect(leftDoc).toEqual(rightDoc);
+    // Pin the actual resolution, not just "they agree with each other":
+    // the inserted "X" must land on the *following*, unmarked side, per
+    // insertText's own ground truth - not merely that both orders agree on
+    // *some* answer.
+    const paragraph = leftDoc.children[0] as SmartElementNode;
+    expect(paragraph.children?.map((child) => ("text" in child ? { text: child.text, marks: child.marks } : null))).toEqual([
+      { text: "012", marks: [{ type: "suggestion", attrs: { kind: "insert", authorId: "author-a", suggestionId: "s-a" } }] },
+      { text: "X3456789", marks: undefined },
+    ]);
   });
 
   it("two concurrent insertions at the identical position converge via authorId tie-break, regardless of transform direction", () => {

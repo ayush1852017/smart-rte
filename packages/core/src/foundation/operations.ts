@@ -486,6 +486,18 @@ export const mapOperation = (operation: SmartOperation, through: SmartOperation,
     return result.deleted ? null : { ...operation, pos: result.pos };
   }
   const from = map(operation.range.from, -1);
-  const to = map(operation.range.to, 1);
+  // `to` used to hardcode bias=1 ("an insertion exactly at this boundary
+  // grows the range to include it"), which disagreed with insertText's own,
+  // separately-established ground truth: applyToSession's insertText (via
+  // splitInlineAt, ~line 96-104 above) puts a plain-marks insertion at an
+  // exact run boundary on the *following* side, never absorbing the
+  // preceding run's marks - confirmed via docs/bugs/
+  // addmark-boundary-bias-inconsistent-with-inserttext.md's TP1 test, which
+  // found the two conventions genuinely diverged (not just "look different
+  // but agree"). bias=-1 matches that existing, unexamined-until-now
+  // resolution: a mark's own `to` endpoint does not grow to include a
+  // same-offset insertion, exactly as insertText itself never grows the
+  // preceding run to include new unmarked text.
+  const to = map(operation.range.to, -1);
   return from.deleted && to.deleted ? null : { ...operation, range: { from: from.pos, to: to.pos } };
 };
