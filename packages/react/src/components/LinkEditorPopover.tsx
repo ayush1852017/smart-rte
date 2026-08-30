@@ -16,6 +16,8 @@ export interface LinkEditorPopoverProps {
   showTextInput?: boolean;
   showOpen?: boolean;
   showRemove?: boolean;
+  /** Defaults to true (the original toolbar-Link-button behavior: the user asked to edit, so jump straight to the href field). Pass false when the popover opened itself just because the caret entered a link - autofocusing there would steal focus from the editor on every ordinary click/caret-move, trapping the cursor the overlay exists specifically to avoid. */
+  autoFocus?: boolean;
   onApply: (value: LinkEditorApplyValue) => void;
   onOpen?: () => void;
   onRemove?: () => void;
@@ -56,6 +58,7 @@ export function LinkEditorPopover({
   showTextInput = false,
   showOpen = false,
   showRemove = false,
+  autoFocus = true,
   onApply,
   onOpen,
   onRemove,
@@ -70,8 +73,23 @@ export function LinkEditorPopover({
   const errorId = useId();
 
   useEffect(() => {
+    if (!autoFocus) return;
     hrefRef.current?.focus();
     hrefRef.current?.select();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Escape must dismiss regardless of where focus actually is - when
+  // autoFocus is false (the auto-triggered case), focus deliberately stays
+  // on the editor, so the div's own onKeyDown below (which only fires while
+  // focus is inside the popover) would never see the keypress.
+  useEffect(() => {
+    const onWindowKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onCancel();
+    };
+    window.addEventListener("keydown", onWindowKeyDown);
+    return () => window.removeEventListener("keydown", onWindowKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const apply = () => {
@@ -114,10 +132,10 @@ export function LinkEditorPopover({
         padding: 14,
       }}
       onKeyDown={(event) => {
-        if (event.key === "Escape") {
-          event.preventDefault();
-          onCancel();
-        }
+        // Escape is handled by the window-level listener above (needs to
+        // work even when autoFocus=false and focus never entered the
+        // popover) - not duplicated here to avoid a double-dismiss when
+        // focus *is* inside.
         if (event.key === "Enter" && !event.shiftKey) {
           event.preventDefault();
           apply();

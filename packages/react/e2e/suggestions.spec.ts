@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { openToolbarDropdown, toolbarMenuItem } from "./toolbarHelpers.js";
 
 const selectWord = async (page: import("@playwright/test").Page, paragraphIndex: number, from: number, to: number) => page.evaluate(({ paragraphIndex, from, to }) => {
   const root = document.querySelector<HTMLElement>('[contenteditable="true"]')!;
@@ -29,7 +30,8 @@ test.describe("Phase 12a - suggestions (track changes)", () => {
     await expect(editor).toBeVisible();
 
     await selectWord(page, 0, 0, 9); // "Canonical" of "Canonical product editor"
-    const suggestDelete = page.getByRole("button", { name: "Suggest deletion", exact: true });
+    await openToolbarDropdown(page, "Review");
+    const suggestDelete = toolbarMenuItem(page, "Suggest deletion");
     await expect(suggestDelete).toBeEnabled();
     await suggestDelete.click();
 
@@ -37,7 +39,8 @@ test.describe("Phase 12a - suggestions (track changes)", () => {
     await expect(struck).toHaveText("Canonical");
     await expect(editor).toContainText("Canonical product editor"); // still present, not deleted
 
-    await page.getByRole("button", { name: "Suggestions", exact: true }).click();
+    await openToolbarDropdown(page, "Review");
+    await toolbarMenuItem(page, "Suggestions").click();
     const panel = page.locator('[data-srte-suggestion-panel="true"]');
     await expect(panel).toBeVisible();
     await expect(panel.getByText('"Canonical"', { exact: true })).toBeVisible();
@@ -53,7 +56,8 @@ test.describe("Phase 12a - suggestions (track changes)", () => {
     await expect(editor).toBeVisible();
 
     await collapseAt(page, 0, 0);
-    await page.getByRole("button", { name: "Suggest insertion", exact: true }).click();
+    await openToolbarDropdown(page, "Review");
+    await toolbarMenuItem(page, "Suggest insertion").click();
     const panel = page.locator('[data-srte-suggestion-panel="true"]');
     await expect(panel).toBeVisible();
     const compose = panel.locator('[data-srte-suggestion-compose="true"] textarea');
@@ -78,7 +82,8 @@ test.describe("Phase 12a - suggestions (track changes)", () => {
 
     // Propose removing the second paragraph ("block 1").
     await collapseAt(page, 1, 0);
-    await page.getByRole("button", { name: "Suggest block removal", exact: true }).click();
+    await openToolbarDropdown(page, "Review");
+    await toolbarMenuItem(page, "Suggest removing this").click();
     await expect(page.locator("[data-srte-suggestion-highlight]").first()).toBeVisible();
     const panel = page.locator('[data-srte-suggestion-panel="true"]');
     await expect(panel).toBeVisible();
@@ -96,7 +101,8 @@ test.describe("Phase 12a - suggestions (track changes)", () => {
 
     // The suggestion must survive the merge, snapped to the surviving paragraph.
     await expect(page.locator("[data-srte-suggestion-highlight]").first()).toBeVisible();
-    await page.getByRole("button", { name: "Suggestions", exact: true }).click();
+    await openToolbarDropdown(page, "Review");
+    await toolbarMenuItem(page, "Suggestions").click();
     await expect(panel).toBeVisible();
     await panel.getByRole("button", { name: "Accept", exact: true }).click();
 
@@ -113,9 +119,11 @@ test.describe("Phase 12a - suggestions (track changes)", () => {
     const editor = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
     await expect(editor).toBeVisible();
 
-    const toggle = page.getByRole("button", { name: "Track changes", exact: true });
+    await openToolbarDropdown(page, "Review");
+    const toggle = toolbarMenuItem(page, "Show edits");
     await expect(toggle).toHaveAttribute("aria-pressed", "false");
     await toggle.click();
+    await openToolbarDropdown(page, "Review");
     await expect(toggle).toHaveAttribute("aria-pressed", "true");
 
     // Ordinary typing at the end of the line - no explicit "Suggest
@@ -149,7 +157,9 @@ test.describe("Phase 12a - suggestions (track changes)", () => {
 
     // Disabling the mode returns to ordinary direct editing: a fresh
     // keystroke is a real, unmarked edit - no new suggestion mark appears.
+    await openToolbarDropdown(page, "Review");
     await toggle.click();
+    await openToolbarDropdown(page, "Review");
     await expect(toggle).toHaveAttribute("aria-pressed", "false");
     const markCountBeforeDisabling = await editor.locator('[data-smart-mark="suggestion"]').count();
     await page.keyboard.type("!");
@@ -166,7 +176,8 @@ test.describe("Phase 12a - suggestions (track changes)", () => {
     // based) this phase doesn't build; a passive tooltip on the toggle
     // documents the real scope instead of silently letting a user believe
     // every edit is tracked.
-    const toggle = page.getByRole("button", { name: "Track changes", exact: true });
+    await openToolbarDropdown(page, "Review");
+    const toggle = toolbarMenuItem(page, "Show edits");
     await expect(toggle).toHaveAttribute("title", /Merging paragraphs together.*still applies directly/);
   });
 
@@ -176,7 +187,8 @@ test.describe("Phase 12a - suggestions (track changes)", () => {
     await expect(editor).toBeVisible();
     await expect(editor.locator("p")).toHaveCount(2);
 
-    await page.getByRole("button", { name: "Track changes", exact: true }).click();
+    await openToolbarDropdown(page, "Review");
+    await toolbarMenuItem(page, "Show edits").click();
     await page.evaluate(() => {
       const root = document.querySelector<HTMLElement>('[contenteditable="true"]')!;
       const paragraphs = root.querySelectorAll("p");
@@ -201,7 +213,8 @@ test.describe("Phase 12a - suggestions (track changes)", () => {
     await expect(editor).toBeVisible();
     await expect(editor.locator("p")).toHaveCount(2);
 
-    await page.getByRole("button", { name: "Track changes", exact: true }).click();
+    await openToolbarDropdown(page, "Review");
+    await toolbarMenuItem(page, "Show edits").click();
     await collapseAt(page, 1, 0);
     await editor.focus();
     await page.keyboard.press("Backspace");

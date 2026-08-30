@@ -2,7 +2,7 @@ import JSZip from "jszip";
 import { isTextNode } from "../../identity.js";
 import { occupancyGridFor } from "../../table/grid.js";
 import { foundationListStyleForPresetDepth, isFoundationSmartListPreset, type FoundationSmartListStyle } from "../../list/presets.js";
-import type { SmartDocument, SmartElementNode, SmartMark, SmartNode } from "../../types.js";
+import type { Attrs, SmartDocument, SmartElementNode, SmartMark, SmartNode } from "../../types.js";
 import { portableFormulaMarker, portableImageMarker } from "./portableAtoms.js";
 
 export const DOCX_MEDIA_TYPE =
@@ -19,6 +19,45 @@ const colorValue = (value: string) => {
     ? rgb.slice(1, 4).map((part) =>
         Math.max(0, Math.min(255, Number(part))).toString(16).padStart(2, "0")).join("").toUpperCase()
     : "";
+};
+
+/**
+ * table_cell's border attrs are free-form CSS border shorthand strings - the
+ * editor's own UI only ever writes "{width}px {style} {hex|rgb}" (style one
+ * of solid/dashed/dotted; see CanonicalAuthorityEditor.tsx's
+ * composeBorderShorthand), so that's the one shape parsed into real OOXML
+ * here; anything else (arbitrary pasted CSS) falls through to no override,
+ * same as before per-side support existed - not a regression, since nothing
+ * but the "none" sentinel was ever handled here originally. w:sz is eighths
+ * of a point; this codebase's own px->pt conversion elsewhere
+ * (columnWidths/row height * 15 for twips, i.e. 1px = 0.75pt) gives
+ * eighths = pt * 8 = px * 6.
+ */
+const DOCX_BORDER_STYLE: Record<string, string> = { solid: "single", dashed: "dashed", dotted: "dotted", double: "double" };
+const parseCellBorderValue = (value: unknown): { sz: number; val: string; color: string } | null => {
+  if (typeof value !== "string") return null;
+  const width = /(\d+(?:\.\d+)?)\s*px/.exec(value);
+  const color = /#[0-9a-f]{3,6}\b|rgba?\([^)]+\)/i.exec(value);
+  if (!width || !color) return null;
+  const hex = colorValue(color[0]);
+  if (!hex) return null;
+  const styleMatch = /\b(solid|dashed|dotted|double)\b/i.exec(value);
+  return { sz: Math.max(2, Math.round(Number(width[1]) * 6)), val: DOCX_BORDER_STYLE[styleMatch?.[1].toLowerCase() ?? "solid"] ?? "single", color: hex };
+};
+/** borderTop/Right/Bottom/Left (the border-options UI's per-side control) win over the uniform `borders` fallback for that one side, same precedence order the live renderer applies them in. */
+const cellSideBorderXml = (name: string, sideValue: unknown, uniformValue: unknown): string => {
+  const parsed = parseCellBorderValue(sideValue) ?? parseCellBorderValue(uniformValue);
+  return parsed ? `<w:${name} w:val="${parsed.val}" w:sz="${parsed.sz}" w:color="${parsed.color}"/>` : "";
+};
+const cellBorderXml = (attrs: Attrs | undefined, borderNone: string): string => {
+  if (attrs?.borders === "none") return borderNone;
+  const xml = [
+    cellSideBorderXml("top", attrs?.borderTop, attrs?.borders),
+    cellSideBorderXml("left", attrs?.borderLeft, attrs?.borders),
+    cellSideBorderXml("bottom", attrs?.borderBottom, attrs?.borders),
+    cellSideBorderXml("right", attrs?.borderRight, attrs?.borders),
+  ].join("");
+  return xml ? `<w:tcBorders>${xml}</w:tcBorders>` : "";
 };
 
 const runProperties = (marks: readonly SmartMark[] = []) => marks.map((mark) => {
@@ -179,7 +218,7 @@ const tableXml = (block: SmartElementNode, context: DocxSerializationContext): s
         colspan > 1 ? `<w:gridSpan w:val="${colspan}"/>` : "",
         rowspan > 1 ? (continuation ? "<w:vMerge/>" : '<w:vMerge w:val="restart"/>') : "",
         shade ? `<w:shd w:val="clear" w:color="auto" w:fill="${shade}"/>` : "",
-        cell.node.attrs?.borders === "none" ? borderNone : "",
+        cellBorderXml(cell.node.attrs, borderNone),
       ].join("");
       const content = continuation ? "<w:p/>" : elementChildren(cell.node).map((child) => blockXml(child, context)).join("") || "<w:p/>";
       cells += `<w:tc><w:tcPr>${properties}</w:tcPr>${content}</w:tc>`;

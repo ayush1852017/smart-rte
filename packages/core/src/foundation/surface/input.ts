@@ -1403,7 +1403,19 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
     // the native range is document-wide but the canonical selection still
     // describes the previous owner.  Import the current native range before
     // directional handling so ArrowUp/Down never operates on stale paths.
-    if (!this.composition && ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) {
+    // Home/End and Enter's own modifier branches below (Ctrl/Cmd+Enter,
+    // Shift+Enter) read `this.editor.selection.head` synchronously too, and
+    // are exposed to the exact same race - most visibly, a real click
+    // immediately followed by End: Home/End's handler used to trust the
+    // still-stale selection, compute "end of the stale owner", and
+    // explicitly commit + render *that* wrong position - actively moving
+    // the real caret away from wherever the click had just placed it (for
+    // example out of a code block nested in a blockquote and onto an
+    // unrelated preceding paragraph), so a subsequent Enter then genuinely
+    // operated on the wrong position instead of merely reading it wrong.
+    // Plain Enter is additionally covered by the beforeinput handler's own
+    // resync, but the modifier branches here fire before that ever runs.
+    if (!this.composition && ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End", "Enter"].includes(event.key)) {
       this.syncSelectionFromDom();
     }
     const modifier = event.metaKey || event.ctrlKey;

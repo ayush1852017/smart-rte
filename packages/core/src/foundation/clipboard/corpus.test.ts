@@ -51,10 +51,20 @@ const fixtures = [
 // checked style first and read "14pt" as "14", a ~25% understatement;
 // the new code correctly rejects the non-px style value and falls back
 // to the genuinely-pixel attribute value instead.
+// word-macos/google-docs/google-sheets hashes changed once table_cell gained
+// per-side border attrs (borderTop/Right/Bottom/Left, for the border-options
+// UI's "which sides" control - docs/bugs/table-cell-border-color-width-no-ui.md's
+// addendum). All three fixtures express cell borders as separate
+// `border-top`/`border-right`/`border-bottom`/`border-left` CSS declarations
+// (confirmed by inspecting their captured HTML directly), not the uniform
+// `border` shorthand the old parser only ever recognized - previously this
+// meant paste from Word/Google Docs/Google Sheets silently dropped ALL cell
+// border styling; it's now correctly captured. A genuine fidelity
+// improvement, not a regression - hashes updated to match.
 const expectedCanonicalHashes: Record<string, string> = {
-  "word-macos-clipboard.clipboard.json": "18c70f20",
-  "google-docs-clipboard.clipboard.json": "a185d8ab",
-  "google-sheets-clipboard.clipboard.json": "7d90f1a7",
+  "word-macos-clipboard.clipboard.json": "22d879f1",
+  "google-docs-clipboard.clipboard.json": "bf053d8d",
+  "google-sheets-clipboard.clipboard.json": "ea5704d2",
   "excel-clipboard.clipboard.json": "78a735fa",
   "markdown-plain-text-clipboard.clipboard.json": "fbe7bef8",
   "native-smart-rte-clipboard.clipboard.json": "3f38366d",

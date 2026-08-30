@@ -64,6 +64,63 @@ describe("canonical DOCX format codec", () => {
     expect(xml).toContain('<w:top w:val="nil"/>');
   });
 
+  /**
+   * table_cell.attrs.borders was already rendered live (surface/renderer.ts)
+   * and round-tripped through HTML import/export, but DOCX export only ever
+   * special-cased the "none" sentinel above - a real width+colour value
+   * (the shape the editor's own new border-colour/width UI writes, see
+   * CanonicalAuthorityEditor.tsx's composeBorderShorthand) silently fell
+   * through to no override at all, leaving the cell with the table's default
+   * grey border in the exported .docx regardless of what was actually set.
+   */
+  it("serializes a real cell border width/colour to OOXML tcBorders, not just the 'none' sentinel", () => {
+    const withRealBorder: SmartDocument = {
+      type: "doc", id: "doc2",
+      children: [
+        { type: "table", id: "t2", attrs: { columnWidths: [100] }, children: [
+          { type: "table_row", id: "r3", children: [
+            { type: "table_cell", id: "c2", attrs: { rowspan: 1, colspan: 1, header: false, borders: "2px solid #ff0000" },
+              children: [{ type: "paragraph", id: "p5", children: [{ type: "text", text: "Bordered" }] }] },
+          ] },
+        ] },
+      ],
+    };
+    const xml = smartDocumentToDocxXml(withRealBorder);
+    expect(xml).toContain('<w:tcBorders><w:top w:val="single" w:sz="12" w:color="FF0000"/><w:left w:val="single" w:sz="12" w:color="FF0000"/><w:bottom w:val="single" w:sz="12" w:color="FF0000"/><w:right w:val="single" w:sz="12" w:color="FF0000"/></w:tcBorders>');
+  });
+
+  /**
+   * The border-options UI added per-side overrides (borderTop/Right/Bottom/
+   * Left) plus a style dropdown (solid/dashed/dotted) on top of the legacy
+   * uniform `borders` shorthand - confirms both independently: a side with
+   * its own override uses that side's own style/colour/width, a side
+   * without one falls back to the uniform value, and non-"solid" styles map
+   * to their own OOXML w:val keyword rather than always "single".
+   */
+  it("serializes per-side border overrides and non-solid border styles to distinct OOXML sides", () => {
+    const withPerSideBorder: SmartDocument = {
+      type: "doc", id: "doc3",
+      children: [
+        { type: "table", id: "t3", attrs: { columnWidths: [100] }, children: [
+          { type: "table_row", id: "r4", children: [
+            { type: "table_cell", id: "c3", attrs: {
+              rowspan: 1, colspan: 1, header: false,
+              borders: "1px solid #000000", borderTop: "3px dashed #00ff00", borderBottom: "2px dotted #0000ff",
+            }, children: [{ type: "paragraph", id: "p6", children: [{ type: "text", text: "Sided" }] }] },
+          ] },
+        ] },
+      ],
+    };
+    const xml = smartDocumentToDocxXml(withPerSideBorder);
+    // Top: its own override (dashed, 3px -> sz 18, green).
+    expect(xml).toContain('<w:top w:val="dashed" w:sz="18" w:color="00FF00"/>');
+    // Bottom: its own override (dotted, 2px -> sz 12, blue).
+    expect(xml).toContain('<w:bottom w:val="dotted" w:sz="12" w:color="0000FF"/>');
+    // Left/right: no override, fall back to the uniform `borders` value.
+    expect(xml).toContain('<w:left w:val="single" w:sz="6" w:color="000000"/>');
+    expect(xml).toContain('<w:right w:val="single" w:sz="6" w:color="000000"/>');
+  });
+
   it("creates a valid DOCX package around the canonical document", async () => {
     const blob = await exportDocxDocument(documentModel);
     const buffer = await blobArrayBuffer(blob);

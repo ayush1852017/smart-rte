@@ -62,6 +62,10 @@ const renderNode = (node: SmartNode, ownerDocument: Document): Node => {
     if (colspan > 1) element.setAttribute("colspan", String(colspan));
     if (node.attrs?.background) element.style.background = String(node.attrs.background);
     if (node.attrs?.borders) element.style.border = String(node.attrs.borders);
+    (["Top", "Right", "Bottom", "Left"] as const).forEach((side) => {
+      const value = node.attrs?.[`border${side}`];
+      if (value) element.style.setProperty(`border-${side.toLowerCase()}`, String(value));
+    });
     if (node.attrs?.verticalAlign) element.style.verticalAlign = String(node.attrs.verticalAlign);
   }
   if (node.type === "image" || node.type === "block_image") {

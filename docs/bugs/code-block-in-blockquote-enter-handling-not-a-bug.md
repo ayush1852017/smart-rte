@@ -1,6 +1,6 @@
-# Code block nested inside a blockquote: Enter/newline handling — no defect found
+# Code block nested inside a blockquote: Enter/newline handling — no defect found (see addendum: a *different*, real bug shares this repro shape)
 
-**Status:** Not a bug (working as designed)
+**Status:** Not a bug (working as designed) for the structural boundary hypothesis this file tested — **but see [home-end-key-stale-selection-race-after-click](home-end-key-stale-selection-race-after-click.md)**, a genuinely real, unrelated bug later found via the same code-block-in-blockquote reproduction shape. That investigation used a real Playwright click (not this file's programmatic `setSelection`), which is what exposed it — this file's own conclusion (no *blockquote-boundary-specific* defect) remains correct as far as it went.
 **Area:** block / mark (code) / selection
 **First reported:** unknown — backfilled from `docs/PHASE_8B_LIST_ENTER_LIST_TYPES_CODE_CHECKLIST.md`
 
@@ -26,5 +26,6 @@ None — no speculative boundary patch was made, since no defect was found to fi
 
 ## Related/similar issues
 
+- [home-end-key-stale-selection-race-after-click](home-end-key-stale-selection-race-after-click.md) — a real, later-found bug that reproduces via this exact same "code block in a blockquote, Enter" shape, but whose actual root cause (a stale-selection race in Home/End after a real click) has nothing to do with blockquote nesting at all.
 - [quote-boundary-no-editable-position-after-final-blockquote](quote-boundary-no-editable-position-after-final-blockquote.md) and [quoted-list-enter-enter-exit-leaves-delete-inert](quoted-list-enter-enter-exit-leaves-delete-inert.md) — the real boundary bugs this report was checked against by analogy; this one turned out not to share their cause.
 - [code-block-converted-caret-reachability-not-a-bug](code-block-converted-caret-reachability-not-a-bug.md) — a different, also-not-a-bug investigation into code block caret behavior (end-of-content/document-end reachability after type conversion, not Enter-key handling).

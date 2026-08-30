@@ -86,9 +86,15 @@ import { MediaManager } from "./MediaManager.js";
 import { mediaManagerAdapterFrom } from "../mediaManagerAdapter.js";
 import { LinkEditorPopover, type LinkEditorApplyValue } from "./LinkEditorPopover.js";
 import { ColorPickerPopover } from "./ColorPickerPopover.js";
+import { TableSizePickerPopover } from "./TableSizePickerPopover.js";
+import { FormulaLibraryPopover } from "./FormulaLibraryPopover.js";
+import { SpecialCharacterPopover } from "./SpecialCharacterPopover.js";
+import { TableBorderPopover, BORDER_WIDTH_PRESETS, type BorderDraft, type BorderSides, type BorderStyle } from "./TableBorderPopover.js";
+import type { FormulaLibraryEntry } from "../formulaLibrary.js";
 import { TableResizeHandles } from "./TableResizeHandles.js";
 import { MediaOverlay } from "./MediaOverlay.js";
 import { ContextMenu, type ContextMenuItem } from "./ContextMenu.js";
+import { ToolbarButton, ToolbarDropdown, ToolbarGroup, ToolbarMenuItem, MobileMoreMenu } from "./ToolbarPrimitives.js";
 import { exportDocxDocument, importStyledDocxDocument, importPdfDocument } from "smartrte-core/foundation";
 import { printSmartDocumentAsPdf } from "../adapters/pdfPrint.js";
 import {
@@ -138,13 +144,6 @@ export interface CanonicalAuthorityEditorProps {
   /** Test/diagnostic hook; not part of the editing contract. */
   onRuntime?: (runtime: CanonicalEditorRuntime) => void;
 }
-
-const labels: Record<string, string> = {
-  bold: "Bold", italic: "Italic", underline: "Underline", strike: "Strikethrough", strikethrough: "Strikethrough",
-  inlineCode: "Inline code", superscript: "Superscript", subscript: "Subscript",
-  textColor: "Text colour", backgroundColor: "Background colour",
-  fontSize: "Font size", fontFamily: "Font family",
-};
 
 type ListSelectionPart = Extract<ResolvedScope, { kind: "list-selection" }>;
 
@@ -197,10 +196,33 @@ const CONTEXT_MENU_DANGER_COMMANDS = new Set(["table.remove", "table.removeRow",
  * usage anywhere in the codebase), and building new persistence
  * infrastructure for this one feature would be disproportionate.
  */
-const RECENT_COLOR_LIMIT = 6;
-type ColorBucket = "text" | "background";
+const RECENT_COLOR_LIMIT = 4;
+type ColorBucket = "text" | "background" | "border";
 const colorBucketFor = (target: { kind: "mark"; markId: "textColor" | "backgroundColor" } | { kind: "cell"; attr: "background" | "textColor" }): ColorBucket =>
-  target.kind === "mark" ? (target.markId === "textColor" ? "text" : "background") : (target.attr === "textColor" ? "text" : "background");
+  target.kind === "mark" ? (target.markId === "textColor" ? "text" : "background")
+    : target.attr === "textColor" ? "text" : "background";
+
+/**
+ * table_cell's border attrs (schema.ts: legacy uniform `borders`, plus
+ * per-side `borderTop`/`borderRight`/`borderBottom`/`borderLeft` overrides
+ * added for the "Border options" popover's per-side control) are free-form
+ * CSS border shorthand strings, already rendered (surface/renderer.ts) and
+ * round-tripped through HTML/DOCX. These compose/parse the one shape this
+ * UI itself ever writes ("{width}px {style} {hex}") - a value pasted in some
+ * other shape still renders fine (the renderer applies the raw string
+ * unconditionally) but won't round-trip through these two helpers, which is
+ * fine: they exist only to seed/update this UI's own controls, not to be a
+ * general CSS border parser.
+ */
+const composeBorderShorthand = (widthPx: number, style: BorderStyle, hex: string): string => `${widthPx}px ${style} ${hex}`;
+const parseBorderShorthand = (value: unknown): { widthPx: number; style: BorderStyle; hex: string } | null => {
+  if (typeof value !== "string") return null;
+  const width = /(\d+(?:\.\d+)?)\s*px/.exec(value);
+  const color = /#[0-9a-f]{3,8}\b/i.exec(value);
+  if (!width || !color) return null;
+  const styleMatch = /\b(solid|dashed|dotted)\b/i.exec(value);
+  return { widthPx: Number(width[1]), style: (styleMatch?.[1].toLowerCase() as BorderStyle | undefined) ?? "solid", hex: color[0].toLowerCase() };
+};
 
 const isCollapsedTextSelection = (selection: SmartSelection): boolean =>
   selection.type === "text" && selection.anchor.offset === selection.head.offset
@@ -249,13 +271,34 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
   const mediaManagerAdapter = useMemo(() => mediaProvider ? mediaManagerAdapterFrom(mediaProvider) : null, [mediaProvider]);
   const [linkPopover, setLinkPopover] = useState<{
     x: number; y: number; editingExisting: boolean; href: string; openInNewTab: boolean; collapsed: boolean;
+    // True when the popover opened itself because the caret merely entered
+    // an existing link (see linkAnchorElement below), not because the user
+    // asked to edit it - autofocusing the href input in that case steals
+    // focus from the editor on every ordinary click/caret-move into a link,
+    // defeating the whole point of this overlay not trapping the cursor.
+    autoTriggered?: boolean;
   } | null>(null);
   const [colorPopover, setColorPopover] = useState<{
     x: number; y: number;
-    target: { kind: "mark"; markId: "textColor" | "backgroundColor" } | { kind: "cell"; attr: "background" | "textColor" };
+    // The cell case captures the actual TableGridScope (cell IDs) at the
+    // moment the context-menu item is clicked, rather than having
+    // applyColorToTarget re-resolve `tableScope()` live at preview/commit
+    // time - a real, WebKit-specific race found during verification: an
+    // async `selectionchange` (delivered late, the same class of issue as
+    // docs/bugs/home-end-key-stale-selection-race-after-click.md) can land
+    // between the popover opening and the user staging a color, resolving
+    // the live selection away from the table entirely - see
+    // docs/bugs/color-picker-cell-target-recomputed-live-race.md.
+    target: { kind: "mark"; markId: "textColor" | "backgroundColor" } | { kind: "cell"; attr: "background" | "textColor"; scope: TableGridScope };
     initialValue?: string;
   } | null>(null);
-  const [recentColors, setRecentColors] = useState<{ text: string[]; background: string[] }>({ text: [], background: [] });
+  const [recentColors, setRecentColors] = useState<{ text: string[]; background: string[]; border: string[] }>({ text: [], background: [], border: [] });
+  const [tableSizePopover, setTableSizePopover] = useState<{ x: number; y: number } | null>(null);
+  const [tableBorderPopover, setTableBorderPopover] = useState<{ x: number; y: number; scope: TableGridScope; initial: BorderDraft } | null>(null);
+  const borderPreviewCheckpointRef = useRef<SmartEditorCheckpoint | null>(null);
+  const [formulaLibraryPopover, setFormulaLibraryPopover] = useState<{ x: number; y: number } | null>(null);
+  const [specialCharPopover, setSpecialCharPopover] = useState<{ x: number; y: number } | null>(null);
+  const [recentSpecialChars, setRecentSpecialChars] = useState<string[]>([]);
   // Set once the native color input's first live-preview frame fires for
   // the currently-open popover, cleared on commit/cancel - lets both paths
   // tell "a preview is in progress that needs to be unwound" from "the user
@@ -444,6 +487,16 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
   // sensible edit or resize target. Media-only UI is gated on this
   // instead of plain atomSelected; delete stays available for any atom.
   const mediaAtomSelected = atomSelected && selectedAtomNode?.type !== "divider";
+  // Formula (like divider above) has no width/height concept - KaTeX sizes
+  // its own rendering from the source/font-size, not stored dimensions, so
+  // "Enlarge/Shrink selected media" and MediaOverlay's resize handle had no
+  // real effect other than silently persisting meaningless width/height
+  // attrs onto the formula node (see
+  // docs/bugs/formula-resize-controls-shown-for-non-resizable-atom.md).
+  // Edit/Delete stay available - editSelectedAtom already branches on
+  // node.type.includes("formula") for its own correct "Formula source"
+  // prompt.
+  const resizableAtomSelected = mediaAtomSelected && selectedAtomNode?.type !== "formula" && selectedAtomNode?.type !== "block_formula";
   // Context menu scope reduction: link no longer gets a right-click menu -
   // LinkEditorPopover (already built and wired for the toolbar's Link
   // button, per §1's investigation) auto-appears, anchored to the link's
@@ -475,6 +528,7 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
       href: typeof currentLinkEntry.mark.attrs?.href === "string" ? currentLinkEntry.mark.attrs.href : "",
       openInNewTab: currentLinkEntry.mark.attrs?.target === "_blank",
       collapsed: linkDescription.collapsed,
+      autoTriggered: true,
     });
     // Only the DOM element identity matters here - re-running for every
     // keystroke re-render while the caret stays inside the same link (same
@@ -537,13 +591,33 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
     runtime.executeOperations(restartListNumbering(runtime.editor.document, currentListScope, { start }, blockContext()), { preserveSelectionById: true });
   };
 
+  // A list's "current style" the toggle buttons care about (bullet vs.
+  // ordered) can come from either a literal .attrs.style (disc/decimal, what
+  // these buttons themselves write) *or* a .attrs.preset (bullet-diamond,
+  // ordered-upper-alpha, etc. - the preset dropdown clears .attrs.style when
+  // setting one, see docs/bugs/list-marker-competing-style-and-preset-signals.md).
+  // Comparing raw strings only ever matched the literal case - after picking
+  // a preset, every toggle button read as "not active" (style is unset) even
+  // though the list still visually is a bullet/ordered list, so the first
+  // click on the matching button silently replaced the preset with a bare
+  // disc/decimal instead of removing the list, and only a *second* click
+  // actually toggled it off. Comparing by kind (bullet/ordered) instead
+  // fixes both the toolbar's own pressed-state display and the toggle
+  // decision in one place, so they can't drift apart from each other again.
+  const BULLET_LIST_STYLES = new Set(["disc", "circle", "square"]);
+  const listActiveKind = (list?: SmartElementNode | null): "bullet" | "ordered" | undefined => {
+    if (typeof list?.attrs?.style === "string") return BULLET_LIST_STYLES.has(list.attrs.style) ? "bullet" : "ordered";
+    if (typeof list?.attrs?.preset === "string") return SMART_LIST_PRESETS.find((preset) => preset.id === list.attrs?.preset)?.kind;
+    return undefined;
+  };
+
   // Shared by the toggle buttons' click handler and their aria-pressed state,
   // so "this button looks active" and "clicking it again removes the list"
   // can never drift apart. Checked against the outermost list (see
   // outermostListId) so a deeply nested cursor still reports the true
   // whole-list state, matching what applying a new type would change.
   const listStyleActive = (style: string, checkable = false) =>
-    rootList?.attrs?.style === style && Boolean(rootList.attrs?.checkable) === checkable;
+    listActiveKind(rootList) === (style === "decimal" ? "ordered" : "bullet") && Boolean(rootList?.attrs?.checkable) === checkable;
 
   const toggleList = (style: string, checkable = false) => {
     const selectedList = listScope();
@@ -551,7 +625,7 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
     if (selectedList.kind === "list-selection") {
       const rootId = outermostListId(selectedList.listId);
       const list = findNode(runtime.editor.document, rootId);
-      const sameStyle = list?.attrs?.style === style && Boolean(list.attrs?.checkable) === checkable;
+      const sameStyle = listActiveKind(list) === (style === "decimal" ? "ordered" : "bullet") && Boolean(list?.attrs?.checkable) === checkable;
       const operations = sameStyle
         // Toggling an already-active style off is deliberately scoped to just
         // the current item (selectedList), not the whole list.
@@ -643,6 +717,61 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
     return typeof value === "string" ? value : undefined;
   };
 
+  const CELL_BORDER_SIDE_KEYS = { top: "borderTop", right: "borderRight", bottom: "borderBottom", left: "borderLeft" } as const;
+
+  /** Reads the cell's *effective* per-side border (a side's own override, falling back to the legacy uniform `borders` value) to seed the Border options popover. */
+  const currentCellBorderDraft = (scope: ResolvedScope): BorderDraft => {
+    const cell = scope.kind === "table-grid" && (scope as TableGridScope).cellIds.length
+      ? findNode(runtime.editor.document, (scope as TableGridScope).cellIds[0]) : null;
+    const resolvedSide = (side: keyof BorderSides): unknown => cell?.attrs?.[CELL_BORDER_SIDE_KEYS[side]] ?? cell?.attrs?.borders;
+    const sides: BorderSides = { top: resolvedSide("top") !== undefined, right: resolvedSide("right") !== undefined, bottom: resolvedSide("bottom") !== undefined, left: resolvedSide("left") !== undefined };
+    const firstSetValue = (["top", "right", "bottom", "left"] as const).map(resolvedSide).find((value) => value !== undefined);
+    const parsed = parseBorderShorthand(firstSetValue);
+    return { sides, style: parsed?.style ?? "solid", widthPx: parsed?.widthPx ?? BORDER_WIDTH_PRESETS[0].px, hex: parsed?.hex ?? "#000000" };
+  };
+
+  /** Applies a Border options draft to `scope`'s cell(s): a toggled-on side gets the composed shorthand, a toggled-off side has its per-side override cleared (falling back to no border on that side, unless the legacy uniform `borders` still has a value - a pre-existing pasted uniform border isn't silently touched by only clearing a side that never had its own override). */
+  const applyCellBorderDraft = (scope: TableGridScope, draft: BorderDraft, options: { addToHistory: boolean }) => {
+    const value = composeBorderShorthand(draft.widthPx, draft.style, draft.hex);
+    const attrs = (["top", "right", "bottom", "left"] as const).reduce<Record<string, string | undefined>>((acc, side) => {
+      acc[CELL_BORDER_SIDE_KEYS[side]] = draft.sides[side] ? value : undefined;
+      return acc;
+    }, {});
+    runtime.executeOperations(
+      setTableCellAttributesCommand(runtime.editor.document, scope, { attrs }, blockContext()),
+      { preserveSelectionById: true, ...options },
+    );
+  };
+
+  /** Live preview while adjusting the Border options popover - same checkpoint-then-reapply pattern as previewColor below. */
+  const previewCellBorder = (draft: BorderDraft) => {
+    if (!tableBorderPopover) return;
+    if (!borderPreviewCheckpointRef.current) borderPreviewCheckpointRef.current = runtime.createCheckpoint();
+    runtime.restoreCheckpoint(borderPreviewCheckpointRef.current);
+    applyCellBorderDraft(tableBorderPopover.scope, draft, { addToHistory: false });
+  };
+
+  const applyCellBorderCommit = (draft: BorderDraft) => {
+    if (!tableBorderPopover) return;
+    if (borderPreviewCheckpointRef.current) {
+      runtime.restoreCheckpoint(borderPreviewCheckpointRef.current);
+      borderPreviewCheckpointRef.current = null;
+    }
+    applyCellBorderDraft(tableBorderPopover.scope, draft, { addToHistory: true });
+    recordRecentColor("border", draft.hex);
+    setTableBorderPopover(null);
+    runtime.focus();
+  };
+
+  const cancelTableBorderPopover = () => {
+    if (borderPreviewCheckpointRef.current) {
+      runtime.restoreCheckpoint(borderPreviewCheckpointRef.current);
+      borderPreviewCheckpointRef.current = null;
+    }
+    setTableBorderPopover(null);
+    runtime.focus();
+  };
+
   const recordRecentColor = (bucket: ColorBucket, hex: string) => {
     setRecentColors((current) => ({
       ...current,
@@ -656,28 +785,29 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
     if (colorPopover.target.kind === "mark") {
       applyMarkAttrs(colorPopover.target.markId, { value: hex }, options);
     } else {
-      const attrKey = colorPopover.target.attr;
-      // executeOperations itself focuses on a real commit and skips it
-      // during a preview (addToHistory: false) - see its own comment.
+      // Uses the scope captured when the popover opened, not a fresh
+      // tableScope() re-resolved against the live selection - see the
+      // colorPopover state's own doc comment for why.
       runtime.executeOperations(
-        setTableCellAttributesCommand(runtime.editor.document, tableScope(), { attrs: { [attrKey]: hex } }, blockContext()),
+        setTableCellAttributesCommand(runtime.editor.document, colorPopover.target.scope, { attrs: { [colorPopover.target.attr]: hex } }, blockContext()),
         { preserveSelectionById: true, ...options },
       );
     }
   };
 
   /**
-   * Live preview while dragging the native color input, mirroring
-   * TableResizeHandles' own live-preview-then-commit-once pattern: every
-   * `input` event re-applies the color for real (so a multi-node mark
-   * selection, not just a single element's style, previews correctly), but
-   * always starting from a checkpoint of the state from *before* any
-   * preview began, and always with `addToHistory: false` - so however many
-   * drag frames fire, none of them become their own undo step, and each one
-   * fully supersedes the last rather than compounding on top of it. The
-   * checkpoint is created lazily, on the first preview frame, so a picker
-   * session that never touches the native input (types an exact hex and
-   * clicks Apply) never creates or restores anything extra.
+   * Live preview while dragging the in-page saturation/hue picker (or typing
+   * a valid hex, or clicking a recent swatch), mirroring TableResizeHandles'
+   * own live-preview-then-commit-once pattern: every drag frame re-applies
+   * the color for real (so a multi-node mark selection, not just a single
+   * element's style, previews correctly), but always starting from a
+   * checkpoint of the state from *before* any preview began, and always with
+   * `addToHistory: false` - so however many drag frames fire, none of them
+   * become their own undo step, and each one fully supersedes the last
+   * rather than compounding on top of it. The checkpoint is created lazily,
+   * on the first preview frame, so a picker session that's opened and
+   * closed without ever touching anything never creates or restores
+   * anything extra.
    */
   const previewColor = (hex: string) => {
     if (!colorPopover) return;
@@ -686,6 +816,11 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
     applyColorToTarget(hex, { addToHistory: false });
   };
 
+  /**
+   * There is no separate Apply button (ColorPickerPopover's own doc comment)
+   * - this fires when the popover is dismissed any way *other than* Discard,
+   * committing whatever was last staged by a drag/type/swatch-click.
+   */
   const applyColor = (hex: string) => {
     if (!colorPopover) return;
     // Undo whatever the live preview left in the (non-history) model state
@@ -701,9 +836,10 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
     applyColorToTarget(hex, { addToHistory: true });
     recordRecentColor(colorBucketFor(colorPopover.target), hex);
     setColorPopover(null);
+    runtime.focus();
   };
 
-  /** Escape / outside-click / Cancel / the popover's own close button - revert any in-progress live preview instead of leaving an uncommitted change applied. */
+  /** Discard - the only way to revert to the color the popover opened with; every other dismissal commits (see applyColor). */
   const cancelColorPopover = () => {
     if (colorPreviewCheckpointRef.current) {
       runtime.restoreCheckpoint(colorPreviewCheckpointRef.current);
@@ -748,14 +884,14 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
     runtime.executeOperations(operations, { preserveSelectionById: true });
   };
 
-  const insertTable = () => {
-    const paragraphIds = ids(4);
+  const insertTable = (rows = 2, columns = 2) => {
+    const paragraphIds = ids(rows * columns);
     const selected = blockScope();
     const firstId = selected.kind === "block-range" ? selected.blockIds[0] : undefined;
     const target = firstId ? runtime.editor.positions.positionOf(firstId) : null;
     const operations = insertTableCommand(runtime.editor.document, selected, {
-      rows: 2, columns: 2, placement: "after",
-      ids: { tableId: createNodeId(), rowIds: ids(2), cellIds: ids(4), paragraphIds },
+      rows, columns, placement: "after",
+      ids: { tableId: createNodeId(), rowIds: ids(rows), cellIds: ids(rows * columns), paragraphIds },
     }, blockContext());
     // Keep an editable block after a table inserted at the end of its
     // container. Without this, the browser has no legal caret position below
@@ -886,27 +1022,64 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
         {
           id: "table.contextMenu.cellBackgroundColor",
           label: "Cell background colour",
-          onSelect: () => setColorPopover({ x: openX, y: openY, target: { kind: "cell", attr: "background" }, initialValue: currentCellColor("background") }),
+          onSelect: () => setColorPopover({ x: openX, y: openY, target: { kind: "cell", attr: "background", scope: tableGridScope as TableGridScope }, initialValue: currentCellColor("background") }),
         },
         {
           id: "table.contextMenu.cellTextColor",
           label: "Cell text colour",
-          onSelect: () => setColorPopover({ x: openX, y: openY, target: { kind: "cell", attr: "textColor" }, initialValue: currentCellColor("textColor") }),
+          onSelect: () => setColorPopover({ x: openX, y: openY, target: { kind: "cell", attr: "textColor", scope: tableGridScope as TableGridScope }, initialValue: currentCellColor("textColor") }),
+        },
+        {
+          id: "table.contextMenu.cellBorderOptions",
+          label: "Cell border options",
+          onSelect: () => setTableBorderPopover({ x: openX, y: openY, scope: tableGridScope as TableGridScope, initial: currentCellBorderDraft(tableGridScope) }),
         },
       );
     }
     return items;
   };
 
-  const insertInlineFormula = () => {
-    const source = window.prompt("Formula (LaTeX)", "E=mc^2");
-    if (!source) return;
-    const declaration = atomDeclarations.find((entry) => entry.type === "formula")!;
+  /**
+   * Inserts a formula-library entry (see formulaLibrary.ts), then
+   * auto-selects the new atom and opens the existing edit-formula
+   * interaction immediately - most real use needs customization (different
+   * variable names, specific values), so landing the user straight into an
+   * editable state beats a silent insert-and-walk-away. Reuses the atom
+   * "node" selection pattern already used elsewhere (e.g. the context
+   * menu's own atom-selection logic) rather than inventing a new one.
+   */
+  const insertFormulaFromLibrary = (entry: FormulaLibraryEntry) => {
+    setFormulaLibraryPopover(null);
+    const declaration = atomDeclarations.find((atom) => atom.type === "formula")!;
     const resolved = runtime.editor.resolve({ pos: runtime.editor.selection.head });
+    const formulaAtomId = createNodeId();
     runtime.executeOperations(insertAtom(runtime.editor.document, atomScope(), {
-      declaration, nodeId: createNodeId(), ownerId: resolved.nodeId, offset: runtime.editor.selection.head.offset,
-      attrs: { source, notation: "latex" },
+      declaration, nodeId: formulaAtomId, ownerId: resolved.nodeId, offset: runtime.editor.selection.head.offset,
+      attrs: { source: entry.latex, notation: "latex" },
     }, blockContext()));
+    const range = runtime.editor.positions.rangeOf(formulaAtomId);
+    if (range) {
+      runtime.editor.setSelection({ type: "node", anchor: range.from, head: range.to }, { source: "api" });
+      runtime.surface.renderer?.render(runtime.editor.document, runtime.editor.selection);
+      editSelectedAtom();
+    }
+  };
+
+  /**
+   * Inserts plain text at the cursor via a real synthetic `beforeinput`
+   * event (inputType "insertText") rather than a hand-rolled operation -
+   * this is the exact same event InputController's own beforeInputListener
+   * already handles correctly for ordinary typing (replaceSelection),
+   * including deleting an active selection first. Verified this works
+   * identically across Chromium/Firefox/WebKit rather than assumed.
+   */
+  const insertSpecialCharacter = (char: string) => {
+    setSpecialCharPopover(null);
+    setRecentSpecialChars((current) => [char, ...current.filter((existing) => existing !== char)].slice(0, 8));
+    const root = runtime.surface.root;
+    if (!root) return;
+    root.dispatchEvent(new InputEvent("beforeinput", { inputType: "insertText", data: char, bubbles: true, cancelable: true }));
+    runtime.focus();
   };
 
   const insertBlockAtom = (type: "block_image" | "video" | "audio", attrs: Record<string, unknown>, nodeId: string): boolean => {
@@ -915,6 +1088,19 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
     let parentId: string | undefined;
     let index: number | undefined;
     const resolved = runtime.editor.resolve({ pos: selection.head });
+    // A selected atom's own parent is only a legal insertion point for a
+    // *block* atom (image/video/audio/table etc., whose parent is the
+    // document root or a table cell). An inline atom (formula, inline image)
+    // lives inside a paragraph - inserting a block atom there would nest a
+    // block inside a paragraph, which insertAtom's schema validation rejects,
+    // silently no-opping. Fall through to the generic "insert after the
+    // current block" logic below for that case instead.
+    const selectedBlockAtom = (() => {
+      if (selection.type !== "node") return false;
+      const scope = atomScope();
+      const atomType = scope.kind === "atomic-node" ? findNode(runtime.editor.document, scope.nodeId)?.type : undefined;
+      return atomType ? atomDeclarations.find((entry) => entry.type === atomType)?.group === "block" : false;
+    })();
     if (selection.type === "cell") {
       // A cell range resolves at the active cell's content boundary. Block
       // atoms belong inside that cell, never as invalid siblings of the row.
@@ -926,7 +1112,7 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
       // (the atom occupies one unit). Keep insertion in that same parent.
       parentId = resolved.parent.id;
       index = Math.max(selection.anchor.offset, selection.head.offset);
-    } else if (selection.type === "node") {
+    } else if (selectedBlockAtom) {
       parentId = resolved.parent.id;
       index = resolved.pos.offset;
     } else {
@@ -1254,129 +1440,292 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
     if (view) printSmartDocumentAsPdf(runtime.editor.document, view);
   };
 
+  const markTool = (id: string) => inlineToolDeclarations.find((tool) => tool.id === id)!;
+  // aria-pressed tri-state per docs/bugs/mark-toolbar-buttons-no-pressed-state.md's
+  // prescribed fix: SelectionDescription.marks already reports "all"/"partial"
+  // coverage per mark, so a selection only partially covered by e.g. bold
+  // reports aria-pressed="mixed" rather than silently rounding to true/false.
+  const markCoverage = (id: string): boolean | "mixed" | undefined => {
+    if (readOnly) return undefined;
+    const description = runtime.editor.resolveScope({ want: "describe" }) as SelectionDescription;
+    const markType = markTool(id).markType;
+    const entry = description.marks.find((entry) => entry.mark.type === markType);
+    if (!entry) return false;
+    return entry.coverage === "all" ? true : "mixed";
+  };
+  const toggleMark = (id: string) => { executeMarkTool(runtime.editor, markTool(id), "toggle"); runtime.focus(); };
+  const openLinkPopover = (event: React.MouseEvent<HTMLButtonElement>) => {
+    const description = runtime.editor.resolveScope({ want: "describe" }) as SelectionDescription;
+    const linkEntry = description.marks.find((entry) => entry.mark.type === "link");
+    const rect = event.currentTarget.getBoundingClientRect();
+    setLinkPopover({
+      x: rect.left, y: rect.bottom + 4,
+      editingExisting: Boolean(linkEntry),
+      href: typeof linkEntry?.mark.attrs?.href === "string" ? linkEntry.mark.attrs.href : "",
+      openInNewTab: linkEntry?.mark.attrs?.target === "_blank",
+      collapsed: description.collapsed,
+    });
+  };
+  const tableAction = (action: "row+" | "row-" | "column+" | "column-" | "merge" | "split" | "header" | "row-up" | "row-down" | "column-left" | "column-right" | "remove") => {
+    const disabled = readOnly || !tableSelected
+      || action === "merge" && (currentTableScope as TableGridScope).cellIds.length < 2
+      || action === "row-up" && (currentTableScope as TableGridScope).rect.top === 0
+      || action === "column-left" && (currentTableScope as TableGridScope).rect.left === 0;
+    return { disabled, onClick: () => runTable(action) };
+  };
+
+  // Rendered in two places (its home dropdown, and the narrow-viewport
+  // overflow menu) so nothing becomes unreachable once dropdowns collapse -
+  // see ToolbarPrimitives.tsx's MobileMoreMenu doc comment.
+  // Superscript/Subscript/Text colour/Background colour/Font size/Font
+  // family also get a standalone widePromote ToolbarButton (below, in the
+  // main toolbar row) that appears past theme.ts's 1440px breakpoint - this
+  // dropdown copy's `widePromote` flag hides it there so it isn't offered
+  // twice; below 1440px (including mobile) this copy is what's reachable,
+  // same as before. "Code" isn't promoted - see the docs/bugs/ writeup on
+  // why it stayed the dropdown's sole remaining item at wide widths.
+  const textStylesMenuItems = <>
+    <ToolbarMenuItem icon="code" label="Code" pressed={markCoverage("inlineCode")} disabled={readOnly} onClick={() => toggleMark("inlineCode")} />
+    <ToolbarMenuItem icon="superscript" label="Superscript" pressed={markCoverage("superscript")} disabled={readOnly} onClick={() => toggleMark("superscript")} widePromote />
+    <ToolbarMenuItem icon="subscript" label="Subscript" pressed={markCoverage("subscript")} disabled={readOnly} onClick={() => toggleMark("subscript")} widePromote />
+    <ToolbarMenuItem icon="textColor" label="Text colour" disabled={readOnly} widePromote onClick={(event) => {
+      const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+      setColorPopover({ x: rect.left, y: rect.bottom + 4, target: { kind: "mark", markId: "textColor" }, initialValue: currentMarkColor("textColor") });
+    }} />
+    <ToolbarMenuItem icon="backgroundColor" label="Background colour" disabled={readOnly} widePromote onClick={(event) => {
+      const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+      setColorPopover({ x: rect.left, y: rect.bottom + 4, target: { kind: "mark", markId: "backgroundColor" }, initialValue: currentMarkColor("backgroundColor") });
+    }} />
+    <ToolbarMenuItem icon="fontSize" label="Font size" disabled={readOnly} onClick={() => applyAttributedMark("fontSize")} widePromote />
+    <ToolbarMenuItem icon="fontFamily" label="Font family" disabled={readOnly} onClick={() => applyAttributedMark("fontFamily")} widePromote />
+  </>;
+  const paragraphToolsMenuItems = <>
+    <ToolbarMenuItem icon="moveUp" label="Move block up" disabled={readOnly} onClick={() => runBlock("up")} />
+    <ToolbarMenuItem icon="moveDown" label="Move block down" disabled={readOnly} onClick={() => runBlock("down")} />
+    <ToolbarMenuItem icon="indent" label="Indent block" disabled={readOnly} onClick={() => runBlock("indent")} />
+    <ToolbarMenuItem icon="outdent" label="Outdent block" disabled={readOnly} onClick={() => runBlock("outdent")} />
+  </>;
+  const listToolsMenuItems = <>
+    <ToolbarMenuItem icon="checkSquare" label="Check selected items" pressed={currentListScope.kind === "list-selection" && currentListScope.items.every((item) => findNode(runtime.editor.document, item.itemId)?.attrs?.checked === true)} disabled={readOnly || currentList?.attrs?.checkable !== true} onClick={toggleCheckedItems} />
+    <ToolbarMenuItem icon="indent" label="Indent list item" disabled={readOnly || !canIndent} onClick={() => runList("indent")} />
+    <ToolbarMenuItem icon="outdent" label="Outdent list item" disabled={readOnly || currentListParts.length === 0} onClick={() => runList("outdent")} />
+    <ToolbarMenuItem icon="moveUp" label="Move item up" disabled={readOnly || !canMoveUp} onClick={() => runList("up")} />
+    <ToolbarMenuItem icon="moveDown" label="Move item down" disabled={readOnly || !canMoveDown} onClick={() => runList("down")} />
+    <ToolbarMenuItem icon="restart" label="Restart numbering" disabled={readOnly || !orderedList} onClick={restartNumbering} />
+    <ToolbarMenuItem icon="continueNumbering" label="Continue numbering" disabled={readOnly || !orderedList} onClick={() => runtime.executeOperations(continueListNumbering(runtime.editor.document, currentListScope, {}, blockContext()), { preserveSelectionById: true })} />
+  </>;
+  // Remove link/Insert formula/Special characters also get a standalone
+  // widePromote ToolbarButton (see textStylesMenuItems's own comment above
+  // for the mechanism) - Insert video/audio and the selected-media actions
+  // stay dropdown-only, matching the report's own named tool list.
+  const insertMoreMenuItems = <>
+    <ToolbarMenuItem icon="unlink" label="Remove link" disabled={readOnly} onClick={removeLink} widePromote />
+    <ToolbarMenuItem icon="video" label="Insert video" disabled={readOnly || !mediaProvider} onClick={() => setMediaKind("video")} />
+    <ToolbarMenuItem icon="audio" label="Insert audio" disabled={readOnly || !mediaProvider} onClick={() => setMediaKind("audio")} />
+    <ToolbarMenuItem icon="formula" label="Insert formula" disabled={readOnly} widePromote onClick={(event) => {
+      const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+      setFormulaLibraryPopover({ x: rect.left, y: rect.bottom + 4 });
+    }} />
+    <ToolbarMenuItem icon="specialChar" label="Special characters" disabled={readOnly} widePromote onClick={(event) => {
+      const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+      setSpecialCharPopover({ x: rect.left, y: rect.bottom + 4 });
+    }} />
+    <ToolbarMenuItem icon="edit" label="Edit selected media" disabled={readOnly || !mediaAtomSelected} onClick={() => editSelectedAtom()} />
+    <ToolbarMenuItem icon="zoomIn" label="Enlarge selected media" disabled={readOnly || !resizableAtomSelected} onClick={() => editSelectedAtom(20)} />
+    <ToolbarMenuItem icon="zoomOut" label="Shrink selected media" disabled={readOnly || !resizableAtomSelected} onClick={() => editSelectedAtom(-20)} />
+    <ToolbarMenuItem icon="delete" label="Delete selected media" disabled={readOnly || !atomSelected} onClick={() => runtime.executeOperations(deleteAtom(runtime.editor.document, atomScope(), {}, blockContext()))} />
+  </>;
+  // "Remove row"/"Remove column"/"Remove table" renamed to "Delete ..." -
+  // matches the right-click table context menu's existing wording
+  // (table/plugin.ts's table.contextMenu.removeRow/removeColumn/removeTable
+  // contributions, labeled "Delete row"/"Delete column"/"Delete table")
+  // for the identical action, found as a wording inconsistency during the
+  // toolbar audit.
+  const tableToolsMenuItems = <>
+    <ToolbarMenuItem icon="addRow" label="Add row" {...tableAction("row+")} />
+    <ToolbarMenuItem icon="delete" label="Delete row" {...tableAction("row-")} />
+    <ToolbarMenuItem icon="addColumn" label="Add column" {...tableAction("column+")} />
+    <ToolbarMenuItem icon="delete" label="Delete column" {...tableAction("column-")} />
+    <ToolbarMenuItem icon="mergeCells" label="Merge cells" {...tableAction("merge")} />
+    <ToolbarMenuItem icon="splitCell" label="Split cell" {...tableAction("split")} />
+    <ToolbarMenuItem icon="headerRow" label="Header row" {...tableAction("header")} />
+    <ToolbarMenuItem icon="moveUp" label="Move row up" {...tableAction("row-up")} />
+    <ToolbarMenuItem icon="moveDown" label="Move row down" {...tableAction("row-down")} />
+    <ToolbarMenuItem icon="moveLeft" label="Move column left" {...tableAction("column-left")} />
+    <ToolbarMenuItem icon="moveRight" label="Move column right" {...tableAction("column-right")} />
+    <ToolbarMenuItem icon="deleteTable" label="Delete table" {...tableAction("remove")} />
+    <div className="srte-menu-separator" />
+    {/*
+      table_cell's border attrs already existed (or, for the per-side
+      overrides, were added specifically to back this control), already
+      rendered, already round-tripped through HTML/DOCX - just never
+      settable from this editor's own UI (only reachable by pasting HTML
+      that already had cell borders). Applies to whichever cell(s) are
+      currently selected - same per-cell granularity
+      setTableCellAttributesCommand already uses for background/text
+      colour, matching the model's own attribute placement (table_cell, not
+      table_row or table). One combined popover (sides/style/width/colour)
+      rather than separate controls - see TableBorderPopover.tsx's own doc
+      comment.
+    */}
+    <ToolbarMenuItem icon="cellBorder" label="Border options" disabled={readOnly || !tableSelected} onClick={(event) => {
+      const scope = runtime.editor.resolveScope({ want: "table-grid" });
+      if (!("kind" in scope) || scope.kind !== "table-grid") return;
+      const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+      setTableBorderPopover({ x: rect.left, y: rect.bottom + 4, scope: scope as TableGridScope, initial: currentCellBorderDraft(scope) });
+    }} />
+  </>;
+  const saveCopyMenuItems = <>
+    <ToolbarMenuItem label="Save as HTML" onClick={() => runExport("html")} />
+    <ToolbarMenuItem label="Save as Markdown" onClick={() => runExport("markdown")} />
+    <ToolbarMenuItem label="Save as Word document" onClick={() => void runDocxExport()} />
+    <ToolbarMenuItem label="Save as PDF" onClick={runPdfExport} />
+    <ToolbarMenuItem icon="json" label="Save as Smart RTE file" onClick={() => runExport("native")} />
+  </>;
+  const reviewMenuItems = <>
+    <ToolbarMenuItem icon="addComment" label="Add comment" disabled={!canComment} onClick={startComment} />
+    <ToolbarMenuItem icon="comments" label="Comments" pressed={commentPanelOpen} disabled={!commentProvider} onClick={() => setCommentPanelOpen((open) => !open)} />
+    <ToolbarMenuItem icon="suggest" label="Suggest deletion" disabled={!canSuggestDelete} onClick={suggestDelete} />
+    <ToolbarMenuItem icon="suggest" label="Suggest insertion" disabled={readOnly || !suggestionProvider} onClick={startSuggestInsert} />
+    <ToolbarMenuItem icon="suggest" label="Suggest removing this" disabled={readOnly || !suggestionProvider} onClick={suggestBlockRemoval} />
+    <ToolbarMenuItem icon="suggestions" label="Suggestions" pressed={suggestionPanelOpen} disabled={!suggestionProvider} onClick={() => setSuggestionPanelOpen((open) => !open)} />
+    <ToolbarMenuItem
+      icon="showEdits" label="Show edits" pressed={trackChangesEnabled}
+      title="Tracks ordinary typing and edits within a single paragraph as suggestions. Merging paragraphs together - typing over a selection that spans multiple paragraphs, or pressing Backspace/Delete at a paragraph boundary - still applies directly and can't be reviewed as a suggestion."
+      disabled={readOnly || !suggestionProvider} onClick={() => setTrackChangesEnabled((enabled) => !enabled)}
+    />
+  </>;
+
   return <section className={`srte-root srte-editor srte-canonical-authority${className ? ` ${className}` : ""}`} data-smart-authority="canonical">
     <div className="srte-toolbar" role="toolbar" aria-label="Formatting toolbar">
-      {inlineToolDeclarations.filter((tool) => labels[tool.id]).map((tool) => <button
-        type="button"
-        key={tool.id}
-        className="srte-tool-button"
-        aria-label={labels[tool.id]}
-        title={labels[tool.id]}
-        disabled={readOnly}
-        onMouseDown={(event) => event.preventDefault()}
-        onClick={(event) => {
-          if (tool.id === "textColor" || tool.id === "backgroundColor") {
+      <ToolbarGroup>
+        <ToolbarButton icon="bold" label="Bold" pressed={markCoverage("bold")} disabled={readOnly} onClick={() => toggleMark("bold")} />
+        <ToolbarButton icon="italic" label="Italic" pressed={markCoverage("italic")} disabled={readOnly} onClick={() => toggleMark("italic")} />
+        <ToolbarButton icon="underline" label="Underline" pressed={markCoverage("underline")} disabled={readOnly} onClick={() => toggleMark("underline")} />
+        <ToolbarButton icon="strikethrough" label="Strikethrough" pressed={markCoverage("strikethrough")} disabled={readOnly} onClick={() => toggleMark("strikethrough")} />
+        {/* Wide-viewport promoted copies of tools that also live in "More text styles" - see textStylesMenuItems's own comment. */}
+        <ToolbarButton icon="superscript" label="Superscript" pressed={markCoverage("superscript")} disabled={readOnly} onClick={() => toggleMark("superscript")} widePromote />
+        <ToolbarButton icon="subscript" label="Subscript" pressed={markCoverage("subscript")} disabled={readOnly} onClick={() => toggleMark("subscript")} widePromote />
+        <ToolbarButton icon="textColor" label="Text colour" disabled={readOnly} widePromote onClick={(event) => {
+          const rect = event.currentTarget.getBoundingClientRect();
+          setColorPopover({ x: rect.left, y: rect.bottom + 4, target: { kind: "mark", markId: "textColor" }, initialValue: currentMarkColor("textColor") });
+        }} />
+        <ToolbarButton icon="backgroundColor" label="Background colour" disabled={readOnly} widePromote onClick={(event) => {
+          const rect = event.currentTarget.getBoundingClientRect();
+          setColorPopover({ x: rect.left, y: rect.bottom + 4, target: { kind: "mark", markId: "backgroundColor" }, initialValue: currentMarkColor("backgroundColor") });
+        }} />
+        <ToolbarButton icon="fontSize" label="Font size" disabled={readOnly} onClick={() => applyAttributedMark("fontSize")} widePromote />
+        <ToolbarButton icon="fontFamily" label="Font family" disabled={readOnly} onClick={() => applyAttributedMark("fontFamily")} widePromote />
+        <ToolbarDropdown icon="textColor" label="More text styles" priority={2}>{textStylesMenuItems}</ToolbarDropdown>
+      </ToolbarGroup>
+
+      <ToolbarGroup>
+        <select
+          aria-label="Block type"
+          title="Block type"
+          value={currentBlockType}
+          disabled={readOnly}
+          onChange={(event) => transactBlock(setBlockTypeCommand(runtime.editor.document, blockScope(), {
+            type: event.target.value === "paragraph" ? "paragraph" : event.target.value === "code_block" ? "code_block" : "heading",
+            attrs: event.target.value.startsWith("heading-") ? { level: Number(event.target.value.slice(8)) } : {},
+          }, blockContext()))}
+        >
+          <option value="paragraph">Paragraph</option>
+          {Array.from({ length: 6 }, (_, index) => <option key={index + 1} value={`heading-${index + 1}`}>Heading {index + 1}</option>)}
+          <option value="code_block">Code block</option>
+        </select>
+        <ToolbarButton icon="alignLeft" label="Align left" ariaLabel="Align left" iconOnly disabled={readOnly} onClick={() => transactBlock(setBlockAttributes(runtime.editor.document, blockScope(), { attrs: { align: "left" } }, blockContext()))} />
+        <ToolbarButton icon="alignCenter" label="Align center" ariaLabel="Align center" iconOnly disabled={readOnly} onClick={() => transactBlock(setBlockAttributes(runtime.editor.document, blockScope(), { attrs: { align: "center" } }, blockContext()))} />
+        <ToolbarButton icon="alignRight" label="Align right" ariaLabel="Align right" iconOnly disabled={readOnly} onClick={() => transactBlock(setBlockAttributes(runtime.editor.document, blockScope(), { attrs: { align: "right" } }, blockContext()))} />
+        <ToolbarButton icon="alignJustify" label="Justify" ariaLabel="Align justify" iconOnly disabled={readOnly} onClick={() => transactBlock(setBlockAttributes(runtime.editor.document, blockScope(), { attrs: { align: "justify" } }, blockContext()))} />
+        <ToolbarButton icon="quote" label="Quote" ariaLabel="Blockquote" disabled={readOnly} onClick={toggleBlockquote} />
+        <ToolbarDropdown icon="moveUp" label="More paragraph tools" priority={2}>{paragraphToolsMenuItems}</ToolbarDropdown>
+      </ToolbarGroup>
+
+      <ToolbarGroup>
+        <ToolbarButton icon="bulletedList" label="Bulleted list" ariaLabel="Bulleted list" pressed={listStyleActive("disc")} disabled={readOnly} onClick={() => toggleList("disc")} />
+        <ToolbarButton icon="numberedList" label="Numbered list" ariaLabel="Numbered list" pressed={listStyleActive("decimal")} disabled={readOnly} onClick={() => toggleList("decimal")} />
+        <ToolbarButton icon="checklist" label="Checklist" ariaLabel="Checklist" pressed={listStyleActive("disc", true)} disabled={readOnly} onClick={() => toggleList("disc", true)} />
+        <ToolbarDropdown icon="restart" label="More list tools" priority={2}>
+          <div style={{ padding: "4px 8px" }}>
+            <select aria-label="List preset" title="List type / preset" disabled={readOnly || currentListParts.length !== 1} value={currentListPreset} onChange={(event) => {
+              const preset = event.target.value;
+              if (!preset || currentListParts.length !== 1) return;
+              // A preset choice applies to the whole list, regardless of how deep
+              // the cursor is nested — see outermostListId.
+              const rootId = outermostListId(currentListParts[0].listId);
+              runtime.executeOperations(setListPreset(runtime.editor.document, { ...currentListParts[0], listId: rootId }, { preset }, blockContext()), { preserveSelectionById: true });
+            }} style={{ width: "100%" }}>
+              <option value="">List preset</option>
+              {SMART_LIST_PRESETS.map((preset) => <option key={preset.id} value={preset.id}>
+                {preset.kind === "bullet" ? `Bullet · ${preset.label}` : `Number · ${preset.label}`}
+              </option>)}
+            </select>
+          </div>
+          <div className="srte-menu-separator" />
+          {listToolsMenuItems}
+        </ToolbarDropdown>
+      </ToolbarGroup>
+
+      <ToolbarGroup>
+        <ToolbarButton icon="link" label="Link" ariaLabel="Insert or edit link" disabled={readOnly} onClick={openLinkPopover} />
+        <ToolbarButton icon="image" label="Image" ariaLabel="Insert image" disabled={readOnly || !mediaProvider} onClick={() => setMediaKind("image")} />
+        {/* Wide-viewport promoted copies of tools that also live in "More to insert" - see insertMoreMenuItems's own comment. */}
+        <ToolbarButton icon="unlink" label="Remove link" disabled={readOnly} onClick={removeLink} widePromote />
+        <ToolbarButton icon="formula" label="Insert formula" disabled={readOnly} widePromote onClick={(event) => {
+          const rect = event.currentTarget.getBoundingClientRect();
+          setFormulaLibraryPopover({ x: rect.left, y: rect.bottom + 4 });
+        }} />
+        <ToolbarButton icon="specialChar" label="Special characters" disabled={readOnly} widePromote onClick={(event) => {
+          const rect = event.currentTarget.getBoundingClientRect();
+          setSpecialCharPopover({ x: rect.left, y: rect.bottom + 4 });
+        }} />
+        <ToolbarDropdown icon="video" label="More to insert" priority={2}>{insertMoreMenuItems}</ToolbarDropdown>
+      </ToolbarGroup>
+
+      <ToolbarGroup>
+        <ToolbarButton
+          icon="table" label="Insert table" ariaLabel="Insert table" disabled={readOnly}
+          onClick={(event) => {
             const rect = event.currentTarget.getBoundingClientRect();
-            setColorPopover({ x: rect.left, y: rect.bottom + 4, target: { kind: "mark", markId: tool.id }, initialValue: currentMarkColor(tool.id) });
-          } else if (tool.id === "fontSize" || tool.id === "fontFamily") applyAttributedMark(tool.id);
-          else { executeMarkTool(runtime.editor, tool, "toggle"); runtime.focus(); }
-        }}
-      >{labels[tool.id]}</button>)}
-      <select
-        aria-label="Block type"
-        value={currentBlockType}
-        disabled={readOnly}
-        onChange={(event) => transactBlock(setBlockTypeCommand(runtime.editor.document, blockScope(), {
-          type: event.target.value === "paragraph" ? "paragraph" : event.target.value === "code_block" ? "code_block" : "heading",
-          attrs: event.target.value.startsWith("heading-") ? { level: Number(event.target.value.slice(8)) } : {},
-        }, blockContext()))}
-      >
-        <option value="paragraph">Paragraph</option>
-        {Array.from({ length: 6 }, (_, index) => <option key={index + 1} value={`heading-${index + 1}`}>Heading {index + 1}</option>)}
-        <option value="code_block">Code block</option>
-      </select>
-      {(["left", "center", "right", "justify"] as const).map((align) => <button
-        key={align}
-        type="button"
-        className="srte-tool-button"
-        aria-label={`Align ${align}`}
-        disabled={readOnly}
-        onMouseDown={(event) => event.preventDefault()}
-        onClick={() => transactBlock(setBlockAttributes(runtime.editor.document, blockScope(), { attrs: { align } }, blockContext()))}
-      >{align}</button>)}
-      <button type="button" className="srte-tool-button" aria-label="Blockquote" disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={toggleBlockquote}>Blockquote</button>
-      <button type="button" className="srte-tool-button" aria-label="Move block up" disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={() => runBlock("up")}>Block ↑</button>
-      <button type="button" className="srte-tool-button" aria-label="Move block down" disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={() => runBlock("down")}>Block ↓</button>
-      <button type="button" className="srte-tool-button" aria-label="Indent block" disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={() => runBlock("indent")}>Block indent</button>
-      <button type="button" className="srte-tool-button" aria-label="Outdent block" disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={() => runBlock("outdent")}>Block outdent</button>
-      <button type="button" className="srte-tool-button" aria-label="Insert or edit link" disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={(event) => {
-        const description = runtime.editor.resolveScope({ want: "describe" }) as SelectionDescription;
-        const linkEntry = description.marks.find((entry) => entry.mark.type === "link");
-        const rect = event.currentTarget.getBoundingClientRect();
-        setLinkPopover({
-          x: rect.left, y: rect.bottom + 4,
-          editingExisting: Boolean(linkEntry),
-          href: typeof linkEntry?.mark.attrs?.href === "string" ? linkEntry.mark.attrs.href : "",
-          openInNewTab: linkEntry?.mark.attrs?.target === "_blank",
-          collapsed: description.collapsed,
-        });
-      }}>Link</button>
-      <button type="button" className="srte-tool-button" aria-label="Remove link" disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={removeLink}>Unlink</button>
-      <button type="button" className="srte-tool-button" aria-label="Bulleted list" aria-pressed={listStyleActive("disc")} disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={() => toggleList("disc")}>Bullets</button>
-      <button type="button" className="srte-tool-button" aria-label="Numbered list" aria-pressed={listStyleActive("decimal")} disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={() => toggleList("decimal")}>Numbering</button>
-      <button type="button" className="srte-tool-button" aria-label="Checklist" aria-pressed={listStyleActive("disc", true)} disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={() => toggleList("disc", true)}>Checklist</button>
-      <select aria-label="List preset" title="List type / preset" disabled={readOnly || currentListParts.length !== 1} value={currentListPreset} onChange={(event) => {
-        const preset = event.target.value;
-        if (!preset || currentListParts.length !== 1) return;
-        // A preset choice applies to the whole list, regardless of how deep
-        // the cursor is nested — see outermostListId.
-        const rootId = outermostListId(currentListParts[0].listId);
-        runtime.executeOperations(setListPreset(runtime.editor.document, { ...currentListParts[0], listId: rootId }, { preset }, blockContext()), { preserveSelectionById: true });
-      }}>
-        <option value="">List preset</option>
-        {SMART_LIST_PRESETS.map((preset) => <option key={preset.id} value={preset.id}>
-          {preset.kind === "bullet" ? `Bullet · ${preset.label}` : `Number · ${preset.label}`}
-        </option>)}
-      </select>
-      <button type="button" className="srte-tool-button" aria-label="Check selected items" aria-pressed={currentListScope.kind === "list-selection" && currentListScope.items.every((item) => findNode(runtime.editor.document, item.itemId)?.attrs?.checked === true)} disabled={readOnly || currentList?.attrs?.checkable !== true} onMouseDown={(event) => event.preventDefault()} onClick={toggleCheckedItems}>Check</button>
-      <button type="button" className="srte-tool-button" aria-label="Indent list item" disabled={readOnly || !canIndent} onMouseDown={(event) => event.preventDefault()} onClick={() => runList("indent")}>Indent</button>
-      <button type="button" className="srte-tool-button" aria-label="Outdent list item" disabled={readOnly || currentListParts.length === 0} onMouseDown={(event) => event.preventDefault()} onClick={() => runList("outdent")}>Outdent</button>
-      <button type="button" className="srte-tool-button" aria-label="Move item up" disabled={readOnly || !canMoveUp} onMouseDown={(event) => event.preventDefault()} onClick={() => runList("up")}>Item ↑</button>
-      <button type="button" className="srte-tool-button" aria-label="Move item down" disabled={readOnly || !canMoveDown} onMouseDown={(event) => event.preventDefault()} onClick={() => runList("down")}>Item ↓</button>
-      <button type="button" className="srte-tool-button" aria-label="Restart numbering" disabled={readOnly || !orderedList} onMouseDown={(event) => event.preventDefault()} onClick={restartNumbering}>Restart</button>
-      <button type="button" className="srte-tool-button" aria-label="Continue numbering" disabled={readOnly || !orderedList} onMouseDown={(event) => event.preventDefault()} onClick={() => runtime.executeOperations(continueListNumbering(runtime.editor.document, currentListScope, {}, blockContext()), { preserveSelectionById: true })}>Continue</button>
-      <button type="button" className="srte-tool-button" aria-label="Insert table" disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={insertTable}>Table 2×2</button>
-      {([["row+", "Add row"], ["row-", "Remove row"], ["column+", "Add column"], ["column-", "Remove column"], ["merge", "Merge cells"], ["split", "Split cell"], ["header", "Header row"], ["row-up", "Move row up"], ["row-down", "Move row down"], ["column-left", "Move column left"], ["column-right", "Move column right"], ["remove", "Remove table"]] as const).map(([action, label]) => <button
-        key={action} type="button" className="srte-tool-button" aria-label={label} disabled={readOnly || !tableSelected
-          || action === "merge" && (currentTableScope as TableGridScope).cellIds.length < 2
-          || action === "row-up" && (currentTableScope as TableGridScope).rect.top === 0
-          || action === "column-left" && (currentTableScope as TableGridScope).rect.left === 0}
-        onMouseDown={(event) => event.preventDefault()} onClick={() => runTable(action)}
-      >{label}</button>)}
-      <button type="button" className="srte-tool-button" aria-label="Insert image" disabled={readOnly || !mediaProvider} onMouseDown={(event) => event.preventDefault()} onClick={() => setMediaKind("image")}>Image</button>
-      <button type="button" className="srte-tool-button" aria-label="Insert video" disabled={readOnly || !mediaProvider} onMouseDown={(event) => event.preventDefault()} onClick={() => setMediaKind("video")}>Video</button>
-      <button type="button" className="srte-tool-button" aria-label="Insert audio" disabled={readOnly || !mediaProvider} onMouseDown={(event) => event.preventDefault()} onClick={() => setMediaKind("audio")}>Audio</button>
-      <button type="button" className="srte-tool-button" aria-label="Insert formula" disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={insertInlineFormula}>Formula</button>
-      <button type="button" className="srte-tool-button" aria-label="Edit selected atom" disabled={readOnly || !mediaAtomSelected} onMouseDown={(event) => event.preventDefault()} onClick={() => editSelectedAtom()}>Edit media</button>
-      <button type="button" className="srte-tool-button" aria-label="Grow selected atom" disabled={readOnly || !mediaAtomSelected} onMouseDown={(event) => event.preventDefault()} onClick={() => editSelectedAtom(20)}>Resize +</button>
-      <button type="button" className="srte-tool-button" aria-label="Shrink selected atom" disabled={readOnly || !mediaAtomSelected} onMouseDown={(event) => event.preventDefault()} onClick={() => editSelectedAtom(-20)}>Resize −</button>
-      <button type="button" className="srte-tool-button" aria-label="Delete selected atom" disabled={readOnly || !atomSelected} onMouseDown={(event) => event.preventDefault()} onClick={() => runtime.executeOperations(deleteAtom(runtime.editor.document, atomScope(), {}, blockContext()))}>Delete media</button>
+            setTableSizePopover({ x: rect.left, y: rect.bottom + 4 });
+          }}
+        />
+        <ToolbarDropdown icon="mergeCells" label="Table tools" priority={2}>{tableToolsMenuItems}</ToolbarDropdown>
+      </ToolbarGroup>
+
       <input ref={importRef} type="file" accept=".html,.htm,.md,.markdown,.docx,.pdf,text/html,text/markdown,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf" hidden onChange={(event) => {
         const file = event.currentTarget.files?.[0];
         if (file) void runImport(file);
         event.currentTarget.value = "";
       }} />
-      <button type="button" className="srte-tool-button" aria-label="Import document" disabled={readOnly} onClick={() => importRef.current?.click()}>Import</button>
-      <button type="button" className="srte-tool-button" aria-label="Export HTML" onClick={() => runExport("html")}>Export HTML</button>
-      <button type="button" className="srte-tool-button" aria-label="Export Markdown" onClick={() => runExport("markdown")}>Export Markdown</button>
-      <button type="button" className="srte-tool-button" aria-label="Export DOCX" onClick={() => void runDocxExport()}>Export DOCX</button>
-      <button type="button" className="srte-tool-button" aria-label="Export PDF" onClick={runPdfExport}>Export PDF</button>
-      <button type="button" className="srte-tool-button" aria-label="Export native document" onClick={() => runExport("native")}>Export Native</button>
-      <button type="button" className="srte-tool-button" aria-label="Version history" disabled={readOnly || !versionProvider} onMouseDown={(event) => event.preventDefault()} onClick={() => setVersionHistoryOpen(true)}>Version history</button>
-      <button type="button" className="srte-tool-button" aria-label="Add comment" disabled={!canComment} onMouseDown={(event) => event.preventDefault()} onClick={startComment}>Add comment</button>
-      <button type="button" className="srte-tool-button" aria-label="Comments" disabled={!commentProvider} onMouseDown={(event) => event.preventDefault()} onClick={() => setCommentPanelOpen((open) => !open)}>Comments</button>
-      <button type="button" className="srte-tool-button" aria-label="Suggest deletion" disabled={!canSuggestDelete} onMouseDown={(event) => event.preventDefault()} onClick={suggestDelete}>Suggest deletion</button>
-      <button type="button" className="srte-tool-button" aria-label="Suggest insertion" disabled={readOnly || !suggestionProvider} onMouseDown={(event) => event.preventDefault()} onClick={startSuggestInsert}>Suggest insertion</button>
-      <button type="button" className="srte-tool-button" aria-label="Suggest block removal" disabled={readOnly || !suggestionProvider} onMouseDown={(event) => event.preventDefault()} onClick={suggestBlockRemoval}>Suggest block removal</button>
-      <button type="button" className="srte-tool-button" aria-label="Suggestions" disabled={!suggestionProvider} onMouseDown={(event) => event.preventDefault()} onClick={() => setSuggestionPanelOpen((open) => !open)}>Suggestions</button>
-      <button
-        type="button" className="srte-tool-button" aria-label="Track changes" aria-pressed={trackChangesEnabled}
-        title="Tracks ordinary typing and edits within a single paragraph as suggestions. Merging paragraphs together - typing over a selection that spans multiple paragraphs, or pressing Backspace/Delete at a paragraph boundary - still applies directly and can't be reviewed as a suggestion."
-        disabled={readOnly || !suggestionProvider} onMouseDown={(event) => event.preventDefault()}
-        onClick={() => setTrackChangesEnabled((enabled) => !enabled)}
-      >Track changes</button>
-      <button type="button" className="srte-tool-button" aria-label="Undo" disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={() => { runtime.editor.undo(); runtime.focus(); }}>Undo</button>
-      <button type="button" className="srte-tool-button" aria-label="Redo" disabled={readOnly} onMouseDown={(event) => event.preventDefault()} onClick={() => { runtime.editor.redo(); runtime.focus(); }}>Redo</button>
+      <ToolbarGroup>
+        <ToolbarButton icon="import" label="Import" ariaLabel="Import document" disabled={readOnly} onClick={() => importRef.current?.click()} />
+        <ToolbarDropdown icon="saveCopy" label="Save a copy" priority={2}>{saveCopyMenuItems}</ToolbarDropdown>
+        <ToolbarButton icon="history" label="Version history" ariaLabel="Version history" disabled={readOnly || !versionProvider} onClick={() => setVersionHistoryOpen(true)} />
+        <ToolbarDropdown icon="comments" label="Review" priority={2}>{reviewMenuItems}</ToolbarDropdown>
+      </ToolbarGroup>
+
+      <ToolbarGroup>
+        <ToolbarButton icon="undo" label="Undo" ariaLabel="Undo" disabled={readOnly} onClick={() => { runtime.editor.undo(); runtime.focus(); }} />
+        <ToolbarButton icon="redo" label="Redo" ariaLabel="Redo" disabled={readOnly} onClick={() => { runtime.editor.redo(); runtime.focus(); }} />
+      </ToolbarGroup>
+
+      <MobileMoreMenu>
+        {textStylesMenuItems}
+        <div className="srte-menu-separator" />
+        {paragraphToolsMenuItems}
+        <div className="srte-menu-separator" />
+        {listToolsMenuItems}
+        <div className="srte-menu-separator" />
+        {insertMoreMenuItems}
+        <div className="srte-menu-separator" />
+        {tableToolsMenuItems}
+        <div className="srte-menu-separator" />
+        {saveCopyMenuItems}
+        <div className="srte-menu-separator" />
+        {reviewMenuItems}
+      </MobileMoreMenu>
     </div>
     {mediaKind === "image" && mediaManager && mediaProvider && <MediaManager
       open
@@ -1442,6 +1791,7 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
       initialOpenInNewTab={linkPopover.openInNewTab}
       showTextInput={linkPopover.collapsed && !linkPopover.editingExisting}
       showRemove={linkPopover.editingExisting}
+      autoFocus={!linkPopover.autoTriggered}
       onApply={applyLink}
       onRemove={removeLink}
       onCancel={() => {
@@ -1456,6 +1806,7 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
       width={typeof selectedAtomNode?.attrs?.width === "number" ? selectedAtomNode.attrs.width : undefined}
       height={typeof selectedAtomNode?.attrs?.height === "number" ? selectedAtomNode.attrs.height : undefined}
       src={typeof selectedAtomNode?.attrs?.src === "string" ? selectedAtomNode.attrs.src : undefined}
+      resizable={resizableAtomSelected}
       onEdit={() => editSelectedAtom()}
       onResize={(by) => editSelectedAtom(by)}
       onResizeTo={resizeSelectedAtomTo}
@@ -1467,12 +1818,47 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
       y={colorPopover.y}
       label={colorPopover.target.kind === "mark"
         ? (colorPopover.target.markId === "textColor" ? "Text colour" : "Background colour")
-        : (colorPopover.target.attr === "textColor" ? "Cell text colour" : "Cell background colour")}
+        : colorPopover.target.attr === "textColor" ? "Cell text colour" : "Cell background colour"}
       {...(colorPopover.initialValue ? { initialValue: colorPopover.initialValue } : {})}
       recentColors={recentColors[colorBucketFor(colorPopover.target)]}
       onPreview={previewColor}
       onApply={applyColor}
       onCancel={cancelColorPopover}
+    />}
+    {tableSizePopover && <TableSizePickerPopover
+      x={tableSizePopover.x}
+      y={tableSizePopover.y}
+      onInsert={(rows, columns) => {
+        setTableSizePopover(null);
+        insertTable(rows, columns);
+        runtime.focus();
+      }}
+      onCancel={() => {
+        setTableSizePopover(null);
+        runtime.focus();
+      }}
+    />}
+    {tableBorderPopover && <TableBorderPopover
+      x={tableBorderPopover.x}
+      y={tableBorderPopover.y}
+      initial={tableBorderPopover.initial}
+      recentColors={recentColors.border}
+      onPreview={previewCellBorder}
+      onApply={applyCellBorderCommit}
+      onCancel={cancelTableBorderPopover}
+    />}
+    {formulaLibraryPopover && <FormulaLibraryPopover
+      x={formulaLibraryPopover.x}
+      y={formulaLibraryPopover.y}
+      onInsert={insertFormulaFromLibrary}
+      onCancel={() => { setFormulaLibraryPopover(null); runtime.focus(); }}
+    />}
+    {specialCharPopover && <SpecialCharacterPopover
+      x={specialCharPopover.x}
+      y={specialCharPopover.y}
+      recentCharacters={recentSpecialChars}
+      onInsert={insertSpecialCharacter}
+      onCancel={() => { setSpecialCharPopover(null); runtime.focus(); }}
     />}
     {!readOnly && selectedTableElement && <TableResizeHandles
       tableElement={selectedTableElement}

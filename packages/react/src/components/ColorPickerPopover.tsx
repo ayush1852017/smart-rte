@@ -6,26 +6,80 @@ export interface ColorPickerPopoverProps {
   label: string;
   initialValue?: string;
   /**
-   * Continuous live-preview callback, fired on every native color input
-   * drag frame (its `input` event, which is what React's own `onChange`
-   * already maps to for this element type - see the native-input `onChange`
-   * handler below) - distinct from `onApply`, which only fires once, on a
-   * genuine, deliberate commit.
+   * Continuous live-preview callback, fired on every drag frame of the
+   * saturation/value square or hue slider (and on every valid typed hex) -
+   * distinct from `onApply`, which fires once, when the popover is actually
+   * dismissed with a real change staged.
    */
   onPreview?: (hex: string) => void;
-  /** Small MRU row of previously-committed colors for this same picker context, most-recent first. Optional/omittable - an empty or absent list simply renders no row. */
+  /** Up to 4 previously-committed colors for this same picker context, most-recent first. */
   recentColors?: readonly string[];
   onApply: (hex: string) => void;
+  /** Discard: revert to the color the popover opened with. The only way to *not* commit - every other dismissal (outside click, Escape, the close button) commits whatever is currently staged. */
   onCancel: () => void;
 }
 
 const HEX_PATTERN = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i;
 
+const normalizeHex = (value: string): string | null => {
+  if (!HEX_PATTERN.test(value)) return null;
+  if (value.length === 4) return `#${value[1]}${value[1]}${value[2]}${value[2]}${value[3]}${value[3]}`.toLowerCase();
+  return value.toLowerCase();
+};
+
+const hsvToRgb = (h: number, s: number, v: number): [number, number, number] => {
+  const sf = s / 100, vf = v / 100;
+  const c = vf * sf;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = vf - c;
+  const [r, g, b] = h < 60 ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x] : h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x];
+  return [Math.round((r + m) * 255), Math.round((g + m) * 255), Math.round((b + m) * 255)];
+};
+
+const rgbToHex = (r: number, g: number, b: number): string =>
+  `#${[r, g, b].map((channel) => Math.max(0, Math.min(255, channel)).toString(16).padStart(2, "0")).join("")}`;
+
+const hexToRgb = (hex: string): [number, number, number] | null => {
+  const normalized = normalizeHex(hex);
+  if (!normalized) return null;
+  const value = Number.parseInt(normalized.slice(1), 16);
+  return [(value >> 16) & 255, (value >> 8) & 255, value & 255];
+};
+
+const rgbToHsv = (r: number, g: number, b: number): [number, number, number] => {
+  const rf = r / 255, gf = g / 255, bf = b / 255;
+  const max = Math.max(rf, gf, bf), min = Math.min(rf, gf, bf), d = max - min;
+  let h = 0;
+  if (d !== 0) {
+    if (max === rf) h = 60 * (((gf - bf) / d) % 6);
+    else if (max === gf) h = 60 * ((bf - rf) / d + 2);
+    else h = 60 * ((rf - gf) / d + 4);
+  }
+  if (h < 0) h += 360;
+  return [h, max === 0 ? 0 : (d / max) * 100, max * 100];
+};
+
+const hexToHsv = (hex: string): [number, number, number] => {
+  const rgb = hexToRgb(hex);
+  return rgb ? rgbToHsv(...rgb) : [0, 0, 0];
+};
+
+const buttonStyle: React.CSSProperties = {
+  minHeight: 32,
+  padding: "0 12px",
+  border: "1px solid var(--srte-input-border)",
+  borderRadius: 8,
+  background: "var(--srte-input-bg)",
+  color: "var(--srte-menu-text)",
+  cursor: "pointer",
+  fontWeight: 500,
+  fontSize: 13,
+};
+
 const inputStyle: React.CSSProperties = {
   width: "100%",
-  height: 36,
+  height: 32,
   boxSizing: "border-box",
-  marginTop: 5,
   padding: "0 10px",
   border: "1px solid var(--srte-input-border)",
   borderRadius: 8,
@@ -35,59 +89,65 @@ const inputStyle: React.CSSProperties = {
   font: "inherit",
 };
 
-const buttonStyle: React.CSSProperties = {
-  minHeight: 36,
-  padding: "0 11px",
-  border: "1px solid var(--srte-input-border)",
-  borderRadius: 8,
-  background: "var(--srte-input-bg)",
-  color: "var(--srte-menu-text)",
-  cursor: "pointer",
-  fontWeight: 500,
+/** Drives a square/slider from pointer drag - shared by the SV square and the hue strip below, differing only in how a client offset maps to a value. */
+const useDrag = (onMove: (clientX: number, clientY: number, rect: DOMRect) => void) => {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    onMove(event.clientX, event.clientY, rect);
+    const move = (moveEvent: PointerEvent) => onMove(moveEvent.clientX, moveEvent.clientY, rect);
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+  return { ref, onPointerDown };
 };
 
 /**
- * Phase 11.5 §2.4: replaces window.prompt("#000000") for textColor/
- * backgroundColor with a real picker, following LinkEditorPopover's
- * positioning/keyboard-dismiss pattern for consistency. No command-layer
- * change - both still resolve to the same applyAttributedMark({value: hex})
- * call CanonicalAuthorityEditor already makes.
+ * Phase 11.5 §2.4 originally shipped a native `<input type="color">` as the
+ * primary picker (see git history) - reverted here in favor of a fully
+ * in-page saturation/value square + hue strip, specifically so the drag
+ * surface is visible on the very first click (a native color input needs a
+ * *second* click to open its own OS-level dialog) and so every drag frame
+ * is a real, page-owned pointer event this component fully controls -
+ * sidestepping the whole "which native event means the user is actually
+ * done" problem a native input can never answer reliably (see
+ * docs/bugs/color-popover-closes-on-first-native-picker-interaction.md and
+ * docs/bugs/color-preview-render-steals-focus-from-popover.md, both about
+ * that exact native-event ambiguity).
  *
- * Post-batch-2: the preset swatch grid was removed per explicit request
- * ("remove color options ... only keep color picker") - a native
- * <input type="color"> is now the primary picker, with the hex input for
- * typing an exact value. The native input's onChange only stages the
- * value (setHex) rather than calling apply() directly - apply() calls
- * onApply, which closes this popover (setColorPopover(null) in
- * CanonicalAuthorityEditor), and some browsers fire onChange on the very
- * first interaction with the native picker (opening it, or an
- * intermediate drag step), not only on a final commit - auto-applying on
- * every such event closed the popover before the user could actually
- * finish picking a color. The explicit Apply button (already existed for
- * the hex input) is now the single, unambiguous commit action.
+ * Commit model: there is no separate Apply button. Dragging (or typing a
+ * valid hex, or clicking a recent swatch) stages a live preview via
+ * `onPreview`; closing the popover *any* way other than the explicit
+ * Discard button - outside click, Escape, the × button - commits whatever
+ * is currently staged via `onApply`. Discard is the only way back to the
+ * color the popover opened with.
  */
 export function ColorPickerPopover({ x, y, label, initialValue = "#000000", recentColors, onPreview, onApply, onCancel }: ColorPickerPopoverProps) {
-  const [hex, setHex] = useState(initialValue);
+  const [hsv, setHsv] = useState(() => hexToHsv(initialValue));
+  const hex = rgbToHex(...hsvToRgb(hsv[0], hsv[1], hsv[2]));
+  const [hexText, setHexText] = useState(hex);
   const [error, setError] = useState("");
-  const hexRef = useRef<HTMLInputElement | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const titleId = useId();
   const errorId = useId();
-  // The 40-swatch grid (up from 12) made this popover tall enough that a
-  // fixed height estimate for the position clamp went stale immediately -
-  // the same real-measure-then-position fix ContextMenu.tsx uses, rather
-  // than tuning another magic number that will just go stale again next
-  // time the content changes.
-  const [placement, setPlacement] = useState<{ left: number; top: number; maxHeight: number } | null>(null);
-  // CanonicalAuthorityEditor passes a fresh onCancel closure on every
-  // render - reading it through a ref (rather than depending on it
-  // directly) keeps the outside-click listener mounted exactly once for
-  // this popover's lifetime, the same fix ContextMenu.tsx's own
-  // outside-click listener needed (see docs/bugs/
-  // context-menu-outside-click-dismiss-untested.md) rather than a fresh
-  // teardown/reattach on every parent re-render.
+  const [placement, setPlacement] = useState<{ left: number; top: number } | null>(null);
+  // Nothing has actually changed until a drag frame, a valid typed hex, or a
+  // recent-swatch click stages one - closing without ever touching anything
+  // must be a true no-op, not commit an identical "new" color as a fresh
+  // history entry.
+  const stagedRef = useRef(false);
+  const hexRef = useRef(hex);
+  hexRef.current = hex;
+  const onApplyRef = useRef(onApply);
+  onApplyRef.current = onApply;
   const onCancelRef = useRef(onCancel);
   onCancelRef.current = onCancel;
+
+  useEffect(() => { setHexText(hex); }, [hex]);
 
   useLayoutEffect(() => {
     const el = rootRef.current;
@@ -102,36 +162,56 @@ export function ColorPickerPopover({ x, y, label, initialValue = "#000000", rece
     const overflowsBottom = y + height > viewportHeight - margin;
     const top = overflowsBottom ? y - height : y;
     const clampedTop = Math.min(Math.max(margin, top), Math.max(margin, viewportHeight - margin));
-    setPlacement({ left: clampedLeft, top: clampedTop, maxHeight: viewportHeight - clampedTop - margin });
+    setPlacement({ left: clampedLeft, top: clampedTop });
   }, [x, y]);
 
-  useEffect(() => {
-    if (!placement) return;
-    hexRef.current?.focus();
-    hexRef.current?.select();
-  }, [placement]);
+  const stage = (nextHsv: [number, number, number]) => {
+    stagedRef.current = true;
+    setHsv(nextHsv);
+    onPreview?.(rgbToHex(...hsvToRgb(nextHsv[0], nextHsv[1], nextHsv[2])));
+  };
+
+  const svDrag = useDrag((clientX, clientY, rect) => {
+    const s = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)) * 100;
+    const v = 100 - Math.max(0, Math.min(1, (clientY - rect.top) / rect.height)) * 100;
+    stage([hsv[0], s, v]);
+  });
+  const hueDrag = useDrag((clientX, _clientY, rect) => {
+    const h = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)) * 360;
+    stage([h, hsv[1], hsv[2]]);
+  });
+
+  const commitAndClose = () => {
+    if (stagedRef.current) onApplyRef.current(hexRef.current);
+    else onCancelRef.current();
+  };
 
   useEffect(() => {
     const dismissIfOutside = (event: Event) => {
-      if (rootRef.current && !rootRef.current.contains(event.target as Node)) onCancelRef.current();
+      if (rootRef.current && !rootRef.current.contains(event.target as Node)) commitAndClose();
     };
-    // Both pointerdown and mousedown, same defense-in-depth reasoning as
-    // ContextMenu.tsx: pointerdown is the primary signal, mousedown covers
-    // any embedding context that isn't guaranteed to dispatch PointerEvents.
     window.addEventListener("pointerdown", dismissIfOutside, true);
     window.addEventListener("mousedown", dismissIfOutside, true);
     return () => {
       window.removeEventListener("pointerdown", dismissIfOutside, true);
       window.removeEventListener("mousedown", dismissIfOutside, true);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const apply = (value: string) => {
-    if (!HEX_PATTERN.test(value)) {
-      setError("Enter a valid hex color, e.g. #336699.");
-      return;
-    }
-    onApply(value);
+  useEffect(() => {
+    const onWindowKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") commitAndClose();
+    };
+    window.addEventListener("keydown", onWindowKeyDown);
+    return () => window.removeEventListener("keydown", onWindowKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const applyRecentColor = (swatch: string) => {
+    const rgb = hexToRgb(swatch);
+    if (!rgb) return;
+    stage(rgbToHsv(...rgb));
   };
 
   return (
@@ -147,9 +227,6 @@ export function ColorPickerPopover({ x, y, label, initialValue = "#000000", rece
         visibility: placement ? "visible" : "hidden",
         zIndex: 70,
         width: 224,
-        maxWidth: "calc(100vw - 16px)",
-        maxHeight: placement ? placement.maxHeight : "calc(100vh - 16px)",
-        overflowY: "auto",
         boxSizing: "border-box",
         background: "var(--srte-menu-bg)",
         color: "var(--srte-menu-text)",
@@ -158,92 +235,133 @@ export function ColorPickerPopover({ x, y, label, initialValue = "#000000", rece
         boxShadow: "var(--srte-menu-shadow)",
         padding: 14,
       }}
-      onKeyDown={(event) => {
-        if (event.key === "Escape") {
-          event.preventDefault();
-          onCancel();
-        }
-        if (event.key === "Enter") {
-          event.preventDefault();
-          apply(hex);
-        }
-      }}
     >
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
         <div id={titleId} style={{ fontWeight: 650 }}>{label}</div>
         <button
           type="button"
           aria-label="Close color picker"
-          title="Close"
-          onClick={onCancel}
+          title="Close (keeps the current color)"
+          onClick={commitAndClose}
           style={{ ...buttonStyle, minWidth: 28, minHeight: 28, padding: 0, border: 0, background: "transparent", fontSize: 18 }}
         >
           ×
         </button>
       </div>
 
-      <label style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, fontSize: 12, fontWeight: 600 }}>
-        <input
-          type="color"
-          data-srte-color-native-input="true"
-          aria-label="Pick a colour"
-          value={HEX_PATTERN.test(hex) && hex.length === 7 ? hex : "#000000"}
-          onChange={(event) => {
-            // React's onChange for an <input> fires on the native `input`
-            // event, not `change` - this already fires continuously during
-            // a drag inside the native picker (see docs/bugs/
-            // color-popover-closes-on-first-native-picker-interaction.md,
-            // which is exactly why that bug happened: an earlier version of
-            // this handler called onApply directly here). Live-preview the
-            // value as it changes; deliberately never auto-commits from
-            // here or from any native event on this input - only the
-            // explicit Apply button (or Enter in the hex field) commits and
-            // closes the popover, exactly as that fix established. Some
-            // browsers/OSes fire a "final" native event well before the
-            // user is actually done choosing (the same root cause the
-            // linked bug had), so nothing native-event-driven can be
-            // trusted as "the user is finished."
-            const target = event.currentTarget;
-            setHex(target.value);
-            onPreview?.(target.value);
-            // onPreview synchronously re-renders the live document (a real,
-            // non-history model update, so a multi-node mark selection
-            // previews correctly - not a DOM-only style hack). Syncing that
-            // render's selection into the contenteditable surface is itself
-            // what steals focus here: setting a native Selection range
-            // inside a focusable contenteditable element focuses it as a
-            // browser-intrinsic side effect, independent of any explicit
-            // .focus() call in this codebase. Reclaiming focus immediately
-            // afterward, still within this same synchronous handler, undoes
-            // that before the browser paints or the user notices - without
-            // this, every drag frame silently kicks focus back to the main
-            // editor, breaking Escape-to-cancel and interrupting the drag.
-            target.focus();
-          }}
+      <div
+        ref={svDrag.ref}
+        data-srte-color-sv-square="true"
+        role="slider"
+        aria-label="Saturation and brightness"
+        tabIndex={0}
+        // Without this, clicking to drag focuses this div (it's a focusable
+        // slider for keyboard access), which collapses the editor's own
+        // native selection before the preview can apply a mark to it - the
+        // same focus-stealing class of bug fixed for LinkEditorPopover
+        // (docs/bugs/link-overlay-autofocus-steals-editor-focus-on-plain-click.md)
+        // and the toolbar dropdowns (docs/bugs/toolbar-dropdown-summary-steals-editor-focus.md).
+        onMouseDown={(event) => event.preventDefault()}
+        onPointerDown={svDrag.onPointerDown}
+        onKeyDown={(event) => {
+          const step = event.shiftKey ? 10 : 2;
+          if (event.key === "ArrowRight") stage([hsv[0], Math.min(100, hsv[1] + step), hsv[2]]);
+          else if (event.key === "ArrowLeft") stage([hsv[0], Math.max(0, hsv[1] - step), hsv[2]]);
+          else if (event.key === "ArrowUp") stage([hsv[0], hsv[1], Math.min(100, hsv[2] + step)]);
+          else if (event.key === "ArrowDown") stage([hsv[0], hsv[1], Math.max(0, hsv[2] - step)]);
+          else return;
+          event.preventDefault();
+        }}
+        style={{
+          position: "relative",
+          width: "100%",
+          height: 130,
+          borderRadius: 8,
+          marginBottom: 10,
+          cursor: "crosshair",
+          touchAction: "none",
+          background: `linear-gradient(to top, #000, transparent), linear-gradient(to right, #fff, hsl(${hsv[0]}, 100%, 50%))`,
+        }}
+      >
+        <div
+          aria-hidden="true"
           style={{
-            width: 48, height: 48, padding: 0, border: "1px solid var(--srte-input-border)",
-            borderRadius: 8, background: "none", cursor: "pointer",
+            position: "absolute",
+            left: `${hsv[1]}%`, top: `${100 - hsv[2]}%`,
+            width: 14, height: 14, borderRadius: "50%",
+            border: "2px solid #fff", boxShadow: "0 0 0 1px rgba(0,0,0,0.4)",
+            transform: "translate(-50%, -50%)",
+            background: hex,
+            pointerEvents: "none",
           }}
         />
-        <span>Drag to pick a colour, or type an exact hex value below.</span>
-      </label>
+      </div>
 
-      <label style={{ display: "block", marginBottom: error ? 6 : 12, fontSize: 12, fontWeight: 600 }}>
-        Custom hex
+      <div
+        ref={hueDrag.ref}
+        data-srte-color-hue-slider="true"
+        role="slider"
+        aria-label="Hue"
+        aria-valuemin={0} aria-valuemax={360} aria-valuenow={Math.round(hsv[0])}
+        tabIndex={0}
+        onMouseDown={(event) => event.preventDefault()}
+        onPointerDown={hueDrag.onPointerDown}
+        onKeyDown={(event) => {
+          const step = event.shiftKey ? 15 : 3;
+          if (event.key === "ArrowRight") stage([Math.min(360, hsv[0] + step), hsv[1], hsv[2]]);
+          else if (event.key === "ArrowLeft") stage([Math.max(0, hsv[0] - step), hsv[1], hsv[2]]);
+          else return;
+          event.preventDefault();
+        }}
+        style={{
+          position: "relative",
+          width: "100%",
+          height: 16,
+          borderRadius: 8,
+          marginBottom: 12,
+          cursor: "pointer",
+          touchAction: "none",
+          background: "linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00)",
+        }}
+      >
+        <div
+          aria-hidden="true"
+          style={{
+            position: "absolute",
+            left: `${(hsv[0] / 360) * 100}%`, top: "50%",
+            width: 16, height: 16, borderRadius: "50%",
+            border: "2px solid #fff", boxShadow: "0 0 0 1px rgba(0,0,0,0.4)",
+            transform: "translate(-50%, -50%)",
+            background: `hsl(${hsv[0]}, 100%, 50%)`,
+            pointerEvents: "none",
+          }}
+        />
+      </div>
+
+      <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: error ? 6 : 12 }}>
+        <div aria-hidden="true" style={{ width: 32, height: 32, borderRadius: 8, border: "1px solid var(--srte-input-border)", background: hex, flexShrink: 0 }} />
         <input
-          ref={hexRef}
           data-srte-color-hex-input="true"
-          value={hex}
+          value={hexText}
           autoComplete="off"
           autoCapitalize="none"
           autoCorrect="off"
           spellCheck={false}
           placeholder="#336699"
+          aria-label="Hex color"
           aria-invalid={Boolean(error)}
           aria-describedby={error ? errorId : undefined}
           onChange={(event) => {
-            setHex(event.target.value);
-            setError("");
+            const value = event.target.value;
+            setHexText(value);
+            const normalized = normalizeHex(value);
+            if (normalized) {
+              setError("");
+              const rgb = hexToRgb(normalized)!;
+              stage(rgbToHsv(...rgb));
+            } else if (value.length >= 4) {
+              setError("Enter a valid hex color, e.g. #336699.");
+            }
           }}
           style={{ ...inputStyle, borderColor: error ? "var(--srte-danger)" : "var(--srte-input-border)" }}
         />
@@ -258,20 +376,15 @@ export function ColorPickerPopover({ x, y, label, initialValue = "#000000", rece
       {recentColors && recentColors.length > 0 && (
         <div style={{ marginBottom: 12 }}>
           <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Recently used</div>
-          <div data-srte-recent-colors="true" style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-            {recentColors.map((swatch) => (
+          <div data-srte-recent-colors="true" style={{ display: "flex", gap: 6 }}>
+            {recentColors.slice(0, 4).map((swatch) => (
               <button
                 key={swatch}
                 type="button"
                 data-srte-recent-color={swatch}
                 aria-label={`Recently used colour ${swatch}`}
                 title={swatch}
-                // A recent swatch is a single, complete, deliberate choice -
-                // the same reasoning the removed preset grid used to apply
-                // (see this file's module doc comment) - so it stages and
-                // commits in one click via the same `apply` the hex input's
-                // Enter/Apply button already uses, rather than only staging.
-                onClick={() => apply(swatch)}
+                onClick={() => applyRecentColor(swatch)}
                 style={{
                   width: 24, height: 24, padding: 0, borderRadius: 6,
                   border: "1px solid var(--srte-input-border)",
@@ -283,15 +396,8 @@ export function ColorPickerPopover({ x, y, label, initialValue = "#000000", rece
         </div>
       )}
 
-      <div style={{ display: "flex", justifyContent: "flex-end", gap: 7 }}>
-        <button type="button" onClick={onCancel} style={buttonStyle}>Cancel</button>
-        <button
-          type="button"
-          onClick={() => apply(hex)}
-          style={{ ...buttonStyle, borderColor: "var(--srte-primary)", background: "var(--srte-primary)", color: "var(--srte-on-primary)" }}
-        >
-          Apply
-        </button>
+      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+        <button type="button" data-srte-color-discard="true" onClick={onCancel} style={buttonStyle}>Discard</button>
       </div>
     </div>
   );

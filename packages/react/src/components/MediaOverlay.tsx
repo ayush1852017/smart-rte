@@ -6,6 +6,8 @@ export interface MediaOverlayProps {
   width?: number;
   height?: number;
   src?: string;
+  /** False for atoms with no width/height concept (e.g. formula, sized by KaTeX from source/font-size) - hides the Resize +/- buttons and drag handle, keeping Edit/Delete. */
+  resizable?: boolean;
   onEdit: () => void;
   onResize: (by: number) => void;
   onResizeTo: (width: number, height: number) => void;
@@ -49,7 +51,7 @@ const MIN_ATOM_SIZE = 24;
  * only on release) rather than inventing a different interaction model for
  * the second resizable-thing in this codebase.
  */
-export function MediaOverlay({ atomElement, alt, width, height, src, onEdit, onResize, onResizeTo, onDelete, onDismiss }: MediaOverlayProps) {
+export function MediaOverlay({ atomElement, alt, width, height, src, resizable = true, onEdit, onResize, onResizeTo, onDelete, onDismiss }: MediaOverlayProps) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const handleRef = useRef<HTMLDivElement | null>(null);
   const [placement, setPlacement] = useState<{ left: number; top: number } | null>(null);
@@ -137,7 +139,7 @@ export function MediaOverlay({ atomElement, alt, width, height, src, onEdit, onR
 
   return (
     <>
-      <div
+      {resizable && <div
         ref={handleRef}
         data-srte-media-resize-handle="true"
         role="separator"
@@ -163,7 +165,7 @@ export function MediaOverlay({ atomElement, alt, width, height, src, onEdit, onR
           zIndex: 71,
           touchAction: "none",
         }}
-      />
+      />}
       <div
         ref={rootRef}
         data-srte-media-overlay="true"
@@ -199,8 +201,8 @@ export function MediaOverlay({ atomElement, alt, width, height, src, onEdit, onR
         </div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           <button type="button" style={buttonStyle} onClick={onEdit}>Edit</button>
-          <button type="button" style={buttonStyle} onClick={() => onResize(20)}>Resize +</button>
-          <button type="button" style={buttonStyle} onClick={() => onResize(-20)}>Resize βˆ’</button>
+          {resizable && <button type="button" style={buttonStyle} onClick={() => onResize(20)}>Resize +</button>}
+          {resizable && <button type="button" style={buttonStyle} onClick={() => onResize(-20)}>Resize βˆ’</button>}
           <button type="button" style={{ ...buttonStyle, color: "var(--srte-danger)", marginLeft: "auto" }} onClick={onDelete}>Delete</button>
         </div>
       </div>

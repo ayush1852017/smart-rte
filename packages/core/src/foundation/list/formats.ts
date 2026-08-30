@@ -137,6 +137,12 @@ const serializeBlock = (node: SmartElementNode, includeIds: boolean, listDepth =
       node.attrs?.background ? `background:${String(node.attrs.background)}` : "",
       node.attrs?.textColor ? `color:${String(node.attrs.textColor)}` : "",
       node.attrs?.borders ? `border:${String(node.attrs.borders)}` : "",
+      // Per-side overrides emit after the uniform shorthand, same
+      // last-write-wins order the renderer applies them in.
+      node.attrs?.borderTop ? `border-top:${String(node.attrs.borderTop)}` : "",
+      node.attrs?.borderRight ? `border-right:${String(node.attrs.borderRight)}` : "",
+      node.attrs?.borderBottom ? `border-bottom:${String(node.attrs.borderBottom)}` : "",
+      node.attrs?.borderLeft ? `border-left:${String(node.attrs.borderLeft)}` : "",
       node.attrs?.verticalAlign ? `vertical-align:${String(node.attrs.verticalAlign)}` : "",
     ].filter(Boolean).join(";");
     return `<${tag}${id}${tableCellA11y?.id ? ` id="${escapeHtml(tableCellA11y.id)}"` : ""}${tableCellA11y?.scope ? ` scope="${tableCellA11y.scope}"` : ""}${tableCellA11y?.headers ? ` headers="${escapeHtml(tableCellA11y.headers)}"` : ""}${rowspan > 1 ? ` rowspan="${rowspan}"` : ""}${colspan > 1 ? ` colspan="${colspan}"` : ""}${styles ? ` style="${escapeHtml(styles)}"` : ""}>${(node.children || []).map((child) => isTextNode(child) ? serializeInline(child) : serializeBlock(child, includeIds, listDepth)).join("")}</${tag}>`;
@@ -461,6 +467,17 @@ const parseBlock = (node: HtmlNode): SmartElementNode | null => {
     const verticalAlign = styleValue(node, "vertical-align");
     if (background) cellAttrs.background = background;
     if (borders) cellAttrs.borders = borders;
+    // Per-side declarations (e.g. from a source that styled only one edge)
+    // parse independently of the uniform shorthand above - both can be
+    // present at once, matching how the renderer layers them.
+    const borderTop = styleValue(node, "border-top");
+    const borderRight = styleValue(node, "border-right");
+    const borderBottom = styleValue(node, "border-bottom");
+    const borderLeft = styleValue(node, "border-left");
+    if (borderTop) cellAttrs.borderTop = borderTop;
+    if (borderRight) cellAttrs.borderRight = borderRight;
+    if (borderBottom) cellAttrs.borderBottom = borderBottom;
+    if (borderLeft) cellAttrs.borderLeft = borderLeft;
     if (textColor) cellAttrs.textColor = textColor;
     if (verticalAlign) cellAttrs.verticalAlign = verticalAlign;
     const blockTags = ["p", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "blockquote", "pre", "table"];

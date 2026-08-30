@@ -25,7 +25,7 @@ const emptyCell = (cellId: string, paragraphId: string, header = false, styleAtt
  * look instead of visibly breaking it. Structural attrs (rowspan/colspan/
  * header) are handled separately and are deliberately excluded here.
  */
-const CELL_STYLE_ATTR_KEYS = ["background", "borders", "textColor", "verticalAlign"] as const;
+const CELL_STYLE_ATTR_KEYS = ["background", "borders", "borderTop", "borderRight", "borderBottom", "borderLeft", "textColor", "verticalAlign"] as const;
 const cellStyleAttrs = (node: SmartElementNode | null | undefined): Attrs => {
   const attrs = node?.attrs;
   if (!attrs) return {};

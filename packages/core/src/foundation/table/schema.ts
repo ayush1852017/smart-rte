@@ -24,7 +24,17 @@ export const tableNodeSpecs: readonly NodeSpec[] = [
     attributes: {
       colspan: positiveInt, rowspan: positiveInt,
       header: { default: false, validate: (value) => typeof value === "boolean" },
-      background: optionalString, borders: optionalString,
+      background: optionalString,
+      // `borders`: legacy uniform (all 4 sides) CSS border shorthand -
+      // still the only shape HTML paste-import ever produces. `borderTop`/
+      // `borderRight`/`borderBottom`/`borderLeft`: per-side overrides (the
+      // "which sides" control the border-options UI added) - each, when
+      // set, wins over `borders` for that one side only; see
+      // surface/renderer.ts's per-side application order. Independent
+      // optional strings rather than one structured attr so an unset side
+      // round-trips as simply absent, matching every other optional cell
+      // style attr in this schema.
+      borders: optionalString, borderTop: optionalString, borderRight: optionalString, borderBottom: optionalString, borderLeft: optionalString,
       verticalAlign: { validate: (value) => value === "top" || value === "middle" || value === "bottom" },
     },
   },

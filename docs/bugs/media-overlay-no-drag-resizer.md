@@ -28,3 +28,7 @@ Added a small circular drag handle to `MediaOverlay.tsx`, positioned at the sele
 ## Related/similar issues
 
 None prior - the first drag-resize affordance for atoms in this codebase, deliberately reusing `TableResizeHandles.tsx`'s established pattern rather than a new one.
+
+## Addendum (2026-08-30): its own e2e test is flaky on Firefox specifically
+
+While verifying an unrelated change (the formula-resize-controls fix, `formula-resize-controls-shown-for-non-resizable-atom.md`), this test's regression coverage ("resizes a media atom by dragging its corner handle, preserving aspect ratio") failed intermittently on `[firefox]` only - repeat-run confirmed a ~75% failure rate (3/4) on firefox, both with and without that day's unrelated changes present (confirmed via `git stash` isolating the unrelated diff), so it's a pre-existing flake in the test/drag-simulation itself, not a product regression. Chromium and webkit were not observed to flake on this test. Left open/undiagnosed - out of scope for the change being verified at the time; root cause (likely Firefox's synthetic `page.mouse.move`/`pointermove` event timing relative to the drag handler's `pointermove` listener) not yet investigated.

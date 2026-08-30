@@ -1,4 +1,8 @@
 import katex from "katex";
+// Registers \ce{...} for chemistry-equation notation (e.g. the formula
+// library's "2 H2 + O2 -> 2 H2O" entry) - a side-effect import, required
+// once per katex module instance for \ce to parse instead of throwing.
+import "katex/contrib/mhchem";
 import { isTextNode } from "../identity.js";
 import {
   FoundationModelDomMapping,
@@ -276,7 +280,17 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
       if (rowspan > 1) this.setAttribute(element, "rowspan", String(rowspan), node.id); else this.removeAttribute(element, "rowspan", node.id);
       if (colspan > 1) this.setAttribute(element, "colspan", String(colspan), node.id); else this.removeAttribute(element, "colspan", node.id);
       if (node.attrs?.background) element.style.background = String(node.attrs.background); else element.style.removeProperty("background");
+      // Uniform border first (all 4 sides, or removed) - then any per-side
+      // override (borderTop/Right/Bottom/Left, the "which sides" control -
+      // docs/bugs/table-cell-border-color-width-no-ui.md's addendum) wins
+      // for that one side only, since setting a longhand like border-top
+      // after the border shorthand overrides just that side, leaving the
+      // shorthand's effect on the other three untouched.
       if (node.attrs?.borders) element.style.border = String(node.attrs.borders); else element.style.removeProperty("border");
+      (["Top", "Right", "Bottom", "Left"] as const).forEach((side) => {
+        const value = node.attrs?.[`border${side}`];
+        if (value) element.style.setProperty(`border-${side.toLowerCase()}`, String(value)); else element.style.removeProperty(`border-${side.toLowerCase()}`);
+      });
       if (node.attrs?.verticalAlign) element.style.verticalAlign = String(node.attrs.verticalAlign); else element.style.removeProperty("vertical-align");
       // table_cell.attrs.textColor was parsed from HTML import and settable
       // via table.setCellAttributes, but never read by this renderer at all

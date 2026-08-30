@@ -275,6 +275,29 @@ describe("Phase 4 links, stored marks, and hard breaks", () => {
     }
   });
 
+  it("toggles a mark back off at a collapsed cursor after typing, for every toggleable mark type", () => {
+    // Regression for a real, high-frequency bug: toggle a mark on, type,
+    // toggle it back off, type more - the second run must be plain. The
+    // prior behavior collapsed an explicit "no marks" (toggle-off result is
+    // an empty array) down to `undefined` storedMarks, indistinguishable
+    // from "no override" - so marksAtInsertion's inclusive-boundary rule
+    // (the cursor sits right after the just-typed marked text) silently
+    // re-applied the mark to every subsequent keystroke regardless of the
+    // explicit toggle-off.
+    for (const declaration of inlineToolDeclarations.filter((entry) => entry.markType !== "link" && entry.markType !== "textColor" && entry.markType !== "backgroundColor" && entry.markType !== "fontSize" && entry.markType !== "fontFamily")) {
+      const editor = createFoundationEditor({ document: paragraphDocument([]), selection: selection(0) });
+      executeMarkTool(editor, declaration, "toggle");
+      editor.typeText("on", { timestamp: 1 });
+      executeMarkTool(editor, declaration, "toggle");
+      expect(editor.storedMarks).toEqual([]);
+      editor.typeText("off", { timestamp: 2 });
+      expect(editor.document.children[0].children).toEqual([
+        { type: "text", text: "on", marks: [{ type: declaration.markType }] },
+        { type: "text", text: "off" },
+      ]);
+    }
+  });
+
   it("locks hard_break as a one-unit unmarked atom and migrates legacy newlines", () => {
     expect(hardBreakNodeSpec).toMatchObject({ type: "hard_break", group: "inline", atomic: true, marks: "" });
     const legacy = paragraphDocument([{ type: "text", text: "a\nb", marks: [{ type: "bold" }] }]);

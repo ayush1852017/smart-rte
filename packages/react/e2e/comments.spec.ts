@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { openToolbarDropdown, toolbarMenuItem } from "./toolbarHelpers.js";
 
 const selectFirstWordOfSecondParagraph = async (page: import("@playwright/test").Page) => page.evaluate(() => {
   const root = document.querySelector<HTMLElement>('[contenteditable="true"]')!;
@@ -33,7 +34,8 @@ test.describe("Phase 12a - comments", () => {
 
     // Select "block" inside the second paragraph and comment on it.
     await selectFirstWordOfSecondParagraph(page);
-    const addComment = page.getByRole("button", { name: "Add comment", exact: true });
+    await openToolbarDropdown(page, "Review");
+    const addComment = toolbarMenuItem(page, "Add comment");
     await expect(addComment).toBeEnabled();
     await addComment.click();
 
@@ -69,7 +71,8 @@ test.describe("Phase 12a - comments", () => {
     // The thread must survive the merge - snapped to the surviving
     // paragraph (Phase 12a's default merge-orphan policy), not dropped.
     await expect(page.locator("[data-srte-comment-badge]").first()).toBeVisible();
-    await page.getByRole("button", { name: "Comments", exact: true }).click();
+    await openToolbarDropdown(page, "Review");
+    await toolbarMenuItem(page, "Comments").click();
     await expect(panel).toBeVisible();
     await expect(panel.getByText("Please clarify this", { exact: true })).toBeVisible();
     await expect(panel.getByText("Will do", { exact: true })).toBeVisible();
@@ -92,6 +95,7 @@ test.describe("Phase 12a - comments", () => {
     const editor = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
     await expect(editor).toBeVisible();
     await editor.click();
-    await expect(page.getByRole("button", { name: "Add comment", exact: true })).toBeDisabled();
+    await openToolbarDropdown(page, "Review");
+    await expect(toolbarMenuItem(page, "Add comment")).toBeDisabled();
   });
 });

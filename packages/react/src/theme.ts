@@ -435,6 +435,42 @@ export const SRTE_DEFAULT_CSS = `
   }
   .srte-menu-item { height: 40px; }
 }
+/*
+ * Wide-viewport promotion (docs/bugs/toolbar-priority-collapse-fixed-threshold-no-wide-promotion.md):
+ * below this, the single 639px breakpoint above was this system's ONLY
+ * threshold - every dropdown-grouped tool stayed hidden inside its dropdown
+ * at every width from 640px up to and past a 2200px+ desktop, since nothing
+ * ever measured or scaled with the extra room. A handful of tools frequent
+ * enough to matter once there's genuinely spare room (Superscript,
+ * Subscript, Text colour, Background colour, Font size, Font family, Remove
+ * link, Insert formula, Special characters) get a standalone always-visible
+ * ToolbarButton copy (data-srte-wide-promote, rendered directly in the
+ * toolbar row) that appears past this breakpoint, while their existing
+ * dropdown/mobile-menu ToolbarMenuItem copy (the exact same
+ * data-srte-wide-promote attribute, on the .srte-menu-item element instead)
+ * hides so the tool isn't offered twice. Below this breakpoint - including
+ * all of mobile AND the 640-1439px tablet/typical-laptop band, which keeps
+ * today's grouped-dropdown layout unchanged - the standalone copy stays
+ * hidden and the dropdown copy is what's reachable.
+ *
+ * 1440px, not 1280px: Playwright's own default test viewport is exactly
+ * 1280x720, and the vast majority of this suite's toolbar interactions run
+ * at that default without ever calling page.setViewportSize - a 1280px
+ * threshold would have flipped nearly every existing toolbar test's
+ * dropdown-item locators (role=menuitem) over to CSS display:none out from
+ * under them. 1440px clears that default with room to spare while still
+ * comfortably covering "wide desktop" (the ~2264px width the original
+ * report was filed against).
+ */
+.srte-tool-button[data-srte-wide-promote="true"] { display: none; }
+@media (min-width: 1440px) {
+  .srte-tool-button[data-srte-wide-promote="true"] { display: inline-flex; }
+  .srte-menu-item[data-srte-wide-promote="true"] { display: none; }
+}
+@container srte-editor (min-width: 1440px) {
+  .srte-tool-button[data-srte-wide-promote="true"] { display: inline-flex; }
+  .srte-menu-item[data-srte-wide-promote="true"] { display: none; }
+}
 .srte-editor [contenteditable] blockquote {
   border-left: 4px solid var(--srte-accent);
   margin: 0.75em 0;

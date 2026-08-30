@@ -440,7 +440,16 @@ export class FoundationEditor {
   }
 
   setStoredMarks(marks: readonly SmartMark[] | undefined, options: Omit<TransactOptions, "addToHistory"> = {}): SmartTransaction | null {
-    return this.transact((transaction) => transaction.setStoredMarks(marks?.length ? canonicalMarkOrder(marks) : undefined), {
+    // `marks?.length ? ... : undefined` used to collapse an explicitly-passed
+    // *empty* array down to `undefined` - indistinguishable, downstream, from
+    // "no override, infer from surrounding text" (marksAtInsertion). That
+    // silently defeated toggling the last active mark off at a collapsed
+    // cursor: marksAtInsertion's inclusive-boundary rule re-includes the mark
+    // from the text just typed, so the very next keystroke was re-marked
+    // regardless of the explicit toggle-off. An explicit `[]` must survive as
+    // a real (truthy) empty array so `editor.storedMarks || marksAtInsertion(...)`
+    // resolves to `[]`, not the fallback.
+    return this.transact((transaction) => transaction.setStoredMarks(marks !== undefined ? canonicalMarkOrder(marks) : undefined), {
       ...options, addToHistory: false,
     });
   }

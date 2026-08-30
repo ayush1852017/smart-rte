@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { expect, test } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
+import { insertDefaultTable, openToolbarDropdown, toolbarMenuItem } from "./toolbarHelpers.js";
 import { foundationSchema, normalizedStructureWithoutIds, parseCanonicalListHtml } from "smartrte-core/foundation";
 
 const placeCaretAtEnd = async (page: import("@playwright/test").Page) => page.evaluate(() => {
@@ -101,26 +102,19 @@ const chooseMedia = async (page: import("@playwright/test").Page, kind: "image" 
   await expect(picker).toHaveCount(0);
 };
 
-// The color popover's swatch grid was removed (post-batch-2, per explicit
-// request) - the native <input type="color"> is the primary picker now.
-// React overrides the native `value` setter and won't fire a synthetic
-// onChange for a directly-assigned value; going through the native
-// prototype setter and dispatching "input" (what the native input's own
-// onChange handler is keyed to - React maps onChange to the native `input`
-// event, not `change`) is the standard workaround for driving a controlled
-// React input from outside React's own event system. This only *previews*
-// the color (see the live-preview regression test below) - no native event
-// on this input ever auto-commits (some browsers/OSes fire what looks like
-// a "final" event well before the user is actually done choosing, which is
-// exactly what docs/bugs/color-popover-closes-on-first-native-picker-
-// interaction.md was), so an explicit Apply click is still required.
-const pickNativeColor = async (page: import("@playwright/test").Page, hex: string) => {
-  await page.locator('[data-srte-color-native-input="true"]').evaluate((element: HTMLInputElement, value: string) => {
-    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
-    setter.call(element, value);
-    element.dispatchEvent(new Event("input", { bubbles: true }));
-  }, hex);
-  await page.getByRole("button", { name: "Apply", exact: true }).click();
+// The color popover's native <input type="color"> was replaced by an
+// in-page saturation/value square + hue slider (docs/bugs - "no click
+// needed" redesign) specifically so the drag surface is visible on the
+// popover's first click, and so every drag frame is a real page-owned
+// pointer event instead of an opaque OS dialog's own events. There is no
+// Apply button anymore: typing a valid hex (or dragging the square/slider,
+// or clicking a recent swatch) stages a live preview, and closing the
+// popover *any* way other than the explicit Discard button - outside
+// click, Escape, the × button - commits whatever is staged. Escape is the
+// simplest, position-independent way to commit in a test.
+const pickColor = async (page: import("@playwright/test").Page, hex: string) => {
+  await page.locator("[data-srte-color-hex-input]").fill(hex);
+  await page.keyboard.press("Escape");
 };
 
 const replaySnapshot = async (page: import("@playwright/test").Page) => page.evaluate(() => {
@@ -243,8 +237,36 @@ test.describe("Phase 8b canonical product authority", () => {
   test("replays generated complete command sessions with semantic selection checkpoints", async ({ page }, testInfo) => {
     test.setTimeout(120_000);
     type Intent = { name: string; run: (page: import("@playwright/test").Page) => Promise<void> };
-    const button = (name: string): Intent["run"] => async (currentPage) => {
-      await currentPage.getByRole("button", { name, exact: true }).click();
+    // Direction B toolbar redesign moved most of these tools into a
+    // per-group dropdown (see toolbarHelpers.ts) - this map lets every
+    // existing `button("X")` call site below keep working unchanged except
+    // for the handful of tools that were also relabeled (Inline code->Code,
+    // Remove row/column/table->Delete row/column/table, the atom-resize
+    // labels, Track changes->Show edits, Suggest block removal->Suggest
+    // removing this).
+    const dropdownOf: Record<string, string> = {
+      Code: "More text styles", Superscript: "More text styles", Subscript: "More text styles", "Text colour": "More text styles", "Background colour": "More text styles",
+      "Font size": "More text styles", "Font family": "More text styles",
+      "Move block up": "More paragraph tools", "Move block down": "More paragraph tools", "Indent block": "More paragraph tools", "Outdent block": "More paragraph tools",
+      "Indent list item": "More list tools", "Outdent list item": "More list tools", "Move item up": "More list tools", "Move item down": "More list tools",
+      "Check selected items": "More list tools", "Restart numbering": "More list tools", "Continue numbering": "More list tools",
+      "Merge cells": "Table tools", "Split cell": "Table tools", "Add row": "Table tools", "Delete row": "Table tools", "Add column": "Table tools", "Delete column": "Table tools",
+      "Header row": "Table tools", "Move row up": "Table tools", "Move row down": "Table tools", "Move column left": "Table tools", "Move column right": "Table tools", "Delete table": "Table tools",
+      "Insert video": "More to insert", "Insert audio": "More to insert", "Insert formula": "More to insert", "Remove link": "More to insert",
+      "Enlarge selected media": "More to insert", "Shrink selected media": "More to insert", "Edit selected media": "More to insert", "Delete selected media": "More to insert",
+    };
+    const button = (rawName: string): Intent["run"] => {
+      const rename: Record<string, string> = {
+        "Inline code": "Code", "Remove row": "Delete row", "Remove column": "Delete column", "Remove table": "Delete table",
+        "Grow selected atom": "Enlarge selected media", "Shrink selected atom": "Shrink selected media",
+        "Edit selected atom": "Edit selected media", "Delete selected atom": "Delete selected media",
+      };
+      const name = rename[rawName] ?? rawName;
+      return async (currentPage) => {
+        const dropdown = dropdownOf[name];
+        if (dropdown) await openToolbarDropdown(currentPage, dropdown);
+        await (dropdown ? toolbarMenuItem(currentPage, name) : currentPage.getByRole("button", { name, exact: true })).click();
+      };
     };
     const markSession: Intent[] = [
       { name: "mark.bold", run: async (currentPage) => { await selectFirstText(currentPage); await button("Bold")(currentPage); } },
@@ -255,14 +277,16 @@ test.describe("Phase 8b canonical product authority", () => {
       { name: "mark.superscript", run: button("Superscript") },
       { name: "mark.subscript", run: button("Subscript") },
       { name: "mark.textColor", run: async (currentPage) => {
-        await currentPage.getByRole("button", { name: "Text colour", exact: true }).click();
+        await openToolbarDropdown(currentPage, "More text styles");
+        await toolbarMenuItem(currentPage, "Text colour").click();
         await currentPage.locator("[data-srte-color-hex-input]").fill("#336699");
-        await currentPage.getByRole("button", { name: "Apply", exact: true }).click();
+        await currentPage.keyboard.press("Escape");
       } },
       { name: "mark.backgroundColor", run: async (currentPage) => {
-        await currentPage.getByRole("button", { name: "Background colour", exact: true }).click();
+        await openToolbarDropdown(currentPage, "More text styles");
+        await toolbarMenuItem(currentPage, "Background colour").click();
         await currentPage.locator("[data-srte-color-hex-input]").fill("#336699");
-        await currentPage.getByRole("button", { name: "Apply", exact: true }).click();
+        await currentPage.keyboard.press("Escape");
       } },
       { name: "mark.fontSize", run: button("Font size") },
       { name: "mark.fontFamily", run: button("Font family") },
@@ -290,8 +314,17 @@ test.describe("Phase 8b canonical product authority", () => {
     };
     const listSession: Intent[] = [
       { name: "list.create", run: async (currentPage) => { await placeCaret(currentPage, '[data-smart-authority="canonical"] [contenteditable="true"] > p'); await button("Bulleted list")(currentPage); await currentPage.keyboard.press("End"); await currentPage.keyboard.press("Enter"); await currentPage.keyboard.type("second"); } },
-      { name: "list.setPreset", run: async (currentPage) => { await currentPage.getByRole("combobox", { name: "List preset" }).selectOption("bullet-diamond"); } },
-      { name: "list.setStyle", run: button("Bulleted list") },
+      { name: "list.setPreset", run: async (currentPage) => { await openToolbarDropdown(currentPage, "More list tools"); await currentPage.getByRole("combobox", { name: "List preset" }).selectOption("bullet-diamond"); } },
+      // Was `button("Bulleted list")` - since the list-toggle-off fix
+      // (docs/bugs/list-toggle-off-fails-after-preset-change.md) compares by
+      // effective kind (bullet/ordered) rather than a literal style string,
+      // clicking "Bulleted list" while already on a bullet-family preset is
+      // now correctly a toggle-*off* (unwraps the list), not a "reset to
+      // plain disc" restyle - so this intent switches to a genuinely
+      // different kind (ordered) instead, to keep exercising "change list
+      // style" rather than accidentally exercising "remove the list" here,
+      // and to leave a real list in place for list.indent right after.
+      { name: "list.setStyle", run: button("Numbered list") },
       { name: "list.indent", run: button("Indent list item") },
       { name: "list.outdent", run: button("Outdent list item") },
       { name: "list.move", run: button("Move item up") },
@@ -303,8 +336,8 @@ test.describe("Phase 8b canonical product authority", () => {
       { name: "list.unwrap", run: button("Numbered list") },
     ];
     const tableSession: Intent[] = [
-      { name: "table.insert", run: async (currentPage) => { await placeCaret(currentPage, '[data-smart-authority="canonical"] [contenteditable="true"] > p'); await button("Insert table")(currentPage); } },
-      { name: "table.mergeCells", run: async (currentPage) => { const table = currentPage.locator('[data-smart-authority="canonical"] [contenteditable="true"] table'); await selectCellRange(currentPage, table.locator("tr").first().locator("td,th").nth(0), table.locator("tr").first().locator("td,th").nth(1)); await expect(currentPage.locator('[data-smart-cell-selected="true"]')).toHaveCount(2); await expect.poll(() => currentPage.evaluate(() => window.__smartProductCanonical?.editor.selection.type)).toBe("cell"); await expect(currentPage.getByRole("button", { name: "Merge cells", exact: true })).toBeEnabled(); await button("Merge cells")(currentPage); await expect(table.locator("tr").first().locator("td,th").first()).toHaveAttribute("colspan", "2"); } },
+      { name: "table.insert", run: async (currentPage) => { await placeCaret(currentPage, '[data-smart-authority="canonical"] [contenteditable="true"] > p'); await insertDefaultTable(currentPage); } },
+      { name: "table.mergeCells", run: async (currentPage) => { const table = currentPage.locator('[data-smart-authority="canonical"] [contenteditable="true"] table'); await selectCellRange(currentPage, table.locator("tr").first().locator("td,th").nth(0), table.locator("tr").first().locator("td,th").nth(1)); await expect(currentPage.locator('[data-smart-cell-selected="true"]')).toHaveCount(2); await expect.poll(() => currentPage.evaluate(() => window.__smartProductCanonical?.editor.selection.type)).toBe("cell"); await openToolbarDropdown(currentPage, "Table tools"); await expect(toolbarMenuItem(currentPage, "Merge cells")).toBeEnabled(); await button("Merge cells")(currentPage); await expect(table.locator("tr").first().locator("td,th").first()).toHaveAttribute("colspan", "2"); } },
       { name: "table.splitCell", run: async (currentPage) => { await selectFirstTableCell(currentPage); await button("Split cell")(currentPage); } },
       { name: "table.insertRow", run: async (currentPage) => { await selectFirstTableCell(currentPage); await button("Add row")(currentPage); } },
       { name: "table.removeRow", run: async (currentPage) => { await selectFirstTableCell(currentPage); await button("Remove row")(currentPage); } },
@@ -322,7 +355,7 @@ test.describe("Phase 8b canonical product authority", () => {
       { name: "atom.delete", run: button("Delete selected atom") },
       { name: "atom.insert.video", run: async (currentPage) => { await placeCaret(currentPage, '[data-smart-authority="canonical"] [contenteditable="true"] > p', true); await button("Insert video")(currentPage); await chooseMedia(currentPage, "video", "generated.mp4", "video/mp4"); } },
       { name: "atom.insert.audio", run: async (currentPage) => { await placeCaret(currentPage, '[data-smart-authority="canonical"] [contenteditable="true"] > p', true); await button("Insert audio")(currentPage); await chooseMedia(currentPage, "audio", "generated.mp3", "audio/mpeg"); } },
-      { name: "atom.insert.formula", run: async (currentPage) => { await placeCaret(currentPage, '[data-smart-authority="canonical"] [contenteditable="true"] > p', true); await button("Insert formula")(currentPage); } },
+      { name: "atom.insert.formula", run: async (currentPage) => { await placeCaret(currentPage, '[data-smart-authority="canonical"] [contenteditable="true"] > p', true); await button("Insert formula")(currentPage); await currentPage.locator('[data-srte-formula-entry="algebra-quadratic"]').click(); } },
     ];
     const sessions: Array<{ name: string; intents: Intent[] }> = [
       { name: "marks", intents: markSession },
@@ -776,7 +809,8 @@ test.describe("Phase 8b canonical product authority", () => {
         selection: runtime.editor.selection,
       };
     });
-    await page.getByRole("button", { name: "Move block down", exact: true }).click();
+    await openToolbarDropdown(page, "More paragraph tools");
+    await toolbarMenuItem(page, "Move block down").click();
     const moved = await page.evaluate(() => {
       const runtime = (window as typeof window & { __smartProductCanonical?: { editor: { document: { children: Array<{ id: string; type: string; children?: Array<{ text?: string }> }> }; selection: { head: { path: number[]; offset: number } }; resolve: (input: { pos: { path: number[]; offset: number } }) => { nodeId: string } } } }).__smartProductCanonical!;
       const native = window.getSelection();
@@ -815,7 +849,8 @@ test.describe("Phase 8b canonical product authority", () => {
     const selectedId = before.ids[2];
     const directions = ["down", "up", "down", "up"] as const;
     for (const direction of directions) {
-      await page.getByRole("button", { name: direction === "down" ? "Move block down" : "Move block up", exact: true }).click();
+      await openToolbarDropdown(page, "More paragraph tools");
+      await toolbarMenuItem(page, direction === "down" ? "Move block down" : "Move block up").click();
       // A browser can dispatch selectionchange after the DOM move. Waiting for
       // that task boundary is intentional: the regression was a stale native
       // range that only became visible on the next input.
@@ -864,7 +899,8 @@ test.describe("Phase 8b canonical product authority", () => {
     if (!selectedId) throw new Error("No block was selected for rapid-move typing regression.");
 
     for (let index = 0; index < 12; index += 1) {
-      await page.getByRole("button", { name: index % 2 === 0 ? "Move block down" : "Move block up", exact: true }).click();
+      await openToolbarDropdown(page, "More paragraph tools");
+      await toolbarMenuItem(page, index % 2 === 0 ? "Move block down" : "Move block up").click();
       await page.keyboard.type(` rapid-move-${index} `);
     }
 
@@ -954,7 +990,8 @@ test.describe("Phase 8b canonical product authority", () => {
     // and the selection (still a real range, not just a caret) follows
     // the moved block's identity, matching the moved-owner-alignment test
     // above.
-    await page.getByRole("button", { name: "Move block up", exact: true }).click();
+    await openToolbarDropdown(page, "More paragraph tools");
+    await toolbarMenuItem(page, "Move block up").click();
     await page.waitForTimeout(50);
     const afterFirstMove = await page.evaluate((id) => {
       const runtime = (window as typeof window & { __smartProductCanonical?: {
@@ -975,7 +1012,8 @@ test.describe("Phase 8b canonical product authority", () => {
 
     // Second move: the same block keeps moving up by identity, not
     // producing the scrambled order originally reported.
-    await page.getByRole("button", { name: "Move block up", exact: true }).click();
+    await openToolbarDropdown(page, "More paragraph tools");
+    await toolbarMenuItem(page, "Move block up").click();
     await page.waitForTimeout(50);
     const afterSecondMove = await page.evaluate((id) => {
       const runtime = (window as typeof window & { __smartProductCanonical?: {
@@ -1006,7 +1044,8 @@ test.describe("Phase 8b canonical product authority", () => {
       const list = runtime.editor.document.children.find((node) => node.type === "list")!;
       return { itemIds: list.children?.map((item) => item.id) || [], paragraphId: list.children?.[1].children?.[0].id || "" };
     });
-    await page.getByRole("button", { name: "Move item up", exact: true }).click();
+    await openToolbarDropdown(page, "More list tools");
+    await toolbarMenuItem(page, "Move item up").click();
     await page.waitForTimeout(50);
     const moved = await page.evaluate(() => {
       const runtime = (window as typeof window & { __smartProductCanonical?: { editor: { document: { children: Array<{ type: string; children?: Array<{ id: string }> }> }; selection: { head: { path: number[] } }; resolve: (input: { pos: { path: number[]; offset: number } }) => { nodeId: string } } } }).__smartProductCanonical!;
@@ -1032,7 +1071,7 @@ test.describe("Phase 8b canonical product authority", () => {
   test("keeps table row and column move owners aligned while typing", async ({ page }) => {
     await page.goto("/?canonicalAuthority=1&blocks=1");
     await placeCaret(page, '[data-smart-authority="canonical"] [contenteditable="true"] > p', true);
-    await page.getByRole("button", { name: "Insert table", exact: true }).click();
+    await insertDefaultTable(page);
     const table = page.locator('[data-smart-authority="canonical"] [contenteditable="true"] table');
     await expect(table.locator("tr")).toHaveCount(2);
 
@@ -1056,7 +1095,8 @@ test.describe("Phase 8b canonical product authority", () => {
         nativeOwner: nativeOwner?.dataset.smartId || null,
       };
     });
-    await page.getByRole("button", { name: "Move row down", exact: true }).click();
+    await openToolbarDropdown(page, "Table tools");
+    await toolbarMenuItem(page, "Move row down").click();
     const afterRowMove = await page.evaluate(() => {
       const runtime = (window as typeof window & { __smartProductCanonical?: {
         editor: {
@@ -1102,7 +1142,8 @@ test.describe("Phase 8b canonical product authority", () => {
         nativeOwner: nativeOwner?.dataset.smartId || null,
       };
     });
-    await page.getByRole("button", { name: "Move column right", exact: true }).click();
+    await openToolbarDropdown(page, "Table tools");
+    await toolbarMenuItem(page, "Move column right").click();
     const afterColumnMove = await page.evaluate(() => {
       const runtime = (window as typeof window & { __smartProductCanonical?: {
         editor: {
@@ -1270,6 +1311,7 @@ test.describe("Phase 8b canonical product authority", () => {
       ["bullet-disc", "ul"], ["bullet-diamond", "ul"], ["bullet-square", "ul"], ["bullet-arrow", "ul"],
       ["bullet-star", "ul"], ["bullet-arrow-circle", "ul"],
     ] as const;
+    await openToolbarDropdown(page, "More list tools");
     const optionValues = await page.getByRole("combobox", { name: "List preset" }).locator("option").evaluateAll((options) =>
       options.map((option) => (option as HTMLOptionElement).value).filter(Boolean));
     expect(optionValues).toEqual(presets.map(([preset]) => preset));
@@ -1329,6 +1371,7 @@ test.describe("Phase 8b canonical product authority", () => {
       "bullet-disc", "bullet-diamond", "bullet-square", "bullet-arrow", "bullet-star", "bullet-arrow-circle",
       "ordered-decimal", "ordered-decimal-paren", "ordered-outline", "ordered-upper-alpha", "ordered-upper-roman", "ordered-leading-zero",
     ];
+    await openToolbarDropdown(page, "More list tools");
     for (const preset of presets) {
       await page.getByRole("combobox", { name: "List preset" }).selectOption(preset);
       const result = await page.evaluate((presetId) => {
@@ -1390,6 +1433,7 @@ test.describe("Phase 8b canonical product authority", () => {
       runtime.editor.setSelection(selection, { source: "api" });
       runtime.renderer.render(runtime.editor.document, selection);
     });
+    await openToolbarDropdown(page, "More list tools");
     await page.getByRole("combobox", { name: "List preset" }).selectOption("ordered-upper-alpha");
     const result = await page.evaluate(() => {
       const outer = document.querySelector<HTMLElement>('[data-smart-id="outer-marker-list"]');
@@ -1688,17 +1732,21 @@ test.describe("Phase 8b canonical product authority", () => {
       runtime.editor.setSelection(selection, { source: "api" });
       runtime.renderer.render(runtime.editor.document, selection);
     });
-    const indent = page.getByRole("button", { name: "Indent list item" });
-    const outdent = page.getByRole("button", { name: "Outdent list item" });
+    const indent = toolbarMenuItem(page, "Indent list item");
+    const outdent = toolbarMenuItem(page, "Outdent list item");
+    await openToolbarDropdown(page, "More list tools");
     await expect(indent).toBeEnabled();
     await indent.click();
+    await openToolbarDropdown(page, "More list tools");
     await expect(indent).toBeDisabled();
     await expect(outdent).toBeEnabled();
     await outdent.click();
     // At depth zero the command remains legal because Phase 3 defines it as
     // the list-unwrapping action. A second click performs that unwrap.
+    await openToolbarDropdown(page, "More list tools");
     await expect(outdent).toBeEnabled();
     await outdent.click();
+    await openToolbarDropdown(page, "More list tools");
     await expect(outdent).toBeDisabled();
     await expect(indent).toBeDisabled();
   });
@@ -1720,10 +1768,12 @@ test.describe("Phase 8b canonical product authority", () => {
       runtime.editor.setSelection(selection, { source: "api" });
       runtime.renderer.render(runtime.editor.document, selection);
     });
-    const indent = page.getByRole("button", { name: "Indent list item" });
-    const outdent = page.getByRole("button", { name: "Outdent list item" });
+    const indent = toolbarMenuItem(page, "Indent list item");
+    const outdent = toolbarMenuItem(page, "Outdent list item");
+    await openToolbarDropdown(page, "More list tools");
     await expect(indent).toBeEnabled();
     await indent.click();
+    await openToolbarDropdown(page, "More list tools");
     await expect(indent).toBeDisabled();
     await expect(outdent).toBeEnabled();
     await expect(page.locator('[data-smart-id="indent-range-a"] > ul > li')).toHaveCount(2);
@@ -1759,14 +1809,17 @@ test.describe("Phase 8b canonical product authority", () => {
       runtime.editor.setSelection(selection, { source: "api" });
       runtime.renderer.render(runtime.editor.document, selection);
     });
-    const indent = page.getByRole("button", { name: "Indent list item" });
-    const outdent = page.getByRole("button", { name: "Outdent list item" });
+    const indent = toolbarMenuItem(page, "Indent list item");
+    const outdent = toolbarMenuItem(page, "Outdent list item");
+    await openToolbarDropdown(page, "More list tools");
     await expect(indent).toBeDisabled();
     await expect(outdent).toBeEnabled();
     await outdent.click();
+    await openToolbarDropdown(page, "More list tools");
     await expect(outdent).toBeEnabled();
     await expect(indent).toBeEnabled();
     await outdent.click();
+    await openToolbarDropdown(page, "More list tools");
     // The selected subset is now at depth zero, still inside the outer list.
     // Both indent and the depth-zero unwrap action remain legal at this point.
     await expect(indent).toBeEnabled();
@@ -1854,12 +1907,15 @@ test.describe("Phase 8b canonical product authority", () => {
       runtime.editor.setSelection(selection, { source: "api" });
       runtime.renderer.render(runtime.editor.document, selection);
     });
-    const indent = page.getByRole("button", { name: "Indent list item" });
-    const outdent = page.getByRole("button", { name: "Outdent list item" });
+    const indent = toolbarMenuItem(page, "Indent list item");
+    const outdent = toolbarMenuItem(page, "Outdent list item");
+    await openToolbarDropdown(page, "More list tools");
     await expect(outdent).toBeEnabled();
     await outdent.click();
+    await openToolbarDropdown(page, "More list tools");
     await expect(outdent).toBeEnabled();
     await outdent.click();
+    await openToolbarDropdown(page, "More list tools");
     const state = await page.evaluate(() => {
       const runtime = (window as typeof window & { __smartProductCanonical?: any }).__smartProductCanonical!;
       const scope = runtime.editor.resolveScope({ want: "list-selection" });
@@ -1933,6 +1989,55 @@ test.describe("Phase 8b canonical product authority", () => {
     const dropdown = page.getByRole("combobox", { name: "Block type" });
     await placeCaret(page, '[data-smart-id="nested-dropdown-code"]', true);
     await expect(dropdown).toHaveValue("code_block");
+  });
+
+  /**
+   * Regression for a real, highly-reproducible (measured ~90%+) race: a
+   * real mouse click correctly places the native caret inside a code block,
+   * but the resulting `selectionchange` is delivered asynchronously in
+   * Chromium (the same class of race `handleKeyDown`'s own comment already
+   * documents for Ctrl/Cmd+A followed by an arrow key). End's handler read
+   * `this.editor.selection.head` synchronously without first importing the
+   * just-clicked native range, so it silently computed "end of whatever the
+   * *previous* (stale) owner was" - here, the document's first paragraph -
+   * and explicitly committed and rendered that wrong position, physically
+   * moving the real caret out of the code block and out of the blockquote
+   * entirely. A following Enter then genuinely (not just apparently) landed
+   * outside the blockquote, matching the report precisely: "no way to
+   * create a new line... Enter kicks the cursor outside the blockquote
+   * entirely." Nesting inside a blockquote isn't actually load-bearing here
+   * (a top-level code block right after a click+End is equally exposed);
+   * it's the reported repro shape, kept as-is.
+   */
+  test("a real click into a code block nested in a blockquote, then End, then Enter, inserts a literal newline and stays inside", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    await page.evaluate(() => {
+      const runtime = (window as typeof window & { __smartProductCanonical?: any }).__smartProductCanonical!;
+      runtime.replaceValue({
+        schemaVersion: runtime.editor.schema.version,
+        revision: runtime.editor.state.revision + 1,
+        document: { type: "doc", id: "click-race-doc", children: [
+          { type: "paragraph", id: "click-race-p", children: [{ type: "text", text: "Canonical product editor" }] },
+          { type: "blockquote", id: "click-race-quote", children: [
+            { type: "code_block", id: "click-race-code", children: [{ type: "text", text: "line one" }] },
+          ] },
+        ] },
+      });
+    });
+    const codeBlock = page.locator('[data-smart-id="click-race-code"]');
+    await codeBlock.click({ position: { x: 60, y: 8 } });
+    await page.keyboard.press("End");
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("line two");
+    const codeText = await page.evaluate(() => {
+      const runtime = (window as typeof window & { __smartProductCanonical?: any }).__smartProductCanonical!;
+      const quote = runtime.editor.document.children.find((node: { type: string }) => node.type === "blockquote");
+      return quote?.children?.[0]?.children?.map((child: { text?: string }) => child.text || "").join("");
+    });
+    expect(codeText).toBe("line one\nline two");
+    // Exactly one blockquote exists (unchanged) - the bug's telltale symptom
+    // was a *new sibling paragraph* appearing before the blockquote instead.
+    await expect(page.locator('[data-smart-authority="canonical"] [contenteditable="true"] > blockquote')).toHaveCount(1);
   });
 
   test("toggles checklist controls and has no default checkbox outline", async ({ page }) => {
@@ -2201,13 +2306,16 @@ test.describe("Phase 8b canonical product authority", () => {
       runtime.editor.setSelection(selection, { source: "api" });
       runtime.renderer.render(runtime.editor.document, selection);
     });
-    const outdent = page.getByRole("button", { name: "Outdent list item" });
+    await openToolbarDropdown(page, "More list tools");
+    const outdent = toolbarMenuItem(page, "Outdent list item");
     await expect(outdent).toBeEnabled();
     await outdent.click();
+    await openToolbarDropdown(page, "More list tools");
     await expect(outdent).toBeEnabled();
     await outdent.click();
+    await openToolbarDropdown(page, "More list tools");
 
-    const indent = page.getByRole("button", { name: "Indent list item" });
+    const indent = toolbarMenuItem(page, "Indent list item");
     const bullets = page.getByRole("button", { name: "Bulleted list" });
     await expect(indent).toBeDisabled();
     await expect(bullets).toBeEnabled();
@@ -2514,8 +2622,10 @@ test.describe("Phase 8b canonical product authority", () => {
     await image.click();
     const widthOf = () => image.evaluate((element) => Number(element.getAttribute("width")));
     const originalWidth = await widthOf();
-    await page.getByRole("button", { name: "Grow selected atom", exact: true }).click();
-    await page.getByRole("button", { name: "Grow selected atom", exact: true }).click();
+    await openToolbarDropdown(page, "More to insert");
+    await toolbarMenuItem(page, "Enlarge selected media").click();
+    await openToolbarDropdown(page, "More to insert");
+    await toolbarMenuItem(page, "Enlarge selected media").click();
     const grownWidth = await widthOf();
     expect(grownWidth).toBeGreaterThan(originalWidth);
 
@@ -2707,6 +2817,54 @@ test.describe("Phase 8b canonical product authority", () => {
   });
 
   /**
+   * Regression: the auto-triggered overlay above reused LinkEditorPopover's
+   * `useEffect(() => hrefRef.current?.focus(), [])` verbatim from its
+   * original toolbar-button-only design, where autofocusing the href field
+   * on open is correct (the user explicitly asked to edit the link). Once
+   * reused for the *auto*-trigger, that same autofocus fired on every
+   * ordinary click that merely placed the caret inside a link - moving
+   * focus off the editor into the popover's URL field before the user's own
+   * click could do anything, so a real click-driven caret placement (not
+   * the programmatic setSelection the test above uses) silently lost the
+   * editor's focus and any subsequent keystroke went into the href input
+   * instead of the document. This defeated the overlay's whole reason for
+   * existing - "clicking into a link doesn't trap the cursor."
+   */
+  test("a real click into link text keeps editor focus - the auto-triggered overlay must not steal it", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    const editor = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
+    await page.evaluate(() => {
+      const runtime = (window as typeof window & { __smartProductCanonical?: {
+        editor: { document: { children: unknown[] }; schema: { version: number }; state: { revision: number } };
+        replaceValue: (value: unknown) => void;
+      } }).__smartProductCanonical!;
+      const doc = runtime.editor.document;
+      (doc.children as unknown[]).push({
+        type: "paragraph", id: "focus-link-p",
+        children: [{ type: "text", text: "visit example now please", marks: [{ type: "link", attrs: { href: "https://example.com" } }] }],
+      });
+      runtime.replaceValue({ schemaVersion: runtime.editor.schema.version, revision: runtime.editor.state.revision + 1, document: doc });
+    });
+    const link = editor.locator('[data-smart-id="focus-link-p"] a');
+    const popover = page.locator('[data-srte-link-popover="true"]');
+    await link.click({ position: { x: 40, y: 8 } });
+    await expect(popover).toBeVisible();
+    // The overlay still opens (unchanged) - it just must not have moved
+    // focus off the editor to get there.
+    await expect(page.locator("[data-srte-link-href-input]")).not.toBeFocused();
+    await expect(editor).toBeFocused();
+    await page.keyboard.type("XYZ");
+    await expect(editor).toContainText("XYZ");
+    await expect(page.locator("[data-srte-link-href-input]")).toHaveValue("https://example.com");
+
+    // The toolbar's own Link button is an explicit "I want to edit this"
+    // action, so it must keep autofocusing the href input exactly as before.
+    await editor.locator("p").first().click();
+    await page.getByRole("button", { name: "Insert or edit link", exact: true }).click();
+    await expect(page.locator("[data-srte-link-href-input]")).toBeFocused();
+  });
+
+  /**
    * Post-batch follow-up ("clicking link not opening link. Even with ctrl
    * or cmd. It's only open overlay."): Ctrl/Cmd+click's window.open call
    * was never actually broken - it opens a real new tab. The auto link
@@ -2755,7 +2913,7 @@ test.describe("Phase 8b canonical product authority", () => {
    * for Text/Background colour. Covers both entry points: the native
    * color-picker input, and a typed custom hex value.
    */
-  test("applies text color via the native picker and background color via a custom hex value", async ({ page }) => {
+  test("applies text color via the saturation/hue picker and background color via a custom hex value", async ({ page }) => {
     await page.goto("/?canonicalAuthority=1&blocks=1");
     const editor = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
     await page.evaluate(() => {
@@ -2769,38 +2927,46 @@ test.describe("Phase 8b canonical product authority", () => {
       document.dispatchEvent(new Event("selectionchange"));
     });
 
-    await page.getByRole("button", { name: "Text colour", exact: true }).click();
+    await openToolbarDropdown(page, "More text styles");
+    await toolbarMenuItem(page, "Text colour").click();
     const colorPopover = page.locator('[data-srte-color-popover="true"]');
     await expect(colorPopover).toBeVisible();
-    // The popover must stay open through the native picker's own onChange
-    // (docs/bugs/color-popover-closes-on-first-native-picker-interaction.md)
-    // - only the explicit Apply click commits and closes it.
-    await pickNativeColor(page, "#e03131");
+    // The popover must stay open while a value is being staged - only
+    // dismissing it (Escape, outside click, ×) commits and closes it; there
+    // is no separate Apply button (see pickColor's own comment for why).
+    await pickColor(page, "#e03131");
     await expect(colorPopover).not.toBeVisible();
     await expect(editor.locator('[data-smart-mark="textColor"]')).toHaveCount(1);
 
-    await page.getByRole("button", { name: "Background colour", exact: true }).click();
+    await openToolbarDropdown(page, "More text styles");
+    await toolbarMenuItem(page, "Background colour").click();
     await page.locator("[data-srte-color-hex-input]").fill("#abc");
-    await page.getByRole("button", { name: "Apply", exact: true }).click();
+    await page.keyboard.press("Escape");
     await expect(editor.locator('[data-smart-mark="backgroundColor"]')).toHaveCount(1);
 
-    // An invalid hex is rejected with a visible error, not silently applied.
-    await page.getByRole("button", { name: "Text colour", exact: true }).click();
+    // An invalid hex is rejected with a visible error, not silently applied
+    // (or silently committed on dismissal - since it was never staged as a
+    // valid preview, the popover just closes without changing anything).
+    await openToolbarDropdown(page, "More text styles");
+    await toolbarMenuItem(page, "Text colour").click();
     await page.locator("[data-srte-color-hex-input]").fill("not-a-color");
-    await page.getByRole("button", { name: "Apply", exact: true }).click();
     await expect(page.locator('[data-srte-color-error="true"]')).toBeVisible();
   });
 
   /**
-   * Live preview while dragging the native color input: mirrors
+   * Live preview while dragging the saturation/hue picker: mirrors
    * TableResizeHandles' own live-preview-then-commit-once pattern
-   * (CanonicalAuthorityEditor.tsx's previewColor/applyColor). Each drag
-   * frame ("input" event) must visibly update the selection's color in real
-   * time without creating an undo step, and exactly one real, undoable
-   * transaction must exist once the user actually commits (Apply) -
-   * regardless of how many preview frames preceded it.
+   * (CanonicalAuthorityEditor.tsx's previewColor/applyColor). Each staged
+   * frame must visibly update the selection's color in real time without
+   * creating an undo step, and exactly one real, undoable transaction must
+   * exist once the popover is actually dismissed - regardless of how many
+   * preview frames preceded it. Staged via the hex input rather than a real
+   * pointer drag on the SV square/hue slider - both paths call the same
+   * `stage()` function in ColorPickerPopover, so the hex input exercises
+   * the identical preview/commit code path without needing real drag
+   * coordinates.
    */
-  test("live-previews the native color picker while dragging, without creating an undo step, and commits exactly once on Apply", async ({ page }) => {
+  test("live-previews the color picker while staging, without creating an undo step, and commits exactly once on dismiss", async ({ page }) => {
     await page.goto("/?canonicalAuthority=1&blocks=1");
     const editor = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
     await selectFirstText(page);
@@ -2809,30 +2975,29 @@ test.describe("Phase 8b canonical product authority", () => {
       const runtime = (window as typeof window & { __smartProductCanonical: import("../src/canonicalEditorRuntime.js").CanonicalEditorRuntime }).__smartProductCanonical;
       return runtime.editor.history.undo.length;
     });
-    const dispatchDragFrame = (hex: string) => page.locator('[data-srte-color-native-input="true"]').evaluate((element: HTMLInputElement, value: string) => {
-      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
-      setter.call(element, value);
-      element.dispatchEvent(new Event("input", { bubbles: true }));
-    }, hex);
+    const stageHex = (hex: string) => page.locator("[data-srte-color-hex-input]").fill(hex);
 
     const before = await undoCount();
-    await page.getByRole("button", { name: "Text colour", exact: true }).click();
+    await openToolbarDropdown(page, "More text styles");
+    await toolbarMenuItem(page, "Text colour").click();
     const colorPopover = page.locator('[data-srte-color-popover="true"]');
     await expect(colorPopover).toBeVisible();
 
-    await dispatchDragFrame("#1a2b3c");
+    await stageHex("#1a2b3c");
     await expect(editor.locator('[data-smart-mark="textColor"]')).toHaveCount(1);
     await expect(editor.locator('[data-smart-mark="textColor"]')).toHaveCSS("color", "rgb(26, 43, 60)");
     expect(await undoCount()).toBe(before);
 
-    // A later drag frame supersedes the earlier one rather than compounding.
-    await dispatchDragFrame("#4c5c6c");
+    // A later frame supersedes the earlier one rather than compounding.
+    await stageHex("#4c5c6c");
     await expect(editor.locator('[data-smart-mark="textColor"]')).toHaveCount(1);
     await expect(editor.locator('[data-smart-mark="textColor"]')).toHaveCSS("color", "rgb(76, 92, 108)");
     expect(await undoCount()).toBe(before);
     await expect(colorPopover).toBeVisible();
 
-    await page.getByRole("button", { name: "Apply", exact: true }).click();
+    // There is no separate Apply button - dismissing (Escape here) commits
+    // whatever was last staged.
+    await page.keyboard.press("Escape");
     await expect(colorPopover).not.toBeVisible();
     await expect(editor.locator('[data-smart-mark="textColor"]')).toHaveCSS("color", "rgb(76, 92, 108)");
     expect(await undoCount()).toBe(before + 1);
@@ -2841,7 +3006,7 @@ test.describe("Phase 8b canonical product authority", () => {
     await expect(editor.locator('[data-smart-mark="textColor"]')).toHaveCount(0);
   });
 
-  test("canceling the color popover after a live preview reverts to the original (uncolored) state", async ({ page }) => {
+  test("Discard after a live preview reverts to the original (uncolored) state - the only way other dismissals (Escape, outside click) commit instead", async ({ page }) => {
     await page.goto("/?canonicalAuthority=1&blocks=1");
     const editor = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
     await selectFirstText(page);
@@ -2851,20 +3016,26 @@ test.describe("Phase 8b canonical product authority", () => {
     });
     const before = await undoCount();
 
-    await page.getByRole("button", { name: "Text colour", exact: true }).click();
+    await openToolbarDropdown(page, "More text styles");
+    await toolbarMenuItem(page, "Text colour").click();
     const colorPopover = page.locator('[data-srte-color-popover="true"]');
     await expect(colorPopover).toBeVisible();
-    await page.locator('[data-srte-color-native-input="true"]').evaluate((element: HTMLInputElement, value: string) => {
-      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
-      setter.call(element, value);
-      element.dispatchEvent(new Event("input", { bubbles: true }));
-    }, "#1a2b3c");
+    await page.locator("[data-srte-color-hex-input]").fill("#1a2b3c");
     await expect(editor.locator('[data-smart-mark="textColor"]')).toHaveCount(1);
 
-    await page.keyboard.press("Escape");
+    await page.locator('[data-srte-color-discard="true"]').click();
     await expect(colorPopover).not.toBeVisible();
     await expect(editor.locator('[data-smart-mark="textColor"]')).toHaveCount(0);
     expect(await undoCount()).toBe(before);
+
+    // Escape, unlike Discard, commits the staged value - it is not a
+    // second way to cancel.
+    await openToolbarDropdown(page, "More text styles");
+    await toolbarMenuItem(page, "Text colour").click();
+    await page.locator("[data-srte-color-hex-input]").fill("#1a2b3c");
+    await page.keyboard.press("Escape");
+    await expect(colorPopover).not.toBeVisible();
+    await expect(editor.locator('[data-smart-mark="textColor"]')).toHaveCount(1);
   });
 
   test("recently-used colors: appears after commit, oldest drops off past the retention limit, and clicking one applies it directly", async ({ page }) => {
@@ -2874,40 +3045,53 @@ test.describe("Phase 8b canonical product authority", () => {
     const recentRow = page.locator('[data-srte-recent-colors="true"]');
 
     await selectFirstText(page);
-    await page.getByRole("button", { name: "Text colour", exact: true }).click();
+    await openToolbarDropdown(page, "More text styles");
+    await toolbarMenuItem(page, "Text colour").click();
     await expect(colorPopover).toBeVisible();
     // No commit has happened yet for this bucket - no recent-colors row at all.
     await expect(recentRow).toHaveCount(0);
     await page.locator("[data-srte-color-hex-input]").fill("#111111");
-    await page.getByRole("button", { name: "Apply", exact: true }).click();
+    await page.keyboard.press("Escape");
 
     await selectFirstText(page);
-    await page.getByRole("button", { name: "Text colour", exact: true }).click();
+    await openToolbarDropdown(page, "More text styles");
+    await toolbarMenuItem(page, "Text colour").click();
     await expect(recentRow).toBeVisible();
     await expect(page.locator('[data-srte-recent-color="#111111"]')).toHaveCount(1);
     await page.keyboard.press("Escape");
 
-    // 6 more distinct commits (retention limit) - #111111 should fall off the end.
-    const hexes = ["#222222", "#333333", "#444444", "#555555", "#666666", "#777777"];
+    // 4 more distinct commits (retention limit, reduced to 4 per the
+    // owner's explicit "4 last used colors" request) - #111111 should fall
+    // off the end once a 5th distinct value has been committed.
+    const hexes = ["#222222", "#333333", "#444444", "#555555"];
     for (const hex of hexes) {
       await selectFirstText(page);
-      await page.getByRole("button", { name: "Text colour", exact: true }).click();
+      await openToolbarDropdown(page, "More text styles");
+      await toolbarMenuItem(page, "Text colour").click();
       await page.locator("[data-srte-color-hex-input]").fill(hex);
-      await page.getByRole("button", { name: "Apply", exact: true }).click();
+      await page.keyboard.press("Escape");
     }
     await selectFirstText(page);
-    await page.getByRole("button", { name: "Text colour", exact: true }).click();
+    await openToolbarDropdown(page, "More text styles");
+    await toolbarMenuItem(page, "Text colour").click();
     await expect(page.locator('[data-srte-recent-color="#111111"]')).toHaveCount(0);
     for (const hex of hexes) await expect(page.locator(`[data-srte-recent-color="${hex}"]`)).toHaveCount(1);
 
-    // Clicking a recent swatch applies it directly (stage + commit in one click, same as a preset swatch).
+    // Clicking a recent swatch stages it (like a drag frame or a typed hex)
+    // rather than committing immediately - the popover stays open so the
+    // user can keep adjusting; dismissing commits it, same as any other
+    // staged value.
     await page.locator('[data-srte-recent-color="#333333"]').click();
+    await expect(colorPopover).toBeVisible();
+    await expect(editor.locator('[data-smart-mark="textColor"]')).toHaveCSS("color", "rgb(51, 51, 51)");
+    await page.keyboard.press("Escape");
     await expect(colorPopover).not.toBeVisible();
     await expect(editor.locator('[data-smart-mark="textColor"]')).toHaveCSS("color", "rgb(51, 51, 51)");
 
     // Background colors are tracked in a separate bucket from text colors.
     await selectFirstText(page);
-    await page.getByRole("button", { name: "Background colour", exact: true }).click();
+    await openToolbarDropdown(page, "More text styles");
+    await toolbarMenuItem(page, "Background colour").click();
     await expect(page.locator('[data-srte-recent-colors="true"]')).toHaveCount(0);
   });
 
@@ -3023,7 +3207,7 @@ test.describe("Phase 8b canonical product authority", () => {
   test("inserts a table row and deletes the table via the right-click context menu", async ({ page }) => {
     await page.goto("/?canonicalAuthority=1&blocks=1");
     await placeCaret(page, '[data-smart-authority="canonical"] [contenteditable="true"] > p', true);
-    await page.getByRole("button", { name: "Insert table", exact: true }).click();
+    await insertDefaultTable(page);
     const editor = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
     const table = editor.locator('[data-smart-type="table"]');
     await expect(table.locator("tr")).toHaveCount(2);
@@ -3057,7 +3241,7 @@ test.describe("Phase 8b canonical product authority", () => {
   test("deletes a row, deletes a column, and merges cells via the right-click context menu", async ({ page }) => {
     await page.goto("/?canonicalAuthority=1&blocks=1");
     const editor = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
-    await page.getByRole("button", { name: "Insert table", exact: true }).click();
+    await insertDefaultTable(page);
     const table = editor.locator('[data-smart-type="table"]');
     await expect(table.locator("tr")).toHaveCount(2);
     const cell = table.locator("td").first();
@@ -3076,7 +3260,7 @@ test.describe("Phase 8b canonical product authority", () => {
     await expect(menu).not.toBeVisible();
     await expect(table.locator("tr").first().locator("td")).toHaveCount(1);
 
-    await page.getByRole("button", { name: "Insert table", exact: true }).click();
+    await insertDefaultTable(page);
     const secondTable = editor.locator('[data-smart-type="table"]').last();
     await secondTable.locator("td").first().click({ button: "right" });
     await expect(menu).toBeVisible();
@@ -3334,7 +3518,7 @@ test.describe("Phase 8b canonical product authority", () => {
     const menu = page.locator('[data-srte-context-menu="true"]');
     // Context menu scope reduction: table-only now - a right-click needs
     // a table cell to open anything at all, not plain text.
-    await page.getByRole("button", { name: "Insert table", exact: true }).click();
+    await insertDefaultTable(page);
     const cell = editor.locator('[data-smart-type="table"] td').first();
 
     await cell.click({ button: "right" });
@@ -3392,7 +3576,7 @@ test.describe("Phase 8b canonical product authority", () => {
     await expect(menu).toHaveCount(0);
 
     // Table cell: table items only, no marks.
-    await page.getByRole("button", { name: "Insert table", exact: true }).click();
+    await insertDefaultTable(page);
     const table = editor.locator('[data-smart-type="table"]');
     await table.locator("td").first().click({ button: "right" });
     await expect(menu).toBeVisible();
@@ -3525,7 +3709,7 @@ test.describe("Phase 8b canonical product authority", () => {
     await page.goto("/?canonicalAuthority=1&blocks=1");
     const editor = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
     const menu = page.locator('[data-srte-context-menu="true"]');
-    await page.getByRole("button", { name: "Insert table", exact: true }).click();
+    await insertDefaultTable(page);
     const cell = editor.locator('[data-smart-type="table"] td').first();
     await cell.click({ button: "right" });
     await expect(menu).toBeVisible();
@@ -3556,7 +3740,7 @@ test.describe("Phase 8b canonical product authority", () => {
   test("does not form a multi-cell selection from a right-click near a cell border", async ({ page }) => {
     await page.goto("/?canonicalAuthority=1&blocks=1");
     const editor = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
-    await page.getByRole("button", { name: "Insert table", exact: true }).click();
+    await insertDefaultTable(page);
     const table = editor.locator('[data-smart-type="table"]');
     const box = (await table.locator("td").first().boundingBox())!;
     const borderX = box.x + box.width;
@@ -3577,7 +3761,7 @@ test.describe("Phase 8b canonical product authority", () => {
   test("a left-click drag across a cell border still forms a real cell selection", async ({ page }) => {
     await page.goto("/?canonicalAuthority=1&blocks=1");
     const editor = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
-    await page.getByRole("button", { name: "Insert table", exact: true }).click();
+    await insertDefaultTable(page);
     const table = editor.locator('[data-smart-type="table"]');
     const box = (await table.locator("td").first().boundingBox())!;
     const borderX = box.x + box.width;
@@ -3902,7 +4086,7 @@ test.describe("Phase 8b canonical product authority", () => {
     await page.goto("/?canonicalAuthority=1&blocks=1");
     const editor = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
     await placeCaretAtEnd(page);
-    await page.getByRole("button", { name: "Insert table", exact: true }).click();
+    await insertDefaultTable(page);
     const table = editor.locator('[data-smart-type="table"]');
     await expect(table).toBeVisible();
     await table.locator("td").first().click();
@@ -3951,7 +4135,7 @@ test.describe("Phase 8b canonical product authority", () => {
     await page.goto("/?canonicalAuthority=1&blocks=1");
     const editor = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
     await placeCaretAtEnd(page);
-    await page.getByRole("button", { name: "Insert table", exact: true }).click();
+    await insertDefaultTable(page);
     const table = editor.locator('[data-smart-type="table"]');
     await expect(table).toBeVisible();
     await table.locator("td").first().click();
@@ -3996,7 +4180,7 @@ test.describe("Phase 8b canonical product authority", () => {
   test("highlights only the resize handle actually being dragged", async ({ page }) => {
     await page.goto("/?canonicalAuthority=1&blocks=1");
     const editor = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
-    await page.getByRole("button", { name: "Insert table", exact: true }).click();
+    await insertDefaultTable(page);
     const table = editor.locator('[data-smart-type="table"]');
     await expect(table).toBeVisible();
     await table.locator("td").first().click();
@@ -4060,7 +4244,7 @@ test.describe("Phase 8b canonical product authority", () => {
   test("sets cell background and text colour via the right-click context menu", async ({ page }) => {
     await page.goto("/?canonicalAuthority=1&blocks=1");
     const editor = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
-    await page.getByRole("button", { name: "Insert table", exact: true }).click();
+    await insertDefaultTable(page);
     const table = editor.locator('[data-smart-type="table"]');
     const cell = table.locator("td").first();
     await cell.click({ button: "right" });
@@ -4069,7 +4253,7 @@ test.describe("Phase 8b canonical product authority", () => {
     await menu.locator('[data-srte-context-menu-item="table.contextMenu.cellBackgroundColor"]').click();
     const colorPopover = page.locator('[data-srte-color-popover="true"]');
     await expect(colorPopover).toBeVisible();
-    await pickNativeColor(page, "#ffc9c9");
+    await pickColor(page, "#ffc9c9");
     await expect(cell).toHaveCSS("background-color", "rgb(255, 201, 201)");
 
     await cell.click({ button: "right" });
@@ -4077,8 +4261,123 @@ test.describe("Phase 8b canonical product authority", () => {
     await menu.locator('[data-srte-context-menu-item="table.contextMenu.cellTextColor"]').click();
     await expect(colorPopover).toBeVisible();
     await page.locator("[data-srte-color-hex-input]").fill("#1971c2");
-    await page.getByRole("button", { name: "Apply", exact: true }).click();
+    await page.keyboard.press("Escape");
     await expect(cell).toHaveCSS("color", "rgb(25, 113, 194)");
+  });
+
+  /**
+   * table_cell's border attrs already existed (uniform `borders`), already
+   * rendered, already round-tripped through HTML/DOCX - only never settable
+   * from this editor's own UI. Per-side attrs (borderTop/Right/Bottom/Left)
+   * were added specifically for the "which sides" control below
+   * (docs/bugs/table-cell-border-color-width-no-ui.md's addendum, filed
+   * after a follow-up request for per-side control + a style option).
+   * Covers both entry points (the "Table tools" dropdown's single "Border
+   * options" item, and the context menu's "Cell border options" item),
+   * side toggling, style, width, colour (via the nested, unmodified
+   * ColorPickerPopover), live preview before Apply, and Cancel reverting.
+   */
+  test("sets cell border sides, style, width, and colour via the Border options popover", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    const editor = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
+    await insertDefaultTable(page);
+    const table = editor.locator('[data-smart-type="table"]');
+    const cell = table.locator("td").first();
+    await selectCellRange(page, cell, cell);
+    const popover = page.locator('[data-srte-table-border-popover="true"]');
+
+    await openToolbarDropdown(page, "Table tools");
+    await toolbarMenuItem(page, "Border options").click();
+    await expect(popover).toBeVisible();
+    // Defaults to no side selected, since this cell has no border attrs yet
+    // (the table's own default gridlines mean border-top-style is already
+    // "solid" from ambient CSS regardless, so this checks the popover's own
+    // toggle state, not the cell's already-non-neutral computed style).
+    await expect(popover.getByRole("button", { name: "Top border" })).toHaveAttribute("aria-pressed", "false");
+
+    // Only the top side, dashed, thick, default black - preview before Apply.
+    await popover.getByRole("button", { name: "Top border" }).click();
+    await popover.getByRole("combobox", { name: "Border style" }).selectOption("dashed");
+    await popover.getByRole("combobox", { name: "Border width" }).selectOption("thick");
+    await expect(cell).toHaveCSS("border-top-style", "dashed");
+    await expect(cell).toHaveCSS("border-top-width", "4px");
+    // Only the top side was toggled on - left/right/bottom stay borderless.
+    await expect(cell).not.toHaveCSS("border-left-style", "dashed");
+
+    // Colour via the nested, unmodified ColorPickerPopover.
+    await popover.getByRole("button", { name: "Border colour" }).click();
+    const colorPopover = page.locator('[data-srte-color-popover="true"]');
+    await expect(colorPopover).toBeVisible();
+    await page.locator("[data-srte-color-hex-input]").fill("#2f9e44");
+    await page.keyboard.press("Escape"); // Commits into the border popover's own staged draft, not the document yet.
+    await expect(colorPopover).not.toBeVisible();
+    await expect(popover).toBeVisible();
+    await expect(cell).toHaveCSS("border-top-color", "rgb(47, 158, 68)"); // Still just a preview.
+
+    await popover.getByRole("button", { name: "Apply", exact: true }).click();
+    await expect(popover).not.toBeVisible();
+    await expect(cell).toHaveCSS("border-top-style", "dashed");
+    await expect(cell).toHaveCSS("border-top-color", "rgb(47, 158, 68)");
+
+    // Reopening (via the context menu this time) reflects the committed state.
+    await cell.click({ button: "right" });
+    const menu = page.locator('[data-srte-context-menu="true"]');
+    await expect(menu).toBeVisible();
+    await menu.locator('[data-srte-context-menu-item="table.contextMenu.cellBorderOptions"]').click();
+    await expect(popover).toBeVisible();
+    await expect(popover.getByRole("button", { name: "Top border" })).toHaveAttribute("aria-pressed", "true");
+    await expect(popover.getByRole("combobox", { name: "Border style" })).toHaveValue("dashed");
+    await expect(popover.getByRole("combobox", { name: "Border width" })).toHaveValue("thick");
+    await expect(popover.getByRole("button", { name: "Border colour" })).toContainText("#2f9e44");
+
+    // "All sides" + Cancel: previews live, then fully reverts on Cancel.
+    await popover.getByRole("button", { name: "All sides", exact: true }).click();
+    await expect(cell).toHaveCSS("border-right-style", "dashed");
+    await popover.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(popover).not.toBeVisible();
+    await expect(cell).not.toHaveCSS("border-right-style", "dashed");
+    await expect(cell).toHaveCSS("border-top-style", "dashed"); // Unaffected - the only side actually committed before.
+  });
+
+  /**
+   * Regression: "Thin" (originally 1px) silently failed to render on any
+   * side that faced an already-rendered neighbor. The table uses
+   * border-collapse:collapse (theme.ts), and every cell already carries a
+   * 1px solid ambient default border (the visible gridlines) - a custom
+   * border tied at exactly 1px hits CSS border-collapse's own conflict-
+   * resolution tie-break ("earlier cell in table order wins" once width and
+   * style both match), so the *neighbor's* default border silently won on
+   * whichever side faced an earlier cell, while Medium (2px)/Thick (4px)
+   * always won outright since they're strictly wider than the 1px ambient
+   * default. Confirmed both ends empirically (pixel-level screenshot
+   * cropping, all 3 browser engines) before and after: at 1px, a
+   * fully-interior cell only showed its custom colour on 2 of 4 sides
+   * (bottom/right); at 2px+, all 4 sides showed it correctly. Fixed by
+   * starting BORDER_WIDTH_PRESETS at 2px instead of 1px (a 1.5px
+   * fractional width was also tried and still lost the tie in every
+   * engine tested - only an integer width strictly greater than 1px is
+   * reliable) - see
+   * docs/bugs/table-cell-border-thin-preset-loses-border-collapse-tie.md.
+   * This assertion directly encodes the fix (guards against a future
+   * "helpful" revert back to 1px); the actual multi-side visual rendering
+   * was confirmed manually rather than via a new pixel-sampling test
+   * harness, matching how this suite already treats other genuinely
+   * paint-time-only behaviors it can't assert through the DOM/CSSOM.
+   */
+  test("'Thin' border width is not tied with the table's own 1px ambient gridline", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    const editor = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
+    await insertDefaultTable(page);
+    const cell = editor.locator('[data-smart-type="table"] td').first();
+    await selectCellRange(page, cell, cell);
+    const popover = page.locator('[data-srte-table-border-popover="true"]');
+
+    await openToolbarDropdown(page, "Table tools");
+    await toolbarMenuItem(page, "Border options").click();
+    await popover.getByRole("button", { name: "All sides", exact: true }).click();
+    await popover.getByRole("combobox", { name: "Border width" }).selectOption("thin");
+    await expect(cell).not.toHaveCSS("border-top-width", "1px");
+    await expect(cell).toHaveCSS("border-top-width", "2px");
   });
 
   /**
@@ -4105,14 +4404,15 @@ test.describe("Phase 8b canonical product authority", () => {
       selection.addRange(range);
       document.dispatchEvent(new Event("selectionchange"));
     });
-    await page.getByRole("button", { name: "Text colour", exact: true }).click();
+    await openToolbarDropdown(page, "More text styles");
+    await toolbarMenuItem(page, "Text colour").click();
     await expect(colorPopover).toBeVisible();
-    await pickNativeColor(page, "#e03131");
+    await pickColor(page, "#e03131");
     await expect(colorPopover).not.toBeVisible();
 
-    await page.getByRole("button", { name: "Text colour", exact: true }).click();
+    await openToolbarDropdown(page, "More text styles");
+    await toolbarMenuItem(page, "Text colour").click();
     await expect(colorPopover).toBeVisible();
-    await expect(page.locator('[data-srte-color-native-input="true"]')).toHaveValue("#e03131");
     await expect(page.locator("[data-srte-color-hex-input]")).toHaveValue("#e03131");
 
     // Outside click dismisses (this same open popover, no explicit close).
@@ -4120,21 +4420,21 @@ test.describe("Phase 8b canonical product authority", () => {
     await expect(colorPopover).not.toBeVisible();
 
     // Cell case: same reopened-value expectation, via the table context menu.
-    await page.getByRole("button", { name: "Insert table", exact: true }).click();
+    await insertDefaultTable(page);
     const cell = editor.locator('[data-smart-type="table"] td').first();
     await cell.click({ button: "right" });
     const menu = page.locator('[data-srte-context-menu="true"]');
     await expect(menu).toBeVisible();
     await menu.locator('[data-srte-context-menu-item="table.contextMenu.cellBackgroundColor"]').click();
     await expect(colorPopover).toBeVisible();
-    await pickNativeColor(page, "#ffc9c9");
+    await pickColor(page, "#ffc9c9");
     await expect(colorPopover).not.toBeVisible();
 
     await cell.click({ button: "right" });
     await expect(menu).toBeVisible();
     await menu.locator('[data-srte-context-menu-item="table.contextMenu.cellBackgroundColor"]').click();
     await expect(colorPopover).toBeVisible();
-    await expect(page.locator('[data-srte-color-native-input="true"]')).toHaveValue("#ffc9c9");
+    await expect(page.locator("[data-srte-color-hex-input]")).toHaveValue("#ffc9c9");
   });
 
   /**
@@ -4176,7 +4476,8 @@ test.describe("Phase 8b canonical product authority", () => {
     expect(widthsBeforeInsert).toBeUndefined();
 
     await table.locator("td").first().click();
-    await page.getByRole("button", { name: "Add column", exact: true }).click();
+    await openToolbarDropdown(page, "Table tools");
+    await toolbarMenuItem(page, "Add column").click();
 
     const widthsAfterInsert = await page.evaluate(() => {
       const runtime = (window as typeof window & { __smartProductCanonical?: { editor: { document: unknown } } }).__smartProductCanonical!;
@@ -4221,7 +4522,8 @@ test.describe("Phase 8b canonical product authority", () => {
 
     const table = editor.locator("table").first();
     await table.locator("td").first().click();
-    await page.getByRole("button", { name: "Add column", exact: true }).click();
+    await openToolbarDropdown(page, "Table tools");
+    await toolbarMenuItem(page, "Add column").click();
 
     const cells = table.locator("tr").first().locator("td");
     const widthsBefore = await cells.evaluateAll((elements) => elements.map((element) => element.getBoundingClientRect().width));
@@ -4264,7 +4566,7 @@ test.describe("Phase 8b canonical product authority", () => {
   test("adding a row or column inherits the adjacent row/column's cell background colour", async ({ page }) => {
     await page.goto("/?canonicalAuthority=1&blocks=1");
     const editor = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
-    await page.getByRole("button", { name: "Insert table", exact: true }).click();
+    await insertDefaultTable(page);
     const table = editor.locator('[data-smart-type="table"]');
     const lastCell = table.locator("td").last();
     await lastCell.click({ button: "right" });
@@ -4272,7 +4574,7 @@ test.describe("Phase 8b canonical product authority", () => {
     await expect(menu).toBeVisible();
     await menu.locator('[data-srte-context-menu-item="table.contextMenu.cellBackgroundColor"]').click();
     await expect(page.locator('[data-srte-color-popover="true"]')).toBeVisible();
-    await pickNativeColor(page, "#ffc9c9");
+    await pickColor(page, "#ffc9c9");
     await expect(lastCell).toHaveCSS("background-color", "rgb(255, 201, 201)");
 
     // Select the last cell (not the first) before each insert, so "Add
@@ -4280,7 +4582,8 @@ test.describe("Phase 8b canonical product authority", () => {
     // inserting between rows/columns - the styled one must end up
     // adjacent to the new one for inheritance to be exercised at all.
     await lastCell.click();
-    await page.getByRole("button", { name: "Add row", exact: true }).click();
+    await openToolbarDropdown(page, "Table tools");
+    await toolbarMenuItem(page, "Add row").click();
     const newRowCells = table.locator("tr").last().locator("td");
     // Inheritance is per column position: only the last cell of the
     // original row was coloured, so only the new row's last cell (same
@@ -4289,7 +4592,8 @@ test.describe("Phase 8b canonical product authority", () => {
     await expect(newRowCells.last()).toHaveCSS("background-color", "rgb(255, 201, 201)");
 
     await table.locator("tr").last().locator("td").last().click();
-    await page.getByRole("button", { name: "Add column", exact: true }).click();
+    await openToolbarDropdown(page, "Table tools");
+    await toolbarMenuItem(page, "Add column").click();
     // Same per-position logic for the column case: only rows whose
     // adjacent (now second-to-last) column cell was coloured - row 1
     // (original) and row 2 (inherited via the row insert above) - should
@@ -4394,24 +4698,265 @@ test.describe("Phase 8b canonical product authority", () => {
 
   /**
    * Post-batch follow-up (user question: "why aren't we using a
-   * colorpicker instead of giving a list of colors") - a native
-   * <input type="color"> is the primary picker (the preset swatch grid
-   * was removed in a later round, per explicit request). Interacting
-   * with the native input only stages the value; Apply is the single,
-   * unambiguous commit (see pickNativeColor's own comment for why).
+   * colorpicker instead of giving a list of colors") - originally answered
+   * with a native <input type="color">, later replaced by an in-page
+   * saturation/hue picker (docs/bugs - the "no click needed" redesign)
+   * specifically so the drag surface is visible on the popover's first
+   * click, with no separate Apply button - dismissing the popover commits
+   * whatever was last staged.
    */
-  test("applies a color via the native color picker input", async ({ page }) => {
+  test("applies a color via the saturation/hue picker", async ({ page }) => {
     await page.goto("/?canonicalAuthority=1&blocks=1");
     const editor = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
     await selectFirstText(page);
-    await page.getByRole("button", { name: "Text colour", exact: true }).click();
-    const nativeInput = page.locator('[data-srte-color-native-input="true"]');
-    await expect(nativeInput).toBeVisible();
-    await expect(nativeInput).toHaveAttribute("type", "color");
-    await pickNativeColor(page, "#336699");
+    await openToolbarDropdown(page, "More text styles");
+    await toolbarMenuItem(page, "Text colour").click();
+    await expect(page.locator('[data-srte-color-sv-square="true"]')).toBeVisible();
+    await expect(page.locator('[data-srte-color-hue-slider="true"]')).toBeVisible();
+    await pickColor(page, "#336699");
     await expect(editor.locator('[data-smart-mark="textColor"]')).toHaveCount(1);
     const applied = await editor.locator('[data-smart-mark="textColor"]').getAttribute("data-smart-mark-attrs");
     expect(applied).toContain("#336699");
+  });
+
+  /**
+   * A real mouse drag on the saturation/value square and the hue slider -
+   * not the hex-input staging shortcut every other color test uses - since
+   * this is the literal, explicitly requested interaction ("dragging should
+   * update the color"). Also covers the three other explicit requirements
+   * from that same request: the picker is visible on the popover's very
+   * first click (no second click to open an OS dialog), there is no
+   * separate Apply/Cancel button pair, and a drag that's never explicitly
+   * discarded gets applied when the popover closes.
+   */
+  test("a real pointer drag on the saturation/value square and hue slider live-previews and commits on close, with no Apply/Cancel buttons", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    const editor = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
+    await selectFirstText(page);
+    await openToolbarDropdown(page, "More text styles");
+    await toolbarMenuItem(page, "Text colour").click();
+
+    // One click opened the picker directly - no second click on a swatch
+    // needed to reach a drag surface.
+    const svSquare = page.locator('[data-srte-color-sv-square="true"]');
+    const hueSlider = page.locator('[data-srte-color-hue-slider="true"]');
+    await expect(svSquare).toBeVisible();
+    await expect(hueSlider).toBeVisible();
+    await expect(page.getByRole("button", { name: "Apply", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Cancel", exact: true })).toHaveCount(0);
+    await expect(page.locator('[data-srte-color-discard="true"]')).toBeVisible();
+
+    // Drag the hue slider first, then the saturation/value square - each a
+    // real pointer sequence, not a synthetic single event.
+    const hueBox = (await hueSlider.boundingBox())!;
+    await page.mouse.move(hueBox.x + hueBox.width * 0.5, hueBox.y + hueBox.height * 0.5);
+    await page.mouse.down();
+    await page.mouse.move(hueBox.x + hueBox.width * 0.2, hueBox.y + hueBox.height * 0.5, { steps: 5 });
+    await page.mouse.up();
+    await expect(editor.locator('[data-smart-mark="textColor"]')).toHaveCount(1);
+
+    const svBox = (await svSquare.boundingBox())!;
+    await page.mouse.move(svBox.x + svBox.width * 0.5, svBox.y + svBox.height * 0.5);
+    await page.mouse.down();
+    await page.mouse.move(svBox.x + svBox.width * 0.9, svBox.y + svBox.height * 0.1, { steps: 5 });
+    await page.mouse.up();
+    const previewedStyle = await editor.locator('[data-smart-mark="textColor"]').getAttribute("style");
+
+    // Closed via outside click without ever touching Discard - the drag
+    // result is applied, not reverted.
+    await editor.click({ position: { x: 2, y: 2 } });
+    await expect(page.locator('[data-srte-color-popover="true"]')).not.toBeVisible();
+    await expect(editor.locator('[data-smart-mark="textColor"]')).toHaveAttribute("style", previewedStyle!);
+  });
+
+  /**
+   * Formula library (Direction B "Small" scope, owner-approved) -
+   * replaces the raw `window.prompt` formula-insert flow. Browsable by
+   * domain, searchable by name, each entry a real KaTeX preview; selecting
+   * one inserts it, auto-selects the new atom, and opens the existing
+   * edit-formula prompt automatically (most real use needs customizing
+   * variable names/values).
+   */
+  test("formula library: search, domain tabs, insert-then-auto-edit, and Escape/outside-click cancel without inserting", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    const editor = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
+    const library = page.locator('[data-srte-formula-library="true"]');
+
+    await openToolbarDropdown(page, "More to insert");
+    await toolbarMenuItem(page, "Insert formula").click();
+    await expect(library).toBeVisible();
+    await expect(page.locator('[data-srte-formula-grid] button')).toHaveCount(55);
+
+    await page.locator("[data-srte-formula-search]").fill("quadratic");
+    await expect(page.locator('[data-srte-formula-grid] button')).toHaveCount(1);
+    await page.locator("[data-srte-formula-search]").fill("");
+    await page.getByRole("tab", { name: "Physics" }).click();
+    await expect(page.locator('[data-srte-formula-entry="physics-newton-second"]')).toBeVisible();
+    await expect(page.locator('[data-srte-formula-entry="algebra-quadratic"]')).toHaveCount(0);
+
+    // Escape cancels without inserting anything.
+    await page.keyboard.press("Escape");
+    await expect(library).not.toBeVisible();
+    await expect(editor.locator('[data-smart-type="formula"]')).toHaveCount(0);
+
+    // Outside click also cancels.
+    await openToolbarDropdown(page, "More to insert");
+    await toolbarMenuItem(page, "Insert formula").click();
+    await expect(library).toBeVisible();
+    await editor.click({ position: { x: 5, y: 5 } });
+    await expect(library).not.toBeVisible();
+    await expect(editor.locator('[data-smart-type="formula"]')).toHaveCount(0);
+
+    // Selecting an entry inserts it and opens the existing edit-formula
+    // prompt automatically - accept it to confirm the atom is both
+    // inserted and immediately editable.
+    let promptMessage: string | null = null;
+    page.once("dialog", (dialog) => { promptMessage = dialog.message(); void dialog.accept(); });
+    await openToolbarDropdown(page, "More to insert");
+    await toolbarMenuItem(page, "Insert formula").click();
+    await page.locator('[data-srte-formula-entry="algebra-quadratic"]').click();
+    await expect(library).not.toBeVisible();
+    await expect.poll(() => promptMessage).not.toBeNull();
+    const formula = editor.locator('[data-smart-type="formula"]');
+    await expect(formula).toHaveCount(1);
+    await expect(formula).toHaveAttribute("data-smart-formula", /4ac/);
+    await expect(formula.locator(".katex")).toBeVisible();
+  });
+
+  /**
+   * Chemistry entries use KaTeX's mhchem extension (`\ce{...}`) - not
+   * registered by default. Confirms the real document renders it (not
+   * just the library's own preview), via `surface/renderer.ts`'s
+   * `import "katex/contrib/mhchem"`.
+   */
+  test("formula library: a chemistry entry (mhchem notation) renders as real math, not a raw-text fallback", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    const editor = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
+    page.once("dialog", (dialog) => void dialog.accept());
+    await openToolbarDropdown(page, "More to insert");
+    await toolbarMenuItem(page, "Insert formula").click();
+    await page.getByRole("tab", { name: "Chemistry" }).click();
+    await page.locator('[data-srte-formula-entry="chemistry-water-formation"]').click();
+    const formula = editor.locator('[data-smart-type="formula"]');
+    await expect(formula).toHaveCount(1);
+    await expect(formula.locator(".katex")).toBeVisible();
+    await expect(formula.locator(".katex-mathml math")).toHaveCount(1);
+  });
+
+  /**
+   * Regression: formula is the first UI-reachable *inline* atom (its parent
+   * is the paragraph, not the document root/a table cell, unlike
+   * image/video/audio/table). Inserting it leaves it selected ("node"
+   * selection) so the auto-opened edit prompt targets it - but
+   * insertBlockAtom's "node" branch used to always treat the selected
+   * atom's own parent as the insertion point for the *next* block atom,
+   * which is only valid when that atom is itself block-level. Inserting a
+   * block atom into a paragraph fails schema validation and insertAtom
+   * silently no-ops (see docs/bugs/formula-library-and-special-character-picker-added.md).
+   */
+  test("inserting an image right after inserting a formula does not silently no-op", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    const editor = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
+    page.once("dialog", (dialog) => void dialog.accept());
+    await openToolbarDropdown(page, "More to insert");
+    await toolbarMenuItem(page, "Insert formula").click();
+    await page.locator('[data-srte-formula-entry="algebra-quadratic"]').click();
+    await expect(editor.locator('[data-smart-type="formula"]')).toHaveCount(1);
+
+    await page.getByRole("button", { name: "Insert image" }).click();
+    await chooseMedia(page, "image", "generated.png", "image/png");
+    await expect(editor.locator('[data-smart-type="block_image"]')).toHaveCount(1);
+  });
+
+  /**
+   * Regression: formula has no width/height concept (KaTeX sizes its own
+   * rendering from source/font-size), but selecting a formula atom used to
+   * enable "Enlarge/Shrink selected media" and show MediaOverlay's resize
+   * button pair + drag handle anyway - clicking them silently persisted
+   * meaningless width/height attrs onto the formula node with no visible
+   * effect (formula-resize-controls-shown-for-non-resizable-atom.md). Edit
+   * and Delete stay available - formula editing already has its own
+   * "Formula source" prompt branch in editSelectedAtom.
+   */
+  test("a selected formula atom hides resize controls but keeps edit/delete", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    const editor = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
+    page.once("dialog", (dialog) => void dialog.accept());
+    await openToolbarDropdown(page, "More to insert");
+    await toolbarMenuItem(page, "Insert formula").click();
+    await page.locator('[data-srte-formula-entry="algebra-quadratic"]').click();
+    const formula = editor.locator('[data-smart-type="formula"]');
+    await expect(formula).toHaveCount(1);
+
+    // insertFormulaFromLibrary already leaves the just-inserted atom
+    // selected ("node" selection, so the auto-opened edit prompt targets
+    // it) - no extra click needed; MediaOverlay is already showing for it.
+    const overlay = page.locator('[data-srte-media-overlay="true"]');
+    await expect(overlay).toBeVisible();
+    await expect(overlay.getByRole("button", { name: "Edit", exact: true })).toBeVisible();
+    await expect(overlay.getByRole("button", { name: "Delete", exact: true })).toBeVisible();
+    await expect(overlay.getByRole("button", { name: "Resize +", exact: true })).toHaveCount(0);
+    await expect(overlay.getByRole("button", { name: "Resize βˆ’", exact: true })).toHaveCount(0);
+    await expect(page.locator('[data-srte-media-resize-handle="true"]')).toHaveCount(0);
+
+    await openToolbarDropdown(page, "More to insert");
+    await expect(toolbarMenuItem(page, "Enlarge selected media")).toBeDisabled();
+    await expect(toolbarMenuItem(page, "Shrink selected media")).toBeDisabled();
+  });
+
+  /**
+   * Special character picker - zero implementation before this (confirmed
+   * via search, only a placeholder line in docs/ARCHITECTURE.md). Six
+   * categories, ~200 characters, searchable, with a recently-used row
+   * matching ColorPickerPopover's own pattern. Insertion is plain text via
+   * a real synthetic `beforeinput`(insertText) event - the same event
+   * ordinary typing dispatches - so it correctly replaces an active
+   * selection instead of just inserting at the head.
+   */
+  test("special character picker: opens on first click, inserts at a collapsed cursor, replaces an active selection, and tracks recents", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    const editor = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
+    const picker = page.locator('[data-srte-special-char-popover="true"]');
+
+    await openToolbarDropdown(page, "More to insert");
+    await toolbarMenuItem(page, "Special characters").click();
+    await expect(picker).toBeVisible();
+    await expect(page.locator('[data-srte-special-char-grid] [data-srte-special-char]')).not.toHaveCount(0);
+
+    // Collapsed-cursor insert.
+    await page.keyboard.press("End");
+    await page.locator('[data-srte-special-char="α"]').click();
+    await expect(picker).not.toBeVisible();
+    await expect(editor).toContainText("Canonical product editorα");
+
+    // Replaces an active (non-collapsed) selection instead of inserting
+    // alongside it - the literal point of using a real insertText event.
+    await page.evaluate(() => {
+      const root = document.querySelector('[contenteditable="true"]')!;
+      const text = root.querySelector("p")!.firstChild as Text;
+      const range = document.createRange();
+      range.setStart(text, 0);
+      range.setEnd(text, 9); // "Canonical"
+      const selection = window.getSelection()!;
+      selection.removeAllRanges();
+      selection.addRange(range);
+      document.dispatchEvent(new Event("selectionchange"));
+    });
+    await openToolbarDropdown(page, "More to insert");
+    await toolbarMenuItem(page, "Special characters").click();
+    await page.locator('[data-srte-special-char="π"]').click();
+    await expect(editor).toContainText("π product editorα");
+    await expect(editor).not.toContainText("Canonical");
+
+    // Recently-used row and name search.
+    await openToolbarDropdown(page, "More to insert");
+    await toolbarMenuItem(page, "Special characters").click();
+    await expect(page.locator('[data-srte-recent-special-char="π"]')).toHaveCount(1);
+    await expect(page.locator('[data-srte-recent-special-char="α"]')).toHaveCount(1);
+    await page.locator("[data-srte-special-char-search]").fill("infinity");
+    await expect(page.locator('[data-srte-special-char="∞"]')).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(picker).not.toBeVisible();
   });
 
   /**

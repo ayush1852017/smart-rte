@@ -1,5 +1,6 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
+import { insertDefaultTable, openToolbarDropdown, toolbarMenuItem } from "./toolbarHelpers.js";
 
 const selectFirstText = async (page: Page) => page.evaluate(() => {
   const root = document.querySelector<HTMLElement>('[data-smart-authority="canonical"] [contenteditable="true"]')!;
@@ -60,7 +61,8 @@ test.describe("canonical toolbar routing", () => {
     await page.getByRole("button", { name: "Numbered list" }).click();
     await page.getByRole("button", { name: "Checklist" }).click();
     await expect(surface.locator('ul[data-smart-checkable="true"]')).toHaveCount(1);
-    await page.getByRole("button", { name: "Check selected items" }).click();
+    await openToolbarDropdown(page, "More list tools");
+    await toolbarMenuItem(page, "Check selected items").click();
     await expect(surface.locator('[role="checkbox"]')).toHaveAttribute("aria-checked", "true");
   });
 
@@ -95,18 +97,28 @@ test.describe("canonical toolbar routing", () => {
     await expect(surface.locator("ol > li")).toHaveCount(1);
     await page.getByRole("button", { name: "Checklist" }).click();
     await expect(surface.locator('ul[data-smart-checkable="true"]')).toHaveCount(1);
-    await page.getByRole("button", { name: "Check selected items" }).click();
+    await openToolbarDropdown(page, "More list tools");
+    await toolbarMenuItem(page, "Check selected items").click();
     await expect(surface.locator('[role="checkbox"]')).toHaveAttribute("aria-checked", "true");
 
     await placeCaret(page, '[data-smart-authority="canonical"] [contenteditable="true"] p', true);
-    await page.getByRole("button", { name: "Insert table" }).click();
+    await insertDefaultTable(page);
     await expect(surface.locator("table tr")).toHaveCount(2);
-    await expect(page.getByRole("button", { name: "Add row" })).toBeEnabled();
-    await page.getByRole("button", { name: "Add row" }).click();
+    await openToolbarDropdown(page, "Table tools");
+    await expect(toolbarMenuItem(page, "Add row")).toBeEnabled();
+    await openToolbarDropdown(page, "Table tools");
+    await toolbarMenuItem(page, "Add row").click();
     await expect(surface.locator("table tr")).toHaveCount(3);
 
     await placeCaret(page, '[data-smart-authority="canonical"] [contenteditable="true"] p', true);
-    await page.getByRole("button", { name: "Insert formula" }).click();
+    await openToolbarDropdown(page, "More to insert");
+    await toolbarMenuItem(page, "Insert formula").click();
+    // "Insert formula" now opens the formula library popover (a browsable
+    // set of library entries) instead of prompting directly - pick any
+    // entry, then the existing insert-then-auto-edit flow (editSelectedAtom)
+    // opens the same "Formula source" window.prompt this test already
+    // answers with "E=mc^2" above, overwriting the library entry's own LaTeX.
+    await page.locator('[data-srte-formula-entry="algebra-quadratic"]').click();
     await expect(surface.locator('[data-smart-type="formula"]')).toHaveAttribute("data-smart-formula", "E=mc^2");
     // Phase 9 SS2.4/SS3 gate 6: confirm real KaTeX HTML+MathML rendered in
     // an actual browser, not just that the source attribute is set - a
@@ -121,22 +133,27 @@ test.describe("canonical toolbar routing", () => {
     await expect(image).toHaveAttribute("src", /^https:\/\/media\.playground\.test\//);
     await expect(image).toBeVisible();
     await image.click();
-    await expect(page.getByRole("button", { name: "Grow selected atom" })).toBeEnabled();
-    await page.getByRole("button", { name: "Grow selected atom" }).click();
+    await openToolbarDropdown(page, "More to insert");
+    await expect(toolbarMenuItem(page, "Enlarge selected media")).toBeEnabled();
+    await openToolbarDropdown(page, "More to insert");
+    await toolbarMenuItem(page, "Enlarge selected media").click();
     await expect(image).toHaveAttribute("width", "180");
-    await page.getByRole("button", { name: "Insert video" }).click();
+    await openToolbarDropdown(page, "More to insert");
+    await toolbarMenuItem(page, "Insert video").click();
     await chooseMedia(page, "video", "example.mp4", "video/mp4");
     const video = surface.locator('[data-smart-type="video"]');
     await expect(video).toHaveAttribute("src", /^https:\/\/media\.playground\.test\//);
     await expect(video).toBeVisible();
-    await page.getByRole("button", { name: "Insert audio" }).click();
+    await openToolbarDropdown(page, "More to insert");
+    await toolbarMenuItem(page, "Insert audio").click();
     await chooseMedia(page, "audio", "example.mp3", "audio/mpeg");
     const audio = surface.locator('[data-smart-type="audio"]');
     await expect(audio).toHaveAttribute("src", /^https:\/\/media\.playground\.test\//);
     await expect(audio).toBeVisible();
 
     const download = page.waitForEvent("download");
-    await page.getByRole("button", { name: "Export native document" }).click();
+    await openToolbarDropdown(page, "Save a copy");
+    await toolbarMenuItem(page, "Save as Smart RTE file").click();
     expect((await download).suggestedFilename()).toBe("smart-rte.json");
 
     await page.locator('input[type="file"]').setInputFiles({
@@ -159,12 +176,14 @@ test.describe("canonical toolbar routing", () => {
     const surface = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
     await selectFirstText(page);
     for (const label of ["Text colour", "Background colour"]) {
-      await page.getByRole("button", { name: label, exact: true }).click();
+      await openToolbarDropdown(page, "More text styles");
+      await toolbarMenuItem(page, label).click();
       await page.locator("[data-srte-color-hex-input]").fill("#336699");
-      await page.getByRole("button", { name: "Apply", exact: true }).click();
+      await page.keyboard.press("Escape");
     }
     for (const label of ["Font size", "Font family"]) {
-      await page.getByRole("button", { name: label, exact: true }).click();
+      await openToolbarDropdown(page, "More text styles");
+      await toolbarMenuItem(page, label).click();
     }
     for (const mark of ["textColor", "backgroundColor", "fontSize", "fontFamily"]) {
       await expect(surface.locator(`p:first-of-type [data-smart-mark="${mark}"]`)).toHaveCount(1);
@@ -174,36 +193,88 @@ test.describe("canonical toolbar routing", () => {
     await expect(surface.locator("blockquote")).toContainText("Canonical product editor");
 
     await placeCaret(page, '[data-smart-authority="canonical"] [contenteditable="true"] > p', true);
-    await page.getByRole("button", { name: "Move block up", exact: true }).click();
-    await page.getByRole("button", { name: "Indent block", exact: true }).click();
+    await openToolbarDropdown(page, "More paragraph tools");
+    await toolbarMenuItem(page, "Move block up").click();
+    await openToolbarDropdown(page, "More paragraph tools");
+    await toolbarMenuItem(page, "Indent block").click();
     await expect(surface.locator('p[style*="margin-inline-start"]')).toHaveCount(1);
 
     await page.getByRole("button", { name: "Numbered list", exact: true }).click();
+    await openToolbarDropdown(page, "More list tools");
     await page.getByRole("combobox", { name: "List preset" }).selectOption("ordered-upper-alpha");
     await expect(surface.locator('ol[data-smart-list-preset="ordered-upper-alpha"]')).toHaveCount(1);
 
     const docxDownload = page.waitForEvent("download");
-    await page.getByRole("button", { name: "Export DOCX", exact: true }).click();
+    await openToolbarDropdown(page, "Save a copy");
+    await toolbarMenuItem(page, "Save as Word document").click();
     expect((await docxDownload).suggestedFilename()).toBe("smart-rte.docx");
 
     const pdfPopup = page.waitForEvent("popup");
-    await page.getByRole("button", { name: "Export PDF", exact: true }).click();
+    await openToolbarDropdown(page, "Save a copy");
+    await toolbarMenuItem(page, "Save as PDF").click();
     await (await pdfPopup).close();
+  });
+
+  /**
+   * "Insert table" previously always created a fixed 2x2 - now opens a size
+   * picker (CKEditor-style hover grid + a custom rows/columns numeric
+   * fallback for anything past the grid's cap) and wires the chosen
+   * dimensions straight into the existing insert-table command instead of
+   * hardcoding 2x2 downstream.
+   */
+  test("insert table size picker: grid hover-click and custom numeric input both wire real dimensions through", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    const surface = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
+    await page.getByRole("button", { name: "Insert table", exact: true }).click();
+    const popover = page.locator('[data-srte-table-size-popover="true"]');
+    await expect(popover).toBeVisible();
+    await page.locator('[data-srte-table-size-cell="3x4"]').hover();
+    await expect(page.locator('[data-srte-table-size-label="true"]')).toHaveText("3 × 4 table");
+    await page.locator('[data-srte-table-size-cell="3x4"]').click();
+    await expect(popover).not.toBeVisible();
+    const gridTable = surface.locator("table").first();
+    await expect(gridTable.locator("tr")).toHaveCount(3);
+    await expect(gridTable.locator("tr").first().locator("td,th")).toHaveCount(4);
+
+    // Escape and outside-click both cancel without inserting anything.
+    await page.getByRole("button", { name: "Insert table", exact: true }).click();
+    await expect(popover).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(popover).not.toBeVisible();
+    await expect(surface.locator("table")).toHaveCount(1);
+    await page.getByRole("button", { name: "Insert table", exact: true }).click();
+    await expect(popover).toBeVisible();
+    await page.locator('[data-smart-authority="canonical"] [contenteditable="true"] > p').first().click();
+    await expect(popover).not.toBeVisible();
+    await expect(surface.locator("table")).toHaveCount(1);
+
+    // The custom numeric inputs reach sizes past the grid's cap.
+    await page.locator('[data-smart-authority="canonical"] [contenteditable="true"] > p').last().click();
+    await page.getByRole("button", { name: "Insert table", exact: true }).click();
+    await page.locator('input[aria-label="Rows"]').fill("9");
+    await page.locator('input[aria-label="Columns"]').fill("10");
+    await page.getByRole("button", { name: "Insert", exact: true }).click();
+    await expect(popover).not.toBeVisible();
+    const customTable = surface.locator("table").nth(1);
+    await expect(customTable.locator("tr")).toHaveCount(9);
+    await expect(customTable.locator("tr").first().locator("td,th")).toHaveCount(10);
   });
 
   test("selects canonical cells individually and supports merge/split", async ({ page }) => {
     await page.goto("/?canonicalAuthority=1&blocks=2");
     const surface = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
     await placeCaret(page, '[data-smart-authority="canonical"] [contenteditable="true"] p');
-    await page.getByRole("button", { name: "Insert table" }).click();
+    await insertDefaultTable(page);
     const table = surface.locator("table");
     await expect(table).toHaveCount(1);
     const first = table.locator("tr").first().locator("td,th").nth(0);
     const second = table.locator("tr").first().locator("td,th").nth(1);
     await selectCellRange(page, first, second);
     await expect(surface.locator('[data-smart-cell-selected="true"]')).toHaveCount(2);
-    await expect(page.getByRole("button", { name: "Merge cells" })).toBeEnabled();
-    await page.getByRole("button", { name: "Merge cells" }).click();
+    await openToolbarDropdown(page, "Table tools");
+    await expect(toolbarMenuItem(page, "Merge cells")).toBeEnabled();
+    await openToolbarDropdown(page, "Table tools");
+    await toolbarMenuItem(page, "Merge cells").click();
     await expect(table.locator("tr").first().locator("td,th")).toHaveCount(1);
     await expect(table.locator("tr").first().locator("td,th").first()).toHaveAttribute("colspan", "2");
     await expect.poll(() => page.evaluate(() => window.__smartProductCanonical?.editor.selection.type)).toBe("cell");
@@ -211,8 +282,10 @@ test.describe("canonical toolbar routing", () => {
     // must retain one editable line, not stack one placeholder per source
     // cell (which multiplies the merged row height).
     await expect(table.locator("tr").first().locator("td,th").first().locator(":scope > p")).toHaveCount(1);
-    await expect(page.getByRole("button", { name: "Split cell" })).toBeEnabled();
-    await page.getByRole("button", { name: "Split cell" }).click();
+    await openToolbarDropdown(page, "Table tools");
+    await expect(toolbarMenuItem(page, "Split cell")).toBeEnabled();
+    await openToolbarDropdown(page, "Table tools");
+    await toolbarMenuItem(page, "Split cell").click();
     await expect(table.locator("tr").first().locator("td,th")).toHaveCount(2);
     await page.getByRole("button", { name: "Insert image" }).click();
     await chooseMedia(page, "image", "cell.png", "image/png");
@@ -262,7 +335,8 @@ test.describe("canonical toolbar routing", () => {
     const b0 = tables.nth(0).locator('[data-smart-id="merge-content-h-b0"]');
     await selectCellRange(page, a0, b0);
     await expect(surface.locator('[data-smart-cell-selected="true"]')).toHaveCount(2);
-    await page.getByRole("button", { name: "Merge cells" }).click();
+    await openToolbarDropdown(page, "Table tools");
+    await toolbarMenuItem(page, "Merge cells").click();
     const horizontalAnchor = tables.nth(0).locator('[data-smart-id="merge-content-h-a0"]');
     await expect(horizontalAnchor).toHaveAttribute("colspan", "2");
     // Each source cell's text survives as its own paragraph/line, not
@@ -276,7 +350,8 @@ test.describe("canonical toolbar routing", () => {
     const v1 = tables.nth(1).locator('[data-smart-id="merge-content-v-a1"]');
     await selectCellRange(page, v0, v1);
     await expect(surface.locator('[data-smart-cell-selected="true"]')).toHaveCount(2);
-    await page.getByRole("button", { name: "Merge cells" }).click();
+    await openToolbarDropdown(page, "Table tools");
+    await toolbarMenuItem(page, "Merge cells").click();
     const verticalAnchor = tables.nth(1).locator('[data-smart-id="merge-content-v-a0"]');
     await expect(verticalAnchor).toHaveAttribute("rowspan", "2");
     await expect(verticalAnchor.locator(":scope > p")).toHaveCount(2);
@@ -288,7 +363,7 @@ test.describe("canonical toolbar routing", () => {
     await page.goto("/?canonicalAuthority=1&blocks=1");
     const surface = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
     await placeCaret(page, '[data-smart-authority="canonical"] [contenteditable="true"] > p');
-    await page.getByRole("button", { name: "Insert table" }).click();
+    await insertDefaultTable(page);
     const after = surface.locator(":scope > p").last();
     await expect(after).toHaveCount(1);
     await placeCaret(page, '[data-smart-authority="canonical"] [contenteditable="true"] > p', true);
@@ -300,7 +375,7 @@ test.describe("canonical toolbar routing", () => {
     await page.goto("/?canonicalAuthority=1&blocks=1");
     const surface = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
     await placeCaret(page, '[data-smart-authority="canonical"] [contenteditable="true"] > p');
-    await page.getByRole("button", { name: "Insert table" }).click();
+    await insertDefaultTable(page);
     const cellParagraph = surface.locator("table tr").first().locator("td,th").first().locator("p");
     await placeCaret(page, '[data-smart-authority="canonical"] [contenteditable="true"] table tr:first-of-type td:first-child p');
     await page.getByRole("button", { name: "Bulleted list" }).click();
@@ -316,7 +391,8 @@ test.describe("canonical toolbar routing", () => {
     const secondParagraph = surface.locator("table tr").first().locator("td,th").first().locator("ul > li:nth-child(2) p");
     await expect(secondParagraph).toHaveCount(1);
     await placeCaret(page, '[data-smart-authority="canonical"] table tr:first-of-type td:first-child ul > li:nth-child(2) p');
-    await page.getByRole("button", { name: "Indent list item" }).click();
+    await openToolbarDropdown(page, "More list tools");
+    await toolbarMenuItem(page, "Indent list item").click();
     await expect(surface.locator("table tr:first-of-type td:first-child ul > li > ul > li")).toHaveCount(1);
   });
 
@@ -324,14 +400,16 @@ test.describe("canonical toolbar routing", () => {
     await page.goto("/?canonicalAuthority=1&blocks=1");
     const surface = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
     await placeCaret(page, '[data-smart-authority="canonical"] [contenteditable="true"] > p');
-    await page.getByRole("button", { name: "Insert table" }).click();
+    await insertDefaultTable(page);
     const table = surface.locator("table");
     const first = table.locator("tr").nth(0).locator("td,th").nth(0);
     const below = table.locator("tr").nth(1).locator("td,th").nth(0);
     await selectCellRange(page, first, below);
     await expect(surface.locator('[data-smart-cell-selected="true"]')).toHaveCount(2);
-    await expect(page.getByRole("button", { name: "Merge cells" })).toBeEnabled();
-    await page.getByRole("button", { name: "Merge cells" }).click();
+    await openToolbarDropdown(page, "Table tools");
+    await expect(toolbarMenuItem(page, "Merge cells")).toBeEnabled();
+    await openToolbarDropdown(page, "Table tools");
+    await toolbarMenuItem(page, "Merge cells").click();
     await expect(table.locator("tr").first().locator("td,th").first()).toHaveAttribute("rowspan", "2");
   });
 
@@ -345,7 +423,7 @@ test.describe("canonical toolbar routing", () => {
     await page.goto("/?canonicalAuthority=1&blocks=1");
     const surface = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
     await placeCaret(page, '[data-smart-authority="canonical"] [contenteditable="true"] > p');
-    await page.getByRole("button", { name: "Insert table" }).click();
+    await insertDefaultTable(page);
     const table = surface.locator("table");
     const first = table.locator("tr").nth(0).locator("td,th").nth(0);
     const below = table.locator("tr").nth(1).locator("td,th").nth(0);
@@ -400,8 +478,11 @@ test.describe("canonical toolbar routing", () => {
     expect(presentation.caretColor).toBe(presentation.color);
     expect(presentation.emptyHeight).toBeGreaterThanOrEqual(presentation.emptyLineHeight - 0.1);
 
-    await expect(page.getByRole("button", { name: "Add row" })).toBeDisabled();
-    await expect(page.getByRole("button", { name: "Check selected items" })).toBeDisabled();
+    await openToolbarDropdown(page, "Table tools");
+
+    await expect(toolbarMenuItem(page, "Add row")).toBeDisabled();
+    await openToolbarDropdown(page, "More list tools");
+    await expect(toolbarMenuItem(page, "Check selected items")).toBeDisabled();
   });
 
   test("keeps list selection stable through indent, outdent, movement, restart, and continue", async ({ page }) => {
@@ -422,24 +503,85 @@ test.describe("canonical toolbar routing", () => {
     await expect(surface.locator(":scope > ul > li")).toHaveCount(2);
 
     await placeCaret(page, '[data-smart-authority="canonical"] [contenteditable="true"] > ul > li:nth-child(2) p');
-    await expect(page.getByRole("button", { name: "Indent list item" })).toBeEnabled();
-    await page.getByRole("button", { name: "Indent list item" }).click();
+    await openToolbarDropdown(page, "More list tools");
+    await expect(toolbarMenuItem(page, "Indent list item")).toBeEnabled();
+    await openToolbarDropdown(page, "More list tools");
+    await toolbarMenuItem(page, "Indent list item").click();
     await expect(surface.locator(":scope > ul > li > ul > li")).toHaveCount(1);
-    await page.getByRole("button", { name: "Outdent list item" }).click();
+    await openToolbarDropdown(page, "More list tools");
+    await toolbarMenuItem(page, "Outdent list item").click();
     await expect(surface.locator(":scope > ul > li")).toHaveCount(2);
 
-    await page.getByRole("button", { name: "Move item up" }).click();
+    await openToolbarDropdown(page, "More list tools");
+
+    await toolbarMenuItem(page, "Move item up").click();
     await expect(surface.locator(":scope > ul > li").first()).toContainText("block 1");
-    await page.getByRole("button", { name: "Move item down" }).click();
+    await openToolbarDropdown(page, "More list tools");
+    await toolbarMenuItem(page, "Move item down").click();
     await expect(surface.locator(":scope > ul > li").first()).toContainText("Canonical product editor");
 
     await page.getByRole("button", { name: "Numbered list" }).click();
     const ordered = surface.locator(":scope > ol");
     await expect(ordered).toHaveCount(1);
-    await page.getByRole("button", { name: "Restart numbering" }).click();
+    await openToolbarDropdown(page, "More list tools");
+    await toolbarMenuItem(page, "Restart numbering").click();
     await expect(ordered).toHaveAttribute("start", "3");
-    await page.getByRole("button", { name: "Continue numbering" }).click();
+    await openToolbarDropdown(page, "More list tools");
+    await toolbarMenuItem(page, "Continue numbering").click();
     await expect(ordered).not.toHaveAttribute("start");
+  });
+
+  /**
+   * Regression: choosing a list preset (the "List preset" select in "More
+   * list tools") clears the list's literal `.attrs.style` in favor of
+   * `.attrs.preset` (docs/bugs/list-marker-competing-style-and-preset-
+   * signals.md) - but the toggle buttons' "is this already active" check
+   * compared `.attrs.style` directly against the literal string "disc"/
+   * "decimal", so after picking *any* preset every toggle button read as
+   * "not active" even though the list still visually was a bullet/ordered
+   * list. Clicking the matching button then took the "apply a different
+   * style" branch instead of "toggle off" - silently replacing the preset
+   * with a bare disc/decimal instead of removing the list, so the user's
+   * first click appeared to do nothing and a *second* click was needed to
+   * actually get back to plain text.
+   */
+  test("toggling a list style off works in one click after a preset was applied, for both bullet and ordered presets", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    const surface = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
+    await selectFirstText(page);
+    await page.getByRole("button", { name: "Bulleted list", exact: true }).click();
+    await openToolbarDropdown(page, "More list tools");
+    await page.getByRole("combobox", { name: "List preset" }).selectOption("bullet-diamond");
+    await expect(page.getByRole("button", { name: "Bulleted list", exact: true })).toHaveAttribute("aria-pressed", "true");
+    await page.getByRole("button", { name: "Bulleted list", exact: true }).click();
+    await expect(surface.locator("ul, ol")).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Numbered list", exact: true }).click();
+    await openToolbarDropdown(page, "More list tools");
+    await page.getByRole("combobox", { name: "List preset" }).selectOption("ordered-upper-alpha");
+    await expect(page.getByRole("button", { name: "Numbered list", exact: true })).toHaveAttribute("aria-pressed", "true");
+    await page.getByRole("button", { name: "Numbered list", exact: true }).click();
+    await expect(surface.locator("ul, ol")).toHaveCount(0);
+  });
+
+  /**
+   * A Direction B toolbar dropdown left open, then clicking straight into
+   * the editor, previously left it open - the component's own doc comment
+   * claimed native `<details>` "already closes on an outside click by
+   * default in every evergreen browser," which is false (confirmed
+   * directly: `<details>` only closes via its own `<summary>` or a script
+   * setting `open = false` - there is no such native behavior). Reuses the
+   * same outside-click dismiss pattern already proven for ContextMenu.tsx
+   * and ColorPickerPopover.tsx.
+   */
+  test("an open toolbar dropdown closes when clicking into the editor", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    const dropdown = page.locator("details.srte-toolbar-menu", { has: page.locator("summary", { hasText: "More text styles" }) });
+    await dropdown.locator("summary").click();
+    await expect(page.getByRole("menuitem", { name: "Code", exact: true })).toBeVisible();
+    await page.locator('[data-smart-authority="canonical"] [contenteditable="true"]').click();
+    await expect(dropdown).not.toHaveAttribute("open", "");
+    await expect(page.getByRole("menuitem", { name: "Code", exact: true })).not.toBeVisible();
   });
 
   /**
@@ -474,5 +616,92 @@ test.describe("canonical toolbar routing", () => {
     await expect(surfaceLocator.locator('[contenteditable="true"]')).toBeVisible();
     const results = await new AxeBuilder({ page }).include('[data-smart-authority="canonical"]').analyze();
     expect(results.violations).toEqual([]);
+  });
+});
+
+/**
+ * Report: "several important tools are still hidden inside dropdowns" at a
+ * genuinely spacious ~2264px desktop viewport (Superscript, Subscript, Text
+ * colour, Background colour, Font size, Font family, Remove link, Insert
+ * formula, Special characters). Investigation confirmed the priority-collapse
+ * system had exactly ONE breakpoint (639px, mobile-vs-everything-else) with
+ * every dropdown using the same priority={2} - nothing scaled with available
+ * width past that, and the toolbar's own flex-wrap meant it never actually
+ * ran out of room even at narrow desktop widths, so tools stayed
+ * dropdown-only purely by static JSX grouping, regardless of real estate.
+ * See docs/bugs/toolbar-priority-collapse-fixed-threshold-no-wide-promotion.md.
+ *
+ * Fix: the 9 named tools above got a standalone `data-srte-wide-promote`
+ * ToolbarButton copy (theme.ts) that appears at >=1440px, with their
+ * existing dropdown/mobile-menu copy hiding at that point so nothing is
+ * offered twice. 1440px (not 1280px) specifically to clear Playwright's own
+ * default 1280x720 test viewport, which nearly every other toolbar test in
+ * this suite runs at without calling setViewportSize.
+ */
+test.describe("toolbar priority-collapse: wide-viewport promotion", () => {
+  const promotedLabels = ["Superscript", "Subscript", "Text colour", "Background colour", "Font size", "Font family", "Remove link", "Insert formula", "Special characters"];
+
+  test("mobile (375px): promoted tools are not directly visible, only reachable via the single mobile More menu", async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 800 });
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    for (const label of promotedLabels) {
+      await expect(page.getByRole("button", { name: label, exact: true })).not.toBeVisible();
+    }
+    // Still reachable - the pre-existing mobile collapse (639px breakpoint,
+    // unchanged by this fix) funnels everything into one "More tools" menu.
+    await expect(page.locator(".srte-mobile-more")).toBeVisible();
+    await page.locator(".srte-mobile-more > summary").click();
+    await expect(page.getByRole("menuitem", { name: "Superscript", exact: true })).toBeVisible();
+  });
+
+  test("tablet (800px): promoted tools stay in their existing dropdowns, matching today's unchanged compact layout", async ({ page }) => {
+    await page.setViewportSize({ width: 800, height: 900 });
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    for (const label of promotedLabels) {
+      await expect(page.getByRole("button", { name: label, exact: true })).not.toBeVisible();
+    }
+    await openToolbarDropdown(page, "More text styles");
+    await expect(toolbarMenuItem(page, "Superscript")).toBeVisible();
+    await expect(toolbarMenuItem(page, "Code")).toBeVisible();
+  });
+
+  test("typical laptop (1280px, Playwright's own default viewport): promoted tools are NOT promoted yet, confirming the 1440px threshold choice", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    for (const label of promotedLabels) {
+      await expect(page.getByRole("button", { name: label, exact: true })).not.toBeVisible();
+    }
+    await openToolbarDropdown(page, "More to insert");
+    await expect(toolbarMenuItem(page, "Insert formula")).toBeVisible();
+    await expect(toolbarMenuItem(page, "Special characters")).toBeVisible();
+  });
+
+  test("wide desktop (2264px, the reported width): all 9 named tools become directly visible, and one still works end to end", async ({ page }) => {
+    await page.setViewportSize({ width: 2264, height: 1200 });
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    for (const label of promotedLabels) {
+      await expect(page.getByRole("button", { name: label, exact: true })).toBeVisible();
+    }
+    // The dropdown copies hide once promoted - "More text styles" still
+    // exists (Code didn't get promoted) but no longer lists Superscript.
+    await openToolbarDropdown(page, "More text styles");
+    await expect(toolbarMenuItem(page, "Code")).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Superscript", exact: true })).toHaveCount(0);
+    await page.keyboard.press("Escape");
+
+    // Functional, not just visible: the promoted button actually works.
+    const surface = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
+    await page.evaluate(() => {
+      const root = document.querySelector<HTMLElement>('[data-smart-authority="canonical"] [contenteditable="true"]')!;
+      const text = document.createTreeWalker(root, NodeFilter.SHOW_TEXT).nextNode() as Text;
+      const range = document.createRange();
+      range.selectNodeContents(text);
+      const selection = window.getSelection()!;
+      selection.removeAllRanges();
+      selection.addRange(range);
+      document.dispatchEvent(new Event("selectionchange"));
+    });
+    await page.getByRole("button", { name: "Superscript", exact: true }).click();
+    await expect(surface.locator('[data-smart-mark="superscript"]')).toHaveCount(1);
   });
 });
