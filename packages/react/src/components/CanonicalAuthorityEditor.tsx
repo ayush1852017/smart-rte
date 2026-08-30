@@ -95,6 +95,7 @@ import { TableResizeHandles } from "./TableResizeHandles.js";
 import { MediaOverlay } from "./MediaOverlay.js";
 import { ContextMenu, type ContextMenuItem } from "./ContextMenu.js";
 import { ToolbarButton, ToolbarDropdown, ToolbarGroup, ToolbarMenuItem, MobileMoreMenu } from "./ToolbarPrimitives.js";
+import type { EditorCapabilityPreset } from "../capabilityPresets.js";
 import { exportDocxDocument, importStyledDocxDocument, importPdfDocument } from "smartrte-core/foundation";
 import { printSmartDocumentAsPdf } from "../adapters/pdfPrint.js";
 import {
@@ -107,6 +108,15 @@ import {
 export interface CanonicalAuthorityEditorProps {
   /** Initial value only. Later replacements must use SmartEditorHandle.replaceValue. */
   defaultValue?: string | PersistedEditorDocument;
+  /**
+   * Which built-in plugins this instance is constructed with - see
+   * capabilityPresets.ts. Construction-time only, matching `defaultValue`'s
+   * own uncontrolled-after-mount contract (the underlying runtime is
+   * created once and retained; changing this prop on an already-mounted
+   * instance has no effect). Defaults to "full" - every existing consumer
+   * that never sets this is unaffected.
+   */
+  preset?: EditorCapabilityPreset;
   onChange?: (change: SmartEditorChange) => void;
   /** Transitional serialization callback for hosts that still persist HTML. */
   onHtmlChange?: (html: string) => void;
@@ -231,6 +241,7 @@ const isCollapsedTextSelection = (selection: SmartSelection): boolean =>
 
 export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalAuthorityEditorProps>(function CanonicalAuthorityEditor({
   defaultValue,
+  preset,
   onChange,
   onHtmlChange,
   onClipboardDiagnostic,
@@ -312,7 +323,7 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
   // "is this the same link" identity check. Cleared implicitly the moment
   // selection.head differs from this value.
   const [linkOverlayDismissedAt, setLinkOverlayDismissedAt] = useState<{ path: number[]; offset: number } | null>(null);
-  if (!runtimeRef.current) runtimeRef.current = new CanonicalEditorRuntime({ initialValue: defaultValue, onChange, onHtmlChange, onClipboardDiagnostic });
+  if (!runtimeRef.current) runtimeRef.current = new CanonicalEditorRuntime({ initialValue: defaultValue, preset, onChange, onHtmlChange, onClipboardDiagnostic });
   const runtime = runtimeRef.current;
   const [, setEditorTick] = useState(0);
   runtime.setCallbacks(onChange, onHtmlChange);
@@ -469,6 +480,16 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
   const canMoveUp = currentListStates.some(({ indexes }) => indexes.length > 0 && Math.min(...indexes) > 0);
   const canMoveDown = currentListStates.some(({ indexes, list }) => indexes.length > 0
     && Math.max(...indexes) < (list?.children?.length || 0) - 1);
+  // Whether the "table" plugin was included when this instance was
+  // constructed (see capabilityPresets.ts's "simple" preset) - the toolbar
+  // JSX is hand-authored, not driven by the plugin registry's own toolbar
+  // contributions the way the context menu already is, so this needs an
+  // explicit check to hide table-insertion UI for a schema that can't
+  // represent tables at all. Existing content containing a table, loaded
+  // under a schema without the table plugin, still round-trips safely as
+  // an `unknown` node (Phase 10's disable-safety contract, unchanged) -
+  // this only hides the *toolbar affordance* for creating new ones.
+  const tablesEnabled = Boolean(runtime.editor.schema.nodes.table);
   const tableSelected = currentTableScope.kind === "table-grid";
   const selectedTableElement = tableSelected
     ? runtime.surface.renderer?.mapping.nodeToDom((currentTableScope as TableGridScope).tableId) as HTMLTableElement | undefined
@@ -1683,7 +1704,7 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
         <ToolbarDropdown icon="video" label="More to insert" priority={2}>{insertMoreMenuItems}</ToolbarDropdown>
       </ToolbarGroup>
 
-      <ToolbarGroup>
+      {tablesEnabled && <ToolbarGroup>
         <ToolbarButton
           icon="table" label="Insert table" ariaLabel="Insert table" disabled={readOnly}
           onClick={(event) => {
@@ -1692,7 +1713,7 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
           }}
         />
         <ToolbarDropdown icon="mergeCells" label="Table tools" priority={2}>{tableToolsMenuItems}</ToolbarDropdown>
-      </ToolbarGroup>
+      </ToolbarGroup>}
 
       <input ref={importRef} type="file" accept=".html,.htm,.md,.markdown,.docx,.pdf,text/html,text/markdown,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf" hidden onChange={(event) => {
         const file = event.currentTarget.files?.[0];
@@ -1719,8 +1740,7 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
         {listToolsMenuItems}
         <div className="srte-menu-separator" />
         {insertMoreMenuItems}
-        <div className="srte-menu-separator" />
-        {tableToolsMenuItems}
+        {tablesEnabled && <><div className="srte-menu-separator" />{tableToolsMenuItems}</>}
         <div className="srte-menu-separator" />
         {saveCopyMenuItems}
         <div className="srte-menu-separator" />

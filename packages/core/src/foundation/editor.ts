@@ -4,7 +4,7 @@ import { runNormalization, type NormalizationRun } from "./normalization.js";
 import { applyOperations } from "./operations.js";
 import { createTransactionMap } from "./mapping.js";
 import { resolvePos } from "./positions.js";
-import { foundationRegistry, foundationSchema, repair, validate } from "./schema.js";
+import { foundationRegistry, foundationSchema, repair, restoreUnknownMarks, restoreUnknownNodes, validate } from "./schema.js";
 import { applyTransactionAtomic, RebaseConflictError, ResyncRequiredError } from "./transactions.js";
 import { rebaseTransaction } from "./collab/rebase.js";
 import { FoundationScopeIndex } from "./scope/resolveScope.js";
@@ -207,8 +207,15 @@ export class FoundationEditor {
       : { type: "doc", id: createNodeId(), children: [options.document] };
     const migrated = migrateNewlineTextToHardBreaks(candidate as FoundationEditorState["document"]);
     const repaired = repair(migrated.document, this.schema);
-    const boundaryOperations = editableBoundaryOperations(repaired.doc, this.schema);
-    const boundedDocument = boundaryOperations.length ? applyOperations(repaired.doc, boundaryOperations) : repaired.doc;
+    // Symmetric with repair() above: an `unknown`/`unknown-mark` node whose
+    // recorded originalType this schema *does* recognize (e.g. a
+    // previously plugin-disabled table, now loading into a schema with the
+    // table plugin re-enabled) restores losslessly - a no-op for every
+    // other document, since restoreUnknownNodes/Marks only ever act on a
+    // matching originalType. See docs/bugs/disable-safety-restore-never-wired.md.
+    const restored = restoreUnknownMarks(restoreUnknownNodes(repaired.doc, this.schema), this.schema);
+    const boundaryOperations = editableBoundaryOperations(restored, this.schema);
+    const boundedDocument = boundaryOperations.length ? applyOperations(restored, boundaryOperations) : restored;
     const boundedSelection = mapSelectionThroughBoundaryOperations(options.selection, boundaryOperations);
     const errors = validate(boundedDocument, this.schema);
     if (errors.length) throw new Error(`Initial document is invalid: ${errors[0].message}`);
@@ -266,8 +273,10 @@ export class FoundationEditor {
   replaceState(envelope: PersistedEditorDocument, options: ReplaceFoundationStateOptions): SmartTransaction {
     const migrated = migrateNewlineTextToHardBreaks(envelope.document);
     const repaired = repair(migrated.document, this.schema);
-    const boundaryOperations = editableBoundaryOperations(repaired.doc, this.schema);
-    const boundedDocument = boundaryOperations.length ? applyOperations(repaired.doc, boundaryOperations) : repaired.doc;
+    // See the matching comment in the constructor above.
+    const restored = restoreUnknownMarks(restoreUnknownNodes(repaired.doc, this.schema), this.schema);
+    const boundaryOperations = editableBoundaryOperations(restored, this.schema);
+    const boundedDocument = boundaryOperations.length ? applyOperations(restored, boundaryOperations) : restored;
     const boundedSelection = mapSelectionThroughBoundaryOperations(options.selection, boundaryOperations);
     const errors = validate(boundedDocument, this.schema);
     if (errors.length) throw new Error(`Replacement document is invalid: ${errors[0].message}`);

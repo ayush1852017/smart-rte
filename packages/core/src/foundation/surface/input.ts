@@ -684,7 +684,7 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
     }
     const payload = this.payloadFromTransfer(event.clipboardData);
     try {
-      const parsed = parseClipboardPayload(payload, { ownerDocument: this.ownerDocument });
+      const parsed = parseClipboardPayload(payload, { ownerDocument: this.ownerDocument, schema: this.editor.schema });
       this.options.onClipboardDiagnostic?.(reportParsedClipboard(payload, parsed));
       const fragment = remintClipboardFragmentIds(parsed.document, createNodeId);
       const result = insertClipboardFragment(this.editor.document, this.editor.selection, fragment, {
@@ -745,7 +745,7 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
       this.commitClipboard({ ...insertion, operations: [...deletion.operations, ...insertion.operations] }, "drop");
       return;
     }
-    const parsed = parseClipboardPayload(this.payloadFromTransfer(event.dataTransfer), { ownerDocument: this.ownerDocument });
+    const parsed = parseClipboardPayload(this.payloadFromTransfer(event.dataTransfer), { ownerDocument: this.ownerDocument, schema: this.editor.schema });
     const fragment = remintClipboardFragmentIds(parsed.document, createNodeId);
     const result = insertClipboardFragment(this.editor.document, targetSelection, fragment, {
       schema: this.editor.schema, positions: this.editor.positions, idFactory: createNodeId,

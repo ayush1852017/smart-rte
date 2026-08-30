@@ -1,4 +1,4 @@
-import type { Repair, SmartDocument } from "../types.js";
+import type { Repair, SmartDocument, SmartSchema } from "../types.js";
 
 export const NATIVE_CLIPBOARD_MIME = "application/x-smart-rte+json";
 
@@ -67,4 +67,16 @@ export interface ClipboardPipelineOptions {
   /** Test/audit switch proving detection is never required for correctness. */
   readonly normalizerMode?: "detected" | "generic";
   readonly maxBytes?: number;
+  /**
+   * The schema pasted content is repaired against - defaults to
+   * `foundationSchema` (the full built-in set) for full backward
+   * compatibility. An editor instance constructed with a restricted plugin
+   * set (see packages/react's capabilityPresets.ts) must pass its own
+   * `editor.schema` here, or pasted content matching an *excluded* plugin's
+   * node types (e.g. a pasted `<table>` under a table-less preset) would
+   * incorrectly validate against the full schema instead of demoting to
+   * `unknown` - defeating Phase 10's disable-safety guarantee specifically
+   * for the paste path.
+   */
+  readonly schema?: SmartSchema;
 }

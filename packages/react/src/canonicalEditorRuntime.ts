@@ -22,6 +22,7 @@ import {
   type SmartSelection,
   type SmartTransaction,
 } from "smartrte-core/foundation";
+import { capabilityPresetRegistry, type EditorCapabilityPreset } from "./capabilityPresets.js";
 
 export interface SmartEditorCheckpoint {
   envelope: PersistedEditorDocument;
@@ -79,6 +80,8 @@ export interface CanonicalEditorRuntimeOptions {
    * the disproven naive per-block experiment.
    */
   contentVisibility?: boolean;
+  /** Which built-in plugins this instance is constructed with - see capabilityPresets.ts. Defaults to "full" (every plugin), matching this runtime's only behavior before this option existed. */
+  preset?: EditorCapabilityPreset;
 }
 
 const nodeAtPath = (root: SmartNode, path: readonly number[]): SmartNode | null => {
@@ -170,10 +173,16 @@ export class CanonicalEditorRuntime implements SmartEditorHandle {
 
   constructor(options: CanonicalEditorRuntimeOptions = {}) {
     const envelope = envelopeFrom(options.initialValue);
+    // "full" (the default) intentionally passes no schema/commands/etc., so
+    // FoundationEditor's own defaulting (`options.schema || foundationSchema`)
+    // applies - every existing consumer who never sets `preset` is
+    // byte-for-byte unaffected by this option existing.
+    const registry = options.preset && options.preset !== "full" ? capabilityPresetRegistry(options.preset) : null;
     this.editor = createFoundationEditor({
       document: envelope.document,
       revision: envelope.revision,
       selection: firstTextSelection(envelope.document),
+      ...(registry ? { schema: registry.schema, commands: registry.commands, keyboardShortcuts: registry.keyboardShortcuts, contextMenu: registry.contextMenu } : {}),
     });
     this.savedRevision = envelope.revision;
     this.onChange = options.onChange;

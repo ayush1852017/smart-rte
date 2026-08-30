@@ -90,7 +90,7 @@ function ClassicEditorHost(
       <ClassicEditorComponent
         ref={editorRef}
         defaultValue={props.value || "<p></p>"}
-        onHtmlChange={(html) => {
+        onChange={(html) => {
           props.onChange?.(html);
           try {
             // Bridge to Flutter if present

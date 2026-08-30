@@ -138,3 +138,37 @@ describe("native clipboard round-trip", () => {
     }
   });
 });
+
+describe("clipboard pipeline repairs against the caller's own active schema, not always the full built-in set", () => {
+  /**
+   * Regression: parseClipboardPayload hardcoded `foundationSchema` (the
+   * full built-in set) in its repair() call regardless of what schema the
+   * pasting editor instance was actually constructed with. An editor built
+   * with a restricted plugin set (see packages/react's
+   * capabilityPresets.ts, added for Sootr's table-less "Simple" preset)
+   * would have incorrectly let a pasted <table> validate as real content
+   * instead of demoting to `unknown` - defeating Phase 10's disable-safety
+   * guarantee specifically for the paste/drop path, even though the same
+   * content loaded via replaceValue/initial document already correctly
+   * demoted (FoundationEditor's constructor always used its own
+   * `this.schema`, never the singleton).
+   */
+  it("demotes a pasted table to unknown when the caller passes a schema without the table plugin", async () => {
+    const { createPluginRegistry } = await import("../plugin/registry.js");
+    const { builtInPlugins } = await import("../plugin/builtins.js");
+    const { baseSchema, foundationSchema } = await import("../schema.js");
+    const withoutTable = createPluginRegistry(
+      builtInPlugins.filter((plugin) => plugin.id !== "table"),
+      { baseSchema, schemaVersion: foundationSchema.version },
+    );
+    const html = '<table><tbody><tr><td>cell</td></tr></tbody></table><p>kept</p>';
+
+    const underFullSchema = parseClipboardPayload({ html, plainText: "kept" }, { ownerDocument: document });
+    expect(underFullSchema.document.children.some((child) => !("text" in child) && child.type === "table")).toBe(true);
+
+    const underRestrictedSchema = parseClipboardPayload({ html, plainText: "kept" }, { ownerDocument: document, schema: withoutTable.schema });
+    expect(underRestrictedSchema.document.children.some((child) => !("text" in child) && child.type === "table")).toBe(false);
+    expect(underRestrictedSchema.document.children.some((child) => !("text" in child) && child.type === "unknown")).toBe(true);
+    expect(JSON.stringify(underRestrictedSchema.document)).toContain("kept");
+  });
+});

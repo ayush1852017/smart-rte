@@ -63,6 +63,6 @@ export const parseClipboardPayload = (
   const parsed = detection.source === "native" && payload.native
     ? parseNativeClipboardDocument(payload.native)
     : parseCanonicalListHtml(normalized.html);
-  const repaired = repair({ ...parsed, id: parsed.id || createNodeId() }, foundationSchema);
+  const repaired = repair({ ...parsed, id: parsed.id || createNodeId() }, options.schema ?? foundationSchema);
   return { source: detection.source, document: repaired.doc, repairs: [...normalized.repairs, ...repaired.repairs] };
 };
