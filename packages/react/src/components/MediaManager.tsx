@@ -176,7 +176,7 @@ export function MediaManager(props: {
                 padding: "6px 10px",
                 borderRadius: 6,
                 border: "1px solid var(--srte-border)",
-                background: activeTab === "upload" ? "var(--srte-surface-subtle)" : "var(--srte-input-bg)",
+                background: activeTab === "upload" ? "var(--srte-muted)" : "var(--srte-input-bg)",
                 color: "var(--srte-input-text)",
               }}
             >
@@ -189,7 +189,7 @@ export function MediaManager(props: {
                 padding: "6px 10px",
                 borderRadius: 6,
                 border: "1px solid var(--srte-border)",
-                background: activeTab === "library" ? "var(--srte-surface-subtle)" : "var(--srte-input-bg)",
+                background: activeTab === "library" ? "var(--srte-muted)" : "var(--srte-input-bg)",
                 color: "var(--srte-input-text)",
               }}
             >
@@ -228,7 +228,7 @@ export function MediaManager(props: {
                 padding: 24,
                 textAlign: "center",
                 color: "var(--srte-text-muted)",
-                background: "var(--srte-surface-subtle)",
+                background: "var(--srte-muted)",
                 cursor: uploading ? "default" : "pointer",
                 opacity: uploading ? 0.7 : 1,
               }}
@@ -324,7 +324,7 @@ export function MediaManager(props: {
                         height: 24,
                         border: "1px solid var(--srte-border)",
                         borderRadius: 999,
-                        background: "var(--srte-surface-subtle)",
+                        background: "var(--srte-muted)",
                         color: "var(--srte-input-text)",
                         cursor: "pointer",
                         flex: "0 0 auto",
@@ -342,7 +342,7 @@ export function MediaManager(props: {
                             fontSize: 10,
                             padding: "1px 5px",
                             borderRadius: 999,
-                            background: "var(--srte-surface-subtle)",
+                            background: "var(--srte-muted)",
                             color: "var(--srte-text-muted)",
                           }}
                         >

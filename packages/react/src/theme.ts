@@ -20,8 +20,8 @@ export const SRTE_DEFAULT_CSS = `
   --srte-input-border: var(--srte-border);
   --srte-modal-backdrop: rgba(0, 0, 0, 0.35);
   --srte-modal-backdrop-filter: blur(2px);
-  --srte-modal-bg: #ffffff;
-  --srte-modal-text: #000000;
+  --srte-modal-bg: var(--card, #ffffff);
+  --srte-modal-text: var(--foreground, #000000);
   --srte-menu-bg: var(--srte-background);
   --srte-menu-text: var(--srte-foreground);
   --srte-menu-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
@@ -34,7 +34,6 @@ export const SRTE_DEFAULT_CSS = `
      (see .srte-tool-button[aria-pressed="true"]), not a replacement for
      --srte-primary generally. */
   --srte-primary-pressed: #1d4ed8;
-  --srte-surface-subtle: #f3f4f6;
   --srte-on-primary: #ffffff;
   --srte-cancel-bg: #f3f4f6;
   --srte-code-bg: #f6f8fa;
@@ -58,8 +57,8 @@ export const SRTE_DEFAULT_CSS = `
   --srte-input-border: var(--srte-border);
   --srte-modal-backdrop: rgba(0, 0, 0, 0.22);
   --srte-modal-backdrop-filter: blur(10px) saturate(0.9);
-  --srte-modal-bg: #1e293b;
-  --srte-modal-text: #e0e0e0;
+  --srte-modal-bg: var(--card, #1e293b);
+  --srte-modal-text: var(--foreground, #e0e0e0);
   --srte-menu-bg: var(--srte-background);
   --srte-menu-text: var(--srte-foreground);
   --srte-menu-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
@@ -68,7 +67,6 @@ export const SRTE_DEFAULT_CSS = `
   --srte-danger: #ef4444;
   --srte-primary: #3b82f6;
   --srte-primary-pressed: var(--srte-primary);
-  --srte-surface-subtle: #333333;
   --srte-on-primary: #ffffff;
   --srte-cancel-bg: #333333;
   --srte-code-bg: #111827;
@@ -487,7 +485,17 @@ export const SRTE_DEFAULT_CSS = `
   border-left: 4px solid var(--srte-accent);
   margin: 0.75em 0;
   padding: 0.5em 1em;
-  background: var(--srte-surface-subtle);
+  /* --srte-muted, not the retired --srte-surface-subtle (docs/bugs/
+     srte-surface-subtle-not-host-theme-aware.md): every other neutral
+     surface/text token here (--srte-background, --srte-foreground,
+     --srte-muted, --srte-border) is defined as var(--host-token, fallback)
+     so it correctly follows a host's OWN light/dark state even if
+     .srte-dark never gets applied for some host-side wiring reason -
+     --srte-surface-subtle was the one exception, a bare hardcoded hex with
+     no host integration, which is exactly what let a real host (dark mode,
+     .srte-dark not reaching this editor instance) render this blockquote
+     with a light-mode background and dark-mode text simultaneously. */
+  background: var(--srte-muted);
   color: var(--srte-text);
 }
 .srte-editor [contenteditable] p,
@@ -566,7 +574,7 @@ export const SRTE_DEFAULT_CSS = `
   color: inherit;
 }
 .srte-editor [contenteditable] th {
-  background: var(--srte-surface-subtle);
+  background: var(--srte-muted);
   font-weight: 600;
   text-align: left;
 }
