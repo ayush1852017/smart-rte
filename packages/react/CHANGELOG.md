@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.0-beta.2
+
+- Fix the toolbar promoting extra buttons based on the browser window's width instead of the editor's own rendered width — broke embedding the editor in a split pane or any container narrower than the window, causing overlapping/mashed toolbar labels and misdirected clicks that looked like an unresponsive toolbar.
+
 ## 1.0.0-beta.1
 
 **BREAKING CHANGE.** `ClassicEditor` is now unconditionally the canonical, schema-driven editor (`CanonicalAuthorityEditor` underneath). The DOM-authoritative legacy editor and its rollback path have been fully removed; every published version through 0.3.4 defaulted to the DOM-authoritative implementation, so this changes real runtime behavior for every existing consumer, not just internals.
