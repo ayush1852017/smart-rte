@@ -2,6 +2,17 @@
 
 This closes the loop deliberately rather than letting "find and fix the next instance" continue indefinitely. Four rounds found four independent unguarded-recursion instances across two structurally different attack shapes (tag-nesting depth; reference-chain length); this document fixes the one remaining live gap, resolves the audit's own open question about the rest, and hands the final call to the owner rather than making it unilaterally.
 
+## Revisit-trigger re-affirmation (2026-08-31, pre-`latest`-tag npm publish)
+
+The "revisit trigger" above ("before any `latest`-tag publish") fired: this is the first real publish attempt since this document was written. Re-examined the decision rather than silently carrying it forward:
+
+- Still pinned at patched `1.11.0` (`patches/mammoth@1.11.0.patch`, referenced in root `package.json`'s `pnpm.patchedDependencies`) — verified the patch file and reference are both still present and match.
+- Live upstream `npm view mammoth version` now reports **`1.12.2`** (was `1.12.1` at Phase 11's last check, `1.11.0`-adjacent when this investigation closed) — the version gap has widened further, as expected for a deliberately-frozen pin.
+- No new mammoth-reachable-surface issue was found through this session's routine use (table border/DOCX export work touched `formats/docx/export.ts`, not the mammoth import path at all) or through the npm pre-publish audit (`docs/PHASE_PRE_PUBLISH_AUDIT.md`) — no new candidate-hunting was performed, matching this document's own closing scope of not re-opening the search absent new evidence.
+- The CVE overrides this decision depends on (`underscore@1.13.8`, `@xmldom/xmldom@0.9.11`) were independently re-confirmed resolved during the same pre-publish audit via `pnpm why <pkg> -r`.
+
+**Re-affirmed: stay on patched `1.11.0`.** Nothing observed since this document's original close changes the "no known, currently-exploitable gap" finding or the reasoning against options (a)/(b) above. Next revisit trigger remains unchanged: before any future `latest`-tag publish, or before a planned security review.
+
 ## Part 1 — `findLevel` fixed
 
 `docs/bugs/mammoth-numbering-style-link-chain-recursion.md`'s `docx/numbering-xml.js`'s `findLevel` — the one confirmed, currently-unmitigated crash (a `numStyleLink` reference-chain recursion, reachable via routine numbered-paragraph content, not covered by `nestingGuard.ts` at all since it doesn't touch `document.xml`'s tag-nesting depth) — is fixed. Converted to an iterative loop with explicit cycle detection, extended into the same `patches/mammoth@1.11.0.patch` as the three prior fixes in this chain.

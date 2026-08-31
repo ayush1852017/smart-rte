@@ -122,3 +122,23 @@ No other schema/attribute additions were found in the committed history since 20
 7. **§8** — no npm auth in this environment; publishing needs the user's direct involvement regardless of the above.
 
 None of the rest (§2 e2e flakes, §3/§4 ledger accuracy, §6 written-never-rendered) raised any concern — those areas are clean.
+
+---
+
+## Resolution status (2026-08-31, post-fix re-verification)
+
+Each blocking finding from the go/no-go list above, checked off individually against the current working tree — not assumed from the fix having been attempted:
+
+1. **§1 (uncommitted work) — RESOLVED.** The original 49 files were split across two commits: `d9fdb20` (made directly by the repo owner, toolbar primitives/formula library/special characters) and `05611a6` (the onChange fix, capability presets, and disable-safety restore wiring from the Sootr-migration work). `git status --short` is clean as of this update, before the packaging-fix commit described below.
+2. **§7b (dist not cleaned, Critical) — RESOLVED.** Both `packages/core/package.json` and `packages/react/package.json`'s `build` scripts now read `"rm -rf dist && tsc -p tsconfig.json"`. Re-verified with fresh `npm pack --dry-run` after a real rebuild of both packages: core 331 files / 268.0 kB tarball / 1.1 MB unpacked; react 93 files / 134.0 kB tarball / 527.4 kB unpacked. Confirmed the orphans are gone (`ClassicEditor.js`/`.d.ts` absent) while the real current file survives (`ClassicEditorAuthority.js`/`.d.ts` present).
+3. **§7a (npm publish vs pnpm publish, Critical) — NOT YET ACTIONED**, but not a code fix — this is a Part 2 execution-mechanics finding (use `pnpm publish`, never `npm publish`). Restated here as still binding for whenever Part 2 is re-opened.
+4. **§7c (test-harness ships, High) — RESOLVED.** `"!dist/test-harness/**"` added to `packages/react/package.json`'s `files` array. Confirmed via `npm pack --dry-run 2>&1 | grep -c test-harness` → `0`.
+5. **§7d (no exports map, High) — RESOLVED.** `packages/react/package.json` now has an `exports` map with `.` (root) and `./standalone/classic-editor-embed` (kept, not restricted to root-only, since no documentation was found ruling out the standalone embed as a real second public entry point — treated conservatively rather than guessed away).
+6. **§7e (onChange type mismatch, Medium) — RESOLVED**, ahead of this packaging pass, as part of the Sootr-migration work (commit `05611a6`). See `docs/bugs/classic-editor-onchange-object-instead-of-string.md`. `ClassicEditorProps.onChange` is now `(html: string) => void`, matching actual runtime behavior exactly.
+7. **§5 (mammoth revisit trigger, Medium) — RESOLVED.** Explicitly re-affirmed in `docs/PHASE_9_MAMMOTH_FINAL_DECISION.md`'s new "Revisit-trigger re-affirmation (2026-08-31...)" section: staying on patched `1.11.0` against a now-`1.12.2` upstream, no new reachable-surface issue found.
+8. **§8 (no npm auth) — NOT RESOLVABLE BY ME.** `npm whoami` still returns `401 Unauthorized` (re-confirmed by the user's own terminal in this same session). This requires the user to run `npm login` themselves — explicitly out of scope for me per this project's standing credential-handling rule, not a packaging defect.
+9. **§8 (undocumented `0.3.5`, Minor) — RESOLVED, root cause identified.** Not a changelog-writing oversight: `git log`/`git branch --contains` confirms `0.3.5` (`f711756`, 2026-08-15) was released from `master`, on a branch that diverged from `core-implementation` at `82c8e3b` — `core-implementation` never merged it back, so its CHANGELOG.md entry was simply never present on this branch, not deleted. Verified `packages/core/CHANGELOG.md` has no equivalent gap (its `master`-only commits are already ancestors of this branch's `HEAD`). Fixed by adding the real `0.3.5` entry (copied verbatim from `master`'s `f711756`) into `packages/react/CHANGELOG.md` in its correct chronological slot, between `1.0.0-beta.1` and `0.3.4`.
+
+**Re-verification after all packaging fixes**: `pnpm --filter smartrte-core test` — 724/724 (81 files). `pnpm --filter smartrte-react test` — 140/140 (33 files). `pnpm run lint` (both packages' `tsc --noEmit`) — clean. Full 3-browser e2e re-run pending at time of writing this section (see below for result once it lands).
+
+**Updated status: still NO-GO for the literal `npm publish` command in the original prompt's Part 2.4** (item 3 above, unchanged), but every code-level/packaging blocker is now fixed and re-verified. The two remaining items are both execution-mechanics/credentials, not defects: use `pnpm publish` (not `npm publish`) when Part 2 is re-opened, and the user must authenticate (`npm login` / `pnpm login`) themselves before that command can run.

@@ -6,10 +6,21 @@
   "main": "dist/index.js",
   "module": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./standalone/classic-editor-embed": {
+      "types": "./dist/standalone/classic-editor-embed.d.ts",
+      "import": "./dist/standalone/classic-editor-embed.js"
+    }
+  },
   "files": [
     "dist",
     "!dist/**/*.test.js",
     "!dist/**/*.test.d.ts",
+    "!dist/test-harness/**",
     "README.md",
     "CHANGELOG.md"
   ],
@@ -42,7 +53,7 @@
   "author": "Smart RTE Contributors",
   "license": "MIT",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "rm -rf dist && tsc -p tsconfig.json",
     "prepublishOnly": "npm run build",
     "dev": "pnpm build",
     "lint": "tsc -p tsconfig.json --noEmit",

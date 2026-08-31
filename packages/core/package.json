@@ -37,7 +37,7 @@
     "CHANGELOG.md"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "rm -rf dist && tsc -p tsconfig.json",
     "prepublishOnly": "npm run build",
     "test": "vitest run",
     "lint": "tsc -p tsconfig.json --noEmit"

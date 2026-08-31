@@ -10,6 +10,15 @@
 - Add live KaTeX rendering for formula content, including accessible MathML output.
 - Depends on `smartrte-core@1.0.0-beta.1`.
 
+## 0.3.5
+
+- Remove the always-on drag handle that appeared next to every line, list item, and table.
+- Keep list-style and blockquote changes scoped to the selection instead of bleeding into unrelated parts of the document.
+- Fix blockquote and code block corrupting each other, or losing content, when toggled in sequence without reselecting text in between.
+- Preserve code blocks and blockquotes nested inside each other, including on list items, instead of one silently stripping the other.
+- Fix the toolbar's active-state indicators (and the code block toggle itself) going stale on list items after removing an enclosing blockquote.
+- Stop pasted or existing blockquotes/code blocks from losing their border and internal spacing when the source HTML carries conflicting inline styles.
+
 ## 0.3.4
 
 - Make foreground and background colours deterministic across paragraphs, lists, and table-cell text selections.
