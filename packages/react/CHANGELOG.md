@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.0-beta.3
+
+- Fix toolbar dropdown menus (e.g. "More text styles", "More paragraph tools") getting visually clipped to unusable fragments when the editor is embedded inside a host container with `overflow: hidden` (e.g. a rounded card or a clipped split-pane panel) — the menu now positions itself relative to the viewport instead of the nearest ancestor, so it can never be clipped regardless of host layout.
+
 ## 1.0.0-beta.2
 
 - Fix the toolbar promoting extra buttons based on the browser window's width instead of the editor's own rendered width — broke embedding the editor in a split pane or any container narrower than the window, causing overlapping/mashed toolbar labels and misdirected clicks that looked like an unresponsive toolbar.
