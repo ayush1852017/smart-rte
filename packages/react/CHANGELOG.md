@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.0-beta.5
+
+- Add an opt-in `renderFormulaHtml` prop (on `ClassicEditor`/`CanonicalAuthorityEditor`) that bakes real KaTeX-rendered HTML into the formula elements of `onChange`'s exported HTML, instead of an empty placeholder — for hosts that display saved content directly (e.g. a read-only preview panel) without also running KaTeX against it. Depends on `smartrte-core@1.0.0-beta.2`.
+
 ## 1.0.0-beta.4
 
 - Fix blockquote, table header, and dialog (media library, comments, suggestions, version history) backgrounds/text staying in their light-mode colors even when the host page is in dark mode — these now follow the host's own dark-mode CSS variables directly, the same way the rest of the editor's colors already did, instead of depending solely on the `.srte-dark` class reaching the editor correctly.

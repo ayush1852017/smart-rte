@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.0-beta.2
+
+- Add an opt-in `renderFormulaHtml` option to `serializeCanonicalListHtml` that bakes real KaTeX-rendered HTML into exported formula elements, instead of leaving an empty placeholder — for consumers (e.g. a read-only preview) that display this HTML directly without also running KaTeX against it themselves. Off by default; no change for existing consumers.
+
 ## 1.0.0-beta.1
 
 **BREAKING CHANGE.** This is the first release built on the canonical, schema-driven document model. Every published version through 0.2.1 was built on the older discriminated-union model; none of the work below has shipped before.
