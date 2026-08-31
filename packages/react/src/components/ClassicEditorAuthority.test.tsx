@@ -87,4 +87,54 @@ describe("ClassicEditor legacy-compat onChange", () => {
     act(() => reactRoot2.unmount());
     act(() => reactRoot3.unmount());
   });
+
+  /**
+   * docs/bugs/formula-not-rendered-in-static-html-consumers.md: the live
+   * editing surface renders formulas via its own imperative katex.render()
+   * calls, which onChange's serialized HTML string never captures on its
+   * own - a host that displays this HTML directly (a read-only preview
+   * built from saved content) saw an empty placeholder, no visible math.
+   * `renderFormulaHtml` threads all the way from this legacy-compat prop
+   * down through CanonicalAuthorityEditor and CanonicalEditorRuntime to
+   * serializeCanonicalListHtml's own option (core-level rendering
+   * correctness is covered directly in packages/core's own test suite).
+   */
+  it("renderFormulaHtml bakes real KaTeX HTML into onChange's output; off by default", () => {
+    vi.useFakeTimers();
+    const formulaHtml = '<p>x=<span data-smart-type="formula" data-smart-formula="E=mc^2" data-smart-notation="latex"></span></p>';
+
+    const hostDefault = document.createElement("div");
+    document.body.appendChild(hostDefault);
+    const rootDefault = createRoot(hostDefault);
+    const changesDefault = vi.fn();
+    let runtimeDefault: CanonicalEditorRuntime | undefined;
+    act(() => rootDefault.render(<ClassicEditor
+      defaultValue={formulaHtml}
+      onChange={changesDefault}
+      onRuntime={(instance) => { runtimeDefault = instance; }}
+    />));
+    act(() => runtimeDefault!.editor.typeText("!", { timestamp: 1 }));
+    act(() => vi.advanceTimersByTime(300));
+    const [defaultHtml] = changesDefault.mock.calls.at(-1)!;
+    expect(defaultHtml).not.toContain("katex");
+    act(() => rootDefault.unmount());
+
+    const hostRendered = document.createElement("div");
+    document.body.appendChild(hostRendered);
+    const rootRendered = createRoot(hostRendered);
+    const changesRendered = vi.fn();
+    let runtimeRendered: CanonicalEditorRuntime | undefined;
+    act(() => rootRendered.render(<ClassicEditor
+      defaultValue={formulaHtml}
+      renderFormulaHtml
+      onChange={changesRendered}
+      onRuntime={(instance) => { runtimeRendered = instance; }}
+    />));
+    act(() => runtimeRendered!.editor.typeText("!", { timestamp: 1 }));
+    act(() => vi.advanceTimersByTime(300));
+    const [renderedHtml] = changesRendered.mock.calls.at(-1)!;
+    expect(renderedHtml).toContain('class="katex"');
+    expect(renderedHtml).toContain('data-smart-formula="E=mc^2"');
+    act(() => rootRendered.unmount());
+  });
 });

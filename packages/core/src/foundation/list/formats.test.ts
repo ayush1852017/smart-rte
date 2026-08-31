@@ -342,3 +342,59 @@ describe("Phase 3 list format fidelity", () => {
     expect((parseCanonicalListHtml(excelShapeTable).children[0] as SmartDocument).attrs).toMatchObject({ columnWidths: [19] });
   });
 });
+
+// docs/bugs/formula-not-rendered-in-static-html-consumers.md: the live
+// editing surface renders formulas via surface/renderer.ts's imperative
+// katex.render() calls, which never touch this serialization path - a
+// consumer that displays onHtmlChange's HTML string directly (a read-only
+// preview) got an empty placeholder span with no visible math at all.
+describe("serializeCanonicalListHtml renderFormulaHtml option", () => {
+  const inlineFormulaDoc: SmartDocument = { type: "doc", id: "doc", children: [
+    { type: "paragraph", id: "p", children: [{ type: "formula", id: "f", attrs: { source: "E=mc^2", notation: "latex" } }] },
+  ] };
+
+  it("defaults to an empty placeholder, unchanged from before this option existed", () => {
+    const html = serializeCanonicalListHtml(inlineFormulaDoc);
+    expect(html).toContain('data-smart-formula="E=mc^2"');
+    expect(html).toMatch(/data-smart-type="formula"[^>]*><\/span>/);
+  });
+
+  it("bakes real KaTeX HTML into the formula element when renderFormulaHtml is true", () => {
+    const html = serializeCanonicalListHtml(inlineFormulaDoc, { renderFormulaHtml: true });
+    expect(html).toContain('data-smart-formula="E=mc^2"');
+    expect(html).toContain('class="katex"');
+    expect(html).toContain("MathML");
+  });
+
+  it("supports \\ce{...} chemistry notation, matching the live renderer's own mhchem import", () => {
+    const chemistryDoc: SmartDocument = { type: "doc", id: "doc", children: [
+      { type: "block_formula", id: "f", attrs: { source: "\\ce{H2O}", notation: "latex" } },
+    ] };
+    const html = serializeCanonicalListHtml(chemistryDoc, { renderFormulaHtml: true });
+    expect(html).toContain('class="katex"');
+  });
+
+  it("falls back to escaped plain text on invalid LaTeX, matching the live renderer's own try/catch fallback - never throws", () => {
+    const invalidDoc: SmartDocument = { type: "doc", id: "doc", children: [
+      { type: "paragraph", id: "p", children: [{ type: "formula", id: "f", attrs: { source: "\\frac{1", notation: "latex" } }] },
+    ] };
+    expect(() => serializeCanonicalListHtml(invalidDoc, { renderFormulaHtml: true })).not.toThrow();
+    const html = serializeCanonicalListHtml(invalidDoc, { renderFormulaHtml: true });
+    expect(html).toContain("\\frac{1");
+    expect(html).not.toContain('class="katex"');
+  });
+
+  it("round-trips correctly regardless of the baked-in HTML - the model only ever reads the data-smart-formula attribute, never the rendered children", () => {
+    const html = serializeCanonicalListHtml(inlineFormulaDoc, { renderFormulaHtml: true });
+    const parsed = parseCanonicalListHtml(html);
+    const formulaNode = (parsed.children[0] as SmartDocument).children?.[0] as SmartDocument;
+    expect(formulaNode.type).toBe("formula");
+    expect(formulaNode.attrs).toMatchObject({ source: "E=mc^2", notation: "latex" });
+  });
+
+  it("is off by default for the clean/fragment variants too, and combines correctly with clean:true", () => {
+    const cleanHtml = serializeCanonicalListHtml(inlineFormulaDoc, { clean: true, renderFormulaHtml: true });
+    expect(cleanHtml).not.toContain("data-smart-id");
+    expect(cleanHtml).toContain('class="katex"');
+  });
+});

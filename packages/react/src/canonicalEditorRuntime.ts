@@ -82,6 +82,17 @@ export interface CanonicalEditorRuntimeOptions {
   contentVisibility?: boolean;
   /** Which built-in plugins this instance is constructed with - see capabilityPresets.ts. Defaults to "full" (every plugin), matching this runtime's only behavior before this option existed. */
   preset?: EditorCapabilityPreset;
+  /**
+   * Bakes real KaTeX-rendered HTML into `onHtmlChange`'s formula elements
+   * instead of leaving them as empty placeholders (docs/bugs/
+   * formula-not-rendered-in-static-html-consumers.md). Off by default -
+   * the live editing surface already renders formulas correctly on its
+   * own via surface/renderer.ts's imperative katex.render() calls, which
+   * this option has no effect on; it exists purely for consumers that take
+   * this HTML string and display it *without* also running KaTeX against
+   * it themselves (e.g. a read-only preview panel built from saved HTML).
+   */
+  renderFormulaHtml?: boolean;
 }
 
 const nodeAtPath = (root: SmartNode, path: readonly number[]): SmartNode | null => {
@@ -168,6 +179,7 @@ export class CanonicalEditorRuntime implements SmartEditorHandle {
   private onHtmlChange?: (html: string) => void;
   private readonly onClipboardDiagnostic?: (report: ClipboardDiagnosticReport) => void;
   private readonly contentVisibility: boolean;
+  private readonly renderFormulaHtml: boolean;
   private htmlChangeTimer: number | null = null;
   private pendingHtmlDocument: PersistedEditorDocument["document"] | null = null;
 
@@ -189,6 +201,7 @@ export class CanonicalEditorRuntime implements SmartEditorHandle {
     this.onHtmlChange = options.onHtmlChange;
     this.onClipboardDiagnostic = options.onClipboardDiagnostic;
     this.contentVisibility = options.contentVisibility === true;
+    this.renderFormulaHtml = options.renderFormulaHtml === true;
   }
 
   setCallbacks(onChange?: (change: SmartEditorChange) => void, onHtmlChange?: (html: string) => void): void {
@@ -208,7 +221,7 @@ export class CanonicalEditorRuntime implements SmartEditorHandle {
       this.htmlChangeTimer = null;
       const pending = this.pendingHtmlDocument;
       this.pendingHtmlDocument = null;
-      if (pending && this.onHtmlChange) this.onHtmlChange(serializeCanonicalListHtml(pending, { clean: true }));
+      if (pending && this.onHtmlChange) this.onHtmlChange(serializeCanonicalListHtml(pending, { clean: true, renderFormulaHtml: this.renderFormulaHtml }));
     };
     if (view) {
       // Transitional HTML serialization is intentionally debounced outside the

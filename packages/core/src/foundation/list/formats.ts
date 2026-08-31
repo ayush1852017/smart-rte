@@ -28,10 +28,13 @@ const isEditorUiNode = (node: HtmlNode) =>
  */
 const TRANSPARENT_CONTAINER_TAGS = ["div", "section", "article", "figure"];
 
+/** See serializeCanonicalListHtml's own doc comment for why this is a module-scoped flag rather than a threaded parameter. */
+let renderFormulaHtmlMode = false;
+
 const serializeInline = (node: SmartNode): string => {
   if (!isTextNode(node)) {
     if (node.type === "hard_break") return `<br data-smart-id="${escapeHtml(node.id)}" data-smart-type="hard_break">`;
-    if (["image", "formula"].includes(node.type)) return atomToHtml(node);
+    if (["image", "formula"].includes(node.type)) return atomToHtml(node, { renderFormulaHtml: renderFormulaHtmlMode });
     const raw = node.attrs?.raw as { html?: unknown } | undefined;
     if (typeof raw?.html === "string") return raw.html;
     return `<span data-smart-id="${escapeHtml(node.id)}" data-smart-atomic="true">￼</span>`;
@@ -85,7 +88,7 @@ const serializeBlock = (node: SmartElementNode, includeIds: boolean, listDepth =
     if (typeof raw?.html === "string") return raw.html;
   }
   const id = includeIds ? ` data-smart-id="${escapeHtml(node.id)}"` : "";
-  if (["block_image", "block_formula", "video", "audio", "divider"].includes(node.type)) return atomToHtml(node);
+  if (["block_image", "block_formula", "video", "audio", "divider"].includes(node.type)) return atomToHtml(node, { renderFormulaHtml: renderFormulaHtmlMode });
   if (node.type === "paragraph" || node.type === "heading") {
     const tag = node.type === "heading" ? `h${String(node.attrs?.level || 1)}` : "p";
     return `<${tag}${id}${blockAttributes(node)}>${(node.children || []).map(serializeInline).join("")}</${tag}>`;
@@ -172,13 +175,27 @@ const serializeBlock = (node: SmartElementNode, includeIds: boolean, listDepth =
   return `<div${id}>${(node.children || []).map((child) => isTextNode(child) ? serializeInline(child) : serializeBlock(child, includeIds)).join("")}</div>`;
 };
 
-export const serializeCanonicalListHtml = (document: SmartDocument, options: { clean?: boolean; fragment?: boolean } = {}): string =>
-  options.clean === true
-    ? document.children.map((node) => isTextNode(node) ? serializeInline(node) : serializeBlock(node, false)).join("")
-      .replace(/\sdata-smart-id=(?:"[^"]*"|'[^']*')/g, "")
-    : options.fragment === true
-      ? document.children.map((node) => isTextNode(node) ? serializeInline(node) : serializeBlock(node, true)).join("")
-      : `<div data-smart-document="true" data-smart-id="${escapeHtml(document.id)}">${document.children.map((node) => isTextNode(node) ? serializeInline(node) : serializeBlock(node, true)).join("")}</div>`;
+export const serializeCanonicalListHtml = (document: SmartDocument, options: { clean?: boolean; fragment?: boolean; renderFormulaHtml?: boolean } = {}): string => {
+  // A module-scoped flag, not a threaded parameter: serializeInline/
+  // serializeBlock recurse through dozens of call sites (lists, tables,
+  // blockquotes) - threading a new parameter through every one of them is
+  // exactly the kind of change that's easy to miss at one nested call site
+  // and silently break there. Safe here because serialization is
+  // synchronous, single-threaded, non-reentrant tree recursion - the flag
+  // is always restored in `finally` before this function ever returns.
+  const previous = renderFormulaHtmlMode;
+  renderFormulaHtmlMode = options.renderFormulaHtml === true;
+  try {
+    return options.clean === true
+      ? document.children.map((node) => isTextNode(node) ? serializeInline(node) : serializeBlock(node, false)).join("")
+        .replace(/\sdata-smart-id=(?:"[^"]*"|'[^']*')/g, "")
+      : options.fragment === true
+        ? document.children.map((node) => isTextNode(node) ? serializeInline(node) : serializeBlock(node, true)).join("")
+        : `<div data-smart-document="true" data-smart-id="${escapeHtml(document.id)}">${document.children.map((node) => isTextNode(node) ? serializeInline(node) : serializeBlock(node, true)).join("")}</div>`;
+  } finally {
+    renderFormulaHtmlMode = previous;
+  }
+};
 
 const textWithMarks = (node: HtmlNode, inherited: readonly SmartMark[] = []): SmartNode[] => {
   if (isEditorUiNode(node)) return [];

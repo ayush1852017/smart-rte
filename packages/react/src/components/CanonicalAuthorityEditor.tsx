@@ -120,6 +120,13 @@ export interface CanonicalAuthorityEditorProps {
   onChange?: (change: SmartEditorChange) => void;
   /** Transitional serialization callback for hosts that still persist HTML. */
   onHtmlChange?: (html: string) => void;
+  /**
+   * Bakes real KaTeX-rendered HTML into onHtmlChange's formula elements
+   * instead of leaving them as empty placeholders - see
+   * canonicalEditorRuntime.ts's CanonicalEditorRuntimeOptions for the full
+   * rationale. Construction-time only, same contract as `preset`.
+   */
+  renderFormulaHtml?: boolean;
   onClipboardDiagnostic?: (report: ClipboardDiagnosticReport) => void;
   /** Host-owned upload/search/remove boundary for canonical media insertion. */
   mediaProvider?: MediaProvider;
@@ -242,6 +249,7 @@ const isCollapsedTextSelection = (selection: SmartSelection): boolean =>
 export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalAuthorityEditorProps>(function CanonicalAuthorityEditor({
   defaultValue,
   preset,
+  renderFormulaHtml,
   onChange,
   onHtmlChange,
   onClipboardDiagnostic,
@@ -323,7 +331,7 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
   // "is this the same link" identity check. Cleared implicitly the moment
   // selection.head differs from this value.
   const [linkOverlayDismissedAt, setLinkOverlayDismissedAt] = useState<{ path: number[]; offset: number } | null>(null);
-  if (!runtimeRef.current) runtimeRef.current = new CanonicalEditorRuntime({ initialValue: defaultValue, preset, onChange, onHtmlChange, onClipboardDiagnostic });
+  if (!runtimeRef.current) runtimeRef.current = new CanonicalEditorRuntime({ initialValue: defaultValue, preset, renderFormulaHtml, onChange, onHtmlChange, onClipboardDiagnostic });
   const runtime = runtimeRef.current;
   const [, setEditorTick] = useState(0);
   runtime.setCallbacks(onChange, onHtmlChange);
