@@ -25,6 +25,18 @@ Sootr's `app/globals.css` had `.block-editor-rte > .smartrte-container > .srte-e
 
 Sootr's `globals.css` also still has four older `.smartrte-container > div:first-child > div:first-child`-based rules (commented "Allow the toolbar to wrap on smaller screens") that are similarly dead against the current DOM — confirmed via direct `querySelector` (`.smartrte-container > div:first-child` returns `null`). Left as-is since they're inert, not causing harm; flagged as cleanup for Sootr's maintainers, not fixed here to avoid unrequested scope creep on a file this package doesn't own.
 
+### Correction (2026-08-31, same day): the fix above was incomplete - a second dead-selector conflict was still overriding it
+
+The fix above didn't actually resolve the report. The user confirmed the editor still had a fixed height with content overflowing past the visible box, uncontained (no scrollbar, no clip - text just continuing below the bordered editing area).
+
+Root cause: `.block-editor-rte .srte-editor { overflow: visible !important; min-height: 0 !important; }` (a separate, *earlier* rule in the same file, meant for the *outer* editor wrapper - its own comment: "Make the package editor use that panel height so the internal scrollbar reaches the real bottom") uses a plain descendant selector, `.srte-editor`. Since `.srte-editor` is reused as a class on *both* the outer wrapper section and the inner contenteditable div (confirmed via direct DOM inspection), this rule ALSO matched the inner contenteditable surface - directly fighting the scroll fix above on the exact same element. `overflow: visible !important` (this rule) vs. `overflow-y: auto !important` (the scroll fix) landing on the same node is exactly what produces "fixed-height box, content spills past its bottom edge, unclipped, no scrollbar": that's what `overflow: visible` looks like when a box has a set height and more content than fits.
+
+Fixed by scoping the outer rule to `.block-editor-rte .srte-editor:not([contenteditable])` (so it only ever matches the wrapper it was actually meant for), and by making the scroll-fix rule use the `overflow` shorthand (`overflow: hidden auto !important`) instead of only `overflow-y`, for defense in depth against any remaining cross-axis longhand/shorthand ambiguity between the two rules.
+
+Verified directly: replicated Sootr's exact wrapper structure and full CSS chain (both rules, post-fix) in an isolated repro; the contenteditable element's computed `overflow-y` resolved to `auto` and its rendered height stayed correctly bounded within a simulated clipped 400px panel, instead of growing to its full unclipped content height.
+
+**Lesson, same shape as the first pass**: `.srte-editor` being reused as a class name on two structurally different elements (the outer wrapper and the inner contenteditable surface) is a real footgun for any host-side CSS written with only one of the two in mind - a future host integration hitting a similar-looking rule conflict should check this specifically before assuming a new bug.
+
 ## Regression coverage
 
 New `test.describe("toolbar priority-collapse: container width, not viewport width", ...)` in `canonical-toolbar-routing.spec.ts`:

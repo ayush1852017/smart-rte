@@ -198,6 +198,20 @@ export const SRTE_DEFAULT_CSS = `
   color: var(--srte-menu-text);
   box-shadow: var(--srte-menu-shadow);
 }
+/*
+ * ToolbarDropdown's own menu panel (docs/bugs/
+ * toolbar-dropdown-clipped-by-host-overflow-hidden.md): position:fixed with
+ * JS-measured left/top (ToolbarPrimitives.tsx) instead of the default
+ * position:absolute above, so it always escapes an ancestor host container's
+ * own overflow:hidden regardless of DOM depth - MobileMoreMenu's overflow
+ * menu (no data-srte-menu-fixed attribute) is unaffected and keeps its
+ * existing position:absolute/right-anchored behavior.
+ */
+.srte-menu[data-srte-menu-fixed="true"] {
+  position: fixed;
+  top: 0;
+  left: 0;
+}
 .srte-menu-item {
   display: flex;
   align-items: center;

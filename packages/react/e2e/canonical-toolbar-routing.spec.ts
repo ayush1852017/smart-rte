@@ -806,3 +806,54 @@ test.describe("toolbar priority-collapse: container width, not viewport width", 
     expect(failures, failures.join("\n")).toEqual([]);
   });
 });
+
+/**
+ * docs/bugs/toolbar-dropdown-clipped-by-host-overflow-hidden.md
+ *
+ * A real host (Sootr) wraps the editor in a container with `overflow:
+ * hidden` for its own layout reasons (rounded corners, a clipped split-pane
+ * panel). ToolbarDropdown's menu previously rendered `position: absolute`
+ * relative to its own trigger - as soon as a narrow enough host meant the
+ * menu needed to extend past that container's own bounds, the container's
+ * overflow:hidden silently clipped it, showing only the portion that
+ * happened to fall inside the container (reported: dropdown items visible
+ * only as trailing word-fragments, "cript"/"our"/"mily" for
+ * "Superscript"/"colour"/"family").
+ */
+test.describe("toolbar dropdown menu: not clipped by a host's own overflow: hidden container", () => {
+  test("a dropdown menu inside a narrow overflow:hidden host is position:fixed and its items stay genuinely clickable", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    await page.waitForSelector(".srte-toolbar");
+
+    // Wrap the editor in an overflow:hidden host, mirroring Sootr's real
+    // `.smartrte-container` wrapper - narrow enough to stay in the compact
+    // (dropdown-grouped) tier, not so narrow it falls to the mobile tier.
+    await page.evaluate(() => {
+      const root = document.querySelector<HTMLElement>(".srte-root.srte-editor")!;
+      const host = document.createElement("div");
+      host.className = "smartrte-container";
+      host.style.width = "700px";
+      host.style.overflow = "hidden";
+      root.parentNode!.insertBefore(host, root);
+      host.appendChild(root);
+    });
+
+    // The exact dropdown from the real report - its items ("Move block
+    // up/down", "Indent/Outdent block") match the reported clipped
+    // fragments ("ock up"/"ock down") once the actual labels are known.
+    const dropdown = page.locator("details.srte-toolbar-menu", { has: page.locator("summary", { hasText: "More paragraph tools" }) });
+    await dropdown.locator("summary").click();
+    const menu = page.locator("details.srte-toolbar-menu[open] > .srte-menu[data-srte-menu-fixed=\"true\"]");
+    await expect(menu).toBeVisible();
+    expect(await menu.evaluate((el) => getComputedStyle(el).position)).toBe("fixed");
+
+    // Genuinely clickable, not just present in the DOM behind an ancestor's
+    // clip - the exact failure mode reported (menu items visible only as
+    // trailing fragments, unusable). ToolbarMenuItem always closes its own
+    // dropdown on click (CanonicalAuthorityEditor.tsx/ToolbarPrimitives.tsx)
+    // - if the click never actually landed on the item (clipped/obscured),
+    // the dropdown would stay open.
+    await dropdown.getByRole("menuitem", { name: "Outdent block", exact: true }).click();
+    await expect(dropdown).not.toHaveAttribute("open", "");
+  });
+});

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   AlignCenter, AlignJustify, AlignLeft, AlignRight, ALargeSmall, Baseline, Bold, CheckSquare, ChevronDown, Code,
   Columns3, Download, Eye, FileJson, History, Image as ImageIcon, IndentDecrease, IndentIncrease, Italic, Link2,
@@ -206,6 +206,18 @@ const useDismissDetailsOnOutsideClick = (ref: React.RefObject<HTMLDetailsElement
  * keyboard support (Enter/Space to open, native focus handling) without a
  * new open/close state to manage; outside-click dismiss is handled by
  * useDismissDetailsOnOutsideClick above.
+ *
+ * The panel itself renders `position: fixed` with JS-measured coordinates
+ * (docs/bugs/toolbar-dropdown-clipped-by-host-overflow-hidden.md), the same
+ * pattern ColorPickerPopover/TableBorderPopover already use - a real host
+ * can (and, reported live, does) wrap the editor in an `overflow: hidden`
+ * container for its own layout reasons; a `position: absolute` panel
+ * anchored inside that container gets visually clipped the moment it needs
+ * to extend past the container's own bounds, which is exactly when a
+ * narrow host is most likely to need the dropdown in the first place.
+ * `position: fixed`'s containing block is the viewport (barring an
+ * ancestor with its own transform/filter, not the case here), so it always
+ * escapes ANY ancestor's overflow clipping regardless of DOM depth.
  */
 export function ToolbarDropdown({ icon, label, priority, children }: {
   icon?: ToolbarIconKey;
@@ -216,6 +228,30 @@ export function ToolbarDropdown({ icon, label, priority, children }: {
 }) {
   const detailsRef = useRef<HTMLDetailsElement | null>(null);
   useDismissDetailsOnOutsideClick(detailsRef);
+  const [placement, setPlacement] = useState<{ left: number; top: number } | null>(null);
+
+  useLayoutEffect(() => {
+    const details = detailsRef.current;
+    if (!details) return;
+    const recompute = () => {
+      if (!details.open) { setPlacement(null); return; }
+      const margin = 8;
+      const triggerRect = details.getBoundingClientRect();
+      const menu = details.querySelector<HTMLElement>(":scope > .srte-menu");
+      const menuWidth = menu?.offsetWidth ?? 210;
+      const menuHeight = menu?.offsetHeight ?? 0;
+      const viewportWidth = window.innerWidth;
+      const viewportHeight = window.innerHeight;
+      const left = Math.min(Math.max(margin, triggerRect.left), Math.max(margin, viewportWidth - menuWidth - margin));
+      const overflowsBottom = triggerRect.bottom + 6 + menuHeight > viewportHeight - margin;
+      const top = overflowsBottom ? Math.max(margin, triggerRect.top - menuHeight - 6) : triggerRect.bottom + 6;
+      setPlacement({ left, top });
+    };
+    recompute();
+    details.addEventListener("toggle", recompute);
+    return () => details.removeEventListener("toggle", recompute);
+  }, []);
+
   return <details ref={detailsRef} className="srte-toolbar-menu" {...(priority ? { "data-srte-priority": priority } : {})}>
     {/* preventDefault here matches every ToolbarButton/ToolbarMenuItem -
         without it, opening the dropdown focuses the <summary> itself,
@@ -226,7 +262,14 @@ export function ToolbarDropdown({ icon, label, priority, children }: {
       <span>{label}</span>
       <ChevronDown width={13} height={13} strokeWidth={2} aria-hidden="true" />
     </summary>
-    <div className="srte-menu" role="menu">{children}</div>
+    <div
+      className="srte-menu"
+      role="menu"
+      data-srte-menu-fixed="true"
+      style={{ left: placement?.left ?? 0, top: placement?.top ?? 0, visibility: placement ? "visible" : "hidden" }}
+    >
+      {children}
+    </div>
   </details>;
 }
 
