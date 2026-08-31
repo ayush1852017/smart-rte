@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.0-beta.4
+
+- Fix blockquote, table header, and dialog (media library, comments, suggestions, version history) backgrounds/text staying in their light-mode colors even when the host page is in dark mode — these now follow the host's own dark-mode CSS variables directly, the same way the rest of the editor's colors already did, instead of depending solely on the `.srte-dark` class reaching the editor correctly.
+
 ## 1.0.0-beta.3
 
 - Fix toolbar dropdown menus (e.g. "More text styles", "More paragraph tools") getting visually clipped to unusable fragments when the editor is embedded inside a host container with `overflow: hidden` (e.g. a rounded card or a clipped split-pane panel) — the menu now positions itself relative to the viewport instead of the nearest ancestor, so it can never be clipped regardless of host layout.
