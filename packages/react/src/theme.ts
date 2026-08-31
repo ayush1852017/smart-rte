@@ -397,25 +397,19 @@ export const SRTE_DEFAULT_CSS = `
   border-color: var(--srte-ring) !important;
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--srte-ring) 18%, transparent);
 }
-@media (max-width: 639px) {
-  .srte-toolbar { gap: 3px; padding: 6px; }
-  .srte-tool-button, .srte-toolbar select { height: 40px; min-width: 40px; }
-  .srte-toolbar-group[data-srte-priority="3"] { display: none; }
-  .srte-toolbar-menu[data-srte-priority="2"] { display: none; }
-  .srte-mobile-more { display: block; }
-  .srte-mobile-more .srte-menu {
-    left: auto;
-    right: 0;
-    width: min(280px, calc(100vw - 16px));
-    min-width: 0;
-    max-height: min(70dvh, 480px);
-    overflow-x: hidden;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    -webkit-overflow-scrolling: touch;
-  }
-  .srte-menu-item { height: 40px; }
-}
+/*
+ * @container (element width), not @media (viewport width): a host can embed
+ * the editor at any fraction of the browser window - a split pane next to a
+ * preview panel is the case that surfaced this (docs/bugs/
+ * toolbar-wide-promotion-fires-on-viewport-width-not-container-width.md). A
+ * plain @media breakpoint here would fire based on the *window*, wrongly
+ * switching tiers for an editor instance that's actually much narrower (or
+ * wider) than the window - .srte-editor already establishes its own
+ * container: srte-editor / inline-size (see the .srte-editor rule above),
+ * so @container always reflects this specific instance's real rendered width regardless of host
+ * layout, with no @media fallback needed (container queries have full
+ * support across this project's three target engines).
+ */
 @container srte-editor (max-width: 639px) {
   .srte-toolbar { gap: 3px; padding: 6px; }
   .srte-tool-button, .srte-toolbar select { height: 40px; min-width: 40px; }
@@ -461,12 +455,16 @@ export const SRTE_DEFAULT_CSS = `
  * under them. 1440px clears that default with room to spare while still
  * comfortably covering "wide desktop" (the ~2264px width the original
  * report was filed against).
+ *
+ * @container only, no @media fallback - same reasoning as the mobile tier
+ * above (docs/bugs/toolbar-wide-promotion-fires-on-viewport-width-not-container-width.md):
+ * a plain @media(min-width:1440px) fired whenever the *browser window* was
+ * wide, even when this editor instance was embedded in a much narrower
+ * split pane - promoting 9 extra buttons into a group with no room for
+ * them, which squeezed/overlapped the group's existing buttons instead of
+ * wrapping cleanly.
  */
 .srte-tool-button[data-srte-wide-promote="true"] { display: none; }
-@media (min-width: 1440px) {
-  .srte-tool-button[data-srte-wide-promote="true"] { display: inline-flex; }
-  .srte-menu-item[data-srte-wide-promote="true"] { display: none; }
-}
 @container srte-editor (min-width: 1440px) {
   .srte-tool-button[data-srte-wide-promote="true"] { display: inline-flex; }
   .srte-menu-item[data-srte-wide-promote="true"] { display: none; }

@@ -705,3 +705,104 @@ test.describe("toolbar priority-collapse: wide-viewport promotion", () => {
     await expect(surface.locator('[data-smart-mark="superscript"]')).toHaveCount(1);
   });
 });
+
+/**
+ * docs/bugs/toolbar-wide-promotion-fires-on-viewport-width-not-container-width.md
+ *
+ * The wide-viewport promotion tests above all resize the *browser viewport*,
+ * which also happens to be the editor's own rendered container width in
+ * every one of those tests - they could never distinguish an @media
+ * (viewport) breakpoint from an @container (element) one. A real host
+ * embedding the editor in a split pane next to another panel (a genuinely
+ * common layout, not a contrived edge case) breaks that assumption: the
+ * browser window can be wide while the editor's own container is narrow.
+ * Reported as "toolbar labels run together with no spacing... 'Italic' and
+ * 'Underline' render as 'ItalicUnderline'" at a real ~750-800px split-pane
+ * width inside a wide window - the plain @media(min-width:1440px) fallback
+ * fired on the wide *window*, promoting 9 extra buttons into a group with no
+ * room for them at the editor's actual, much narrower rendered width.
+ *
+ * Fix: removed both plain @media breakpoints (639px and 1440px) from
+ * theme.ts, keeping only the @container srte-editor forms - .srte-editor
+ * already establishes `container: srte-editor / inline-size` on itself, so
+ * the container query always reflects this specific instance's real
+ * rendered width regardless of what the host window is doing.
+ */
+test.describe("toolbar priority-collapse: container width, not viewport width", () => {
+  /** Wraps the editor root in a fixed-width div, simulating a split pane next to another panel - the window stays whatever setViewportSize left it at, only the editor's own rendered container shrinks. */
+  const constrainEditorContainerTo = (page: Page, widthPx: number) => page.evaluate((w) => {
+    const root = document.querySelector<HTMLElement>(".srte-root.srte-editor")!;
+    const pane = document.createElement("div");
+    pane.style.width = `${w}px`;
+    pane.style.overflow = "hidden";
+    root.parentNode!.insertBefore(pane, root);
+    pane.appendChild(root);
+  }, widthPx);
+
+  const noOverlapAndNoShrink = async (page: Page) => page.evaluate(() => {
+    const isVisible = (el: Element) => (typeof (el as HTMLElement).checkVisibility === "function" ? (el as HTMLElement).checkVisibility() : (el as HTMLElement).offsetParent !== null);
+    const toolbar = document.querySelector(".srte-toolbar")!;
+    const buttons = Array.from(toolbar.querySelectorAll(".srte-tool-button")).filter(isVisible);
+    const rects = buttons.map((el) => {
+      const r = el.getBoundingClientRect();
+      return { label: el.getAttribute("aria-label") || el.textContent, x: r.x, y: r.y, w: r.width, scrollW: (el as HTMLElement).scrollWidth };
+    });
+    const shrunk = rects.filter((r) => r.scrollW > Math.ceil(r.w) + 1).map((r) => `${r.label}:content${r.scrollW}/box${r.w.toFixed(1)}`);
+    const overlaps: string[] = [];
+    for (let i = 0; i < rects.length; i++) {
+      for (let j = i + 1; j < rects.length; j++) {
+        const a = rects[i], b = rects[j];
+        if (Math.abs(a.y - b.y) > 4) continue;
+        if (a.x < b.x + b.w && b.x < a.x + a.w) overlaps.push(`${a.label}<->${b.label}`);
+      }
+    }
+    return { shrunk, overlaps };
+  });
+
+  test("wide window (1600px) + split-pane container (800px, the reported width): promotion stays off, no overlap, buttons stay clickable", async ({ page }) => {
+    await page.setViewportSize({ width: 1600, height: 900 });
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    await constrainEditorContainerTo(page, 800);
+
+    const promotedLabels = ["Superscript", "Subscript", "Text colour", "Background colour", "Font size", "Font family", "Remove link", "Insert formula", "Special characters"];
+    for (const label of promotedLabels) {
+      await expect(page.getByRole("button", { name: label, exact: true })).not.toBeVisible();
+    }
+    const { shrunk, overlaps } = await noOverlapAndNoShrink(page);
+    expect(shrunk, "no button should render narrower than its own content").toEqual([]);
+    expect(overlaps, "no two visible buttons should occupy overlapping space").toEqual([]);
+
+    // Functional, not just visual: the exact scenario reported as an
+    // "unresponsive toolbar" - overlapping buttons made clicks land on the
+    // wrong element. Confirm Bold actually applies at this width.
+    await selectFirstText(page);
+    await page.getByRole("button", { name: "Bold", exact: true }).click();
+    await expect(page.locator('[data-smart-authority="canonical"] [contenteditable="true"] strong')).toHaveCount(1);
+  });
+
+  test("wide window (1600px) + extreme split-pane container (300px): falls all the way to the mobile tier despite the wide window", async ({ page }) => {
+    await page.setViewportSize({ width: 1600, height: 900 });
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    await constrainEditorContainerTo(page, 300);
+    await expect(page.locator(".srte-mobile-more")).toBeVisible();
+  });
+
+  test("continuous sweep, 340px-2300px container width inside a fixed 2400px window: no overlap or content-squeeze at any width", async ({ page }) => {
+    await page.setViewportSize({ width: 2400, height: 900 });
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    await page.evaluate(() => {
+      const root = document.querySelector<HTMLElement>(".srte-root.srte-editor")!;
+      const pane = document.createElement("div");
+      pane.id = "sweep-pane";
+      root.parentNode!.insertBefore(pane, root);
+      pane.appendChild(root);
+    });
+    const failures: string[] = [];
+    for (let width = 340; width <= 2300; width += 80) {
+      await page.evaluate((w) => { document.getElementById("sweep-pane")!.style.width = `${w}px`; }, width);
+      const { shrunk, overlaps } = await noOverlapAndNoShrink(page);
+      if (shrunk.length || overlaps.length) failures.push(`width=${width}: shrunk=${JSON.stringify(shrunk)} overlaps=${JSON.stringify(overlaps)}`);
+    }
+    expect(failures, failures.join("\n")).toEqual([]);
+  });
+});
