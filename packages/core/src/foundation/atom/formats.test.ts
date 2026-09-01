@@ -39,4 +39,27 @@ describe("Phase 7 atom formats", () => {
   it("describes DOCX formulas as literal LaTeX text, matching the actual exporter (not a rendered image)", () => {
     expect(atomToDocx({ type: "formula", id: "f", attrs: { source: "x^2", notation: "latex" } })).toEqual({ kind: "text", source: "x^2" });
   });
+
+  // docs/bugs/media-details-old-editor-field-parity.md
+  it("wraps a linked image in a real <a> and round-trips href/target/radius/license fields through full HTML", () => {
+    const image = {
+      type: "block_image", id: "i", attrs: {
+        src: "https://x.test/i.png", alt: "A photo", status: "ready", width: 200, height: 100,
+        href: "https://x.test/source", target: "_blank", borderRadius: 12,
+        licenseDescription: "A lovely photo", licenseSourceUrl: "https://x.test/license",
+        licenseType: "CC BY", licenseVersion: "4.0", licenseAttribution: "Jane Doe",
+      },
+    };
+    const html = atomToHtml(image);
+    expect(html).toMatch(/^<a href="https:\/\/x\.test\/source" target="_blank"><img/);
+    expect(html).toContain('data-smart-radius="12"');
+    expect(atomFromHtmlElement(parse(html))).toEqual(image);
+  });
+
+  it("does not wrap in <a> when no href is set - the common, unlinked-image case is unaffected", () => {
+    const image = { type: "image", id: "i", attrs: { src: "https://x.test/i.png", alt: "x", status: "ready" } };
+    const html = atomToHtml(image);
+    expect(html).not.toContain("<a ");
+    expect(atomFromHtmlElement(parse(html))).toEqual(image);
+  });
 });

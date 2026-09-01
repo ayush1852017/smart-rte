@@ -398,3 +398,69 @@ describe("serializeCanonicalListHtml renderFormulaHtml option", () => {
     expect(cleanHtml).toContain('class="katex"');
   });
 });
+
+// docs/bugs/media-details-old-editor-field-parity.md
+describe("image link (href/target) parsing", () => {
+  it("preserves an inline image's link when re-parsing this app's own exported HTML (data-smart-href on the <img>, wrapped in a real <a>)", () => {
+    const doc: SmartDocument = { type: "doc", id: "doc", children: [
+      { type: "paragraph", id: "p", children: [{ type: "image", id: "img", attrs: { src: "https://x.test/i.png", alt: "x", href: "https://x.test/dest", target: "_blank" } }] },
+    ] };
+    const html = serializeCanonicalListHtml(doc);
+    expect(html).toContain("<a href=");
+    const parsed = parseCanonicalListHtml(html);
+    const imageNode = (parsed.children[0] as SmartDocument).children?.[0] as SmartDocument;
+    expect(imageNode.attrs).toMatchObject({ href: "https://x.test/dest", target: "_blank" });
+  });
+
+  it("preserves a block image's link the same way", () => {
+    const doc: SmartDocument = { type: "doc", id: "doc", children: [
+      { type: "block_image", id: "img", attrs: { src: "https://x.test/i.png", alt: "x", href: "https://x.test/dest" } },
+    ] };
+    const parsed = parseCanonicalListHtml(serializeCanonicalListHtml(doc));
+    expect((parsed.children[0] as SmartDocument).attrs).toMatchObject({ href: "https://x.test/dest" });
+  });
+
+  /**
+   * A real, previously-confirmed reproduction (an actual browser "copy
+   * image" against a live Wikipedia photo): the clipboard payload was a
+   * bare <a href="..."><img></a> with none of this app's own data-smart-*
+   * markers - the link target is the source page, not something a user
+   * authored via this feature, and was already deliberately dropped rather
+   * than preserved (see list/formats.ts's own comment at the block-level
+   * <a> unwrap). Confirming that decision still holds now that this
+   * feature gives block_image somewhere real to put a link, rather than
+   * silently reversing it as an unintended side effect.
+   */
+  it("still drops an incidental third-party <a> wrapper around a block-level image with no data-smart-* markers", () => {
+    const thirdParty = '<a href="https://en.wikipedia.org/wiki/File:Example.jpg"><img src="https://x.test/i.png" alt="x"></a>';
+    const parsed = parseCanonicalListHtml(thirdParty);
+    expect((parsed.children[0] as SmartDocument).attrs).not.toHaveProperty("href");
+  });
+
+  it("preserves a third-party inline <a><img></a> link (a common, intentional pattern - an icon/badge image that's also a hyperlink), unlike the block-level case above", () => {
+    const thirdPartyInline = '<p><a href="https://x.test/badge-dest"><img src="https://x.test/badge.png" alt="badge"></a></p>';
+    const parsed = parseCanonicalListHtml(thirdPartyInline);
+    const paragraph = parsed.children[0] as SmartDocument;
+    const imageNode = paragraph.children?.[0] as SmartDocument;
+    expect(imageNode.type).toBe("image");
+    expect(imageNode.attrs).toMatchObject({ href: "https://x.test/badge-dest" });
+  });
+});
+
+describe("image atom schema: href/target/borderRadius validation (atom/schema.ts's imageAttrs)", () => {
+  const docWith = (attrs: Record<string, unknown>): SmartDocument => ({
+    type: "doc", id: "doc", children: [
+      { type: "paragraph", id: "p", children: [{ type: "image", id: "i", attrs: { src: "https://x.test/i.png", alt: "x", ...attrs } }] },
+    ],
+  });
+
+  it("accepts a safe href and rejects an unsafe one, matching the link mark's own normalizeLinkInput validation", () => {
+    expect(validate(docWith({ href: "https://safe.test" }), foundationSchema)).toEqual([]);
+    expect(validate(docWith({ href: "javascript:alert(1)" }), foundationSchema).length).toBeGreaterThan(0);
+  });
+
+  it("accepts a non-negative borderRadius and rejects a negative one", () => {
+    expect(validate(docWith({ borderRadius: 12 }), foundationSchema)).toEqual([]);
+    expect(validate(docWith({ borderRadius: -1 }), foundationSchema).length).toBeGreaterThan(0);
+  });
+});

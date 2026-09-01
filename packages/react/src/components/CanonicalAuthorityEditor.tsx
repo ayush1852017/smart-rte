@@ -93,6 +93,7 @@ import { TableBorderPopover, BORDER_WIDTH_PRESETS, type BorderDraft, type Border
 import type { FormulaLibraryEntry } from "../formulaLibrary.js";
 import { TableResizeHandles } from "./TableResizeHandles.js";
 import { MediaOverlay } from "./MediaOverlay.js";
+import { MediaDetailsPopover, type MediaDetailsDraft } from "./MediaDetailsPopover.js";
 import { ContextMenu, type ContextMenuItem } from "./ContextMenu.js";
 import { ToolbarButton, ToolbarDropdown, ToolbarGroup, ToolbarMenuItem, MobileMoreMenu } from "./ToolbarPrimitives.js";
 import type { EditorCapabilityPreset } from "../capabilityPresets.js";
@@ -314,6 +315,7 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
   const [recentColors, setRecentColors] = useState<{ text: string[]; background: string[]; border: string[] }>({ text: [], background: [], border: [] });
   const [tableSizePopover, setTableSizePopover] = useState<{ x: number; y: number } | null>(null);
   const [tableBorderPopover, setTableBorderPopover] = useState<{ x: number; y: number; scope: TableGridScope; initial: BorderDraft } | null>(null);
+  const [mediaDetailsPopover, setMediaDetailsPopover] = useState<{ x: number; y: number; scope: ResolvedScope; initial: MediaDetailsDraft } | null>(null);
   const borderPreviewCheckpointRef = useRef<SmartEditorCheckpoint | null>(null);
   const [formulaLibraryPopover, setFormulaLibraryPopover] = useState<{ x: number; y: number } | null>(null);
   const [specialCharPopover, setSpecialCharPopover] = useState<{ x: number; y: number } | null>(null);
@@ -1218,6 +1220,19 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
     insertBlockAtom("block_image", {
       src: item.url, alt: item.alt || item.title || "Image", decorative: false, status: "ready",
       ...(item.width ? { width: item.width } : {}), ...(item.height ? { height: item.height } : {}),
+      // docs/bugs/media-details-old-editor-field-parity.md: item.license was
+      // already fetched and shown in MediaManager's own library-browser info
+      // panel (MediaManager.tsx), but had nowhere to persist once inserted -
+      // the atom schema had no license attrs at all, so this real,
+      // already-available data was silently discarded at exactly this call
+      // site. `licenseVersion` has no MediaItem.license equivalent (its
+      // shape has no separate version field) - left for the user to fill in
+      // via the media details panel, same as a freshly uploaded image.
+      ...(item.license?.workName || item.license?.licenseText
+        ? { licenseDescription: [item.license.workName, item.license.licenseText].filter(Boolean).join(" - ") } : {}),
+      ...(item.license?.sourceUrl ? { licenseSourceUrl: item.license.sourceUrl } : {}),
+      ...(item.license?.licenseType ? { licenseType: item.license.licenseType } : {}),
+      ...(item.license?.author ? { licenseAttribution: item.license.author } : {}),
     }, createNodeId());
   };
 
@@ -1401,15 +1416,71 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
     if (scope.kind !== "atomic-node") return;
     const node = findNode(runtime.editor.document, scope.nodeId);
     if (!node) return;
+    if (resizeBy === undefined && !node.type.includes("formula")) {
+      // Images: the old window.prompt("Alt text") one-field edit is
+      // replaced by the full Media details panel (docs/bugs/
+      // media-details-old-editor-field-parity.md) - formulas keep their
+      // existing prompt unchanged below, since this panel's fields
+      // (link/align/radius/license) don't apply to a formula atom at all.
+      const rect = selectedAtomElement?.getBoundingClientRect();
+      setMediaDetailsPopover({
+        x: rect ? rect.left : 0, y: rect ? rect.bottom + 6 : 0, scope,
+        initial: {
+          alt: String(node.attrs?.alt || ""),
+          href: String(node.attrs?.href || ""),
+          openInNewTab: node.attrs?.target === "_blank",
+          width: typeof node.attrs?.width === "number" ? node.attrs.width : undefined,
+          borderRadius: typeof node.attrs?.borderRadius === "number" ? node.attrs.borderRadius : undefined,
+          align: node.attrs?.align === "left" || node.attrs?.align === "center" || node.attrs?.align === "right" ? node.attrs.align : undefined,
+          licenseDescription: String(node.attrs?.licenseDescription || ""),
+          licenseSourceUrl: String(node.attrs?.licenseSourceUrl || ""),
+          licenseType: String(node.attrs?.licenseType || ""),
+          licenseVersion: String(node.attrs?.licenseVersion || ""),
+          licenseAttribution: String(node.attrs?.licenseAttribution || ""),
+        },
+      });
+      return;
+    }
     const operations = resizeBy === undefined
-      ? updateAtom(runtime.editor.document, scope, node.type.includes("formula")
-        ? { attrs: { source: window.prompt("Formula source", String(node.attrs?.source || "")) || node.attrs?.source } }
-        : { attrs: { alt: window.prompt("Alt text", String(node.attrs?.alt || "")) ?? node.attrs?.alt } }, blockContext())
+      ? updateAtom(runtime.editor.document, scope, { attrs: { source: window.prompt("Formula source", String(node.attrs?.source || "")) || node.attrs?.source } }, blockContext())
       : resizeAtom(runtime.editor.document, scope, {
         width: Math.max(16, Number(node.attrs?.width || 160) + resizeBy),
         height: Math.max(16, Number(node.attrs?.height || 90) + resizeBy),
       }, blockContext());
     runtime.executeOperations(operations, resizeBy === undefined ? {} : { historyGroup: `resize-${scope.nodeId}` });
+  };
+
+  const applyMediaDetails = (draft: MediaDetailsDraft) => {
+    if (!mediaDetailsPopover) return;
+    const { scope } = mediaDetailsPopover;
+    if (scope.kind !== "atomic-node") { setMediaDetailsPopover(null); return; }
+    const node = findNode(runtime.editor.document, scope.nodeId);
+    const currentWidth = typeof node?.attrs?.width === "number" ? node.attrs.width : undefined;
+    const currentHeight = typeof node?.attrs?.height === "number" ? node.attrs.height : undefined;
+    // Width preserves the original aspect ratio (matches the drag handle
+    // and Resize +/- buttons' own behavior) rather than exposing a separate
+    // Height field the old editor's own screenshot didn't have either.
+    const resizedHeight = draft.width && currentWidth && currentHeight
+      ? Math.round((draft.width * currentHeight) / currentWidth)
+      : currentHeight;
+    setMediaDetailsPopover(null);
+    runtime.executeOperations(updateAtom(runtime.editor.document, scope, {
+      attrs: {
+        alt: draft.alt,
+        href: draft.href || undefined,
+        target: draft.href && draft.openInNewTab ? "_blank" : undefined,
+        width: draft.width ?? currentWidth,
+        height: draft.width ? resizedHeight : currentHeight,
+        borderRadius: draft.borderRadius || undefined,
+        align: draft.align,
+        licenseDescription: draft.licenseDescription || undefined,
+        licenseSourceUrl: draft.licenseSourceUrl || undefined,
+        licenseType: draft.licenseType || undefined,
+        licenseVersion: draft.licenseVersion || undefined,
+        licenseAttribution: draft.licenseAttribution || undefined,
+      },
+    }, blockContext()));
+    runtime.focus();
   };
 
   /** MediaOverlay's drag-corner-handle commit - explicit width/height rather than editSelectedAtom's fixed +/-20 increment. */
@@ -1875,6 +1946,13 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
       onApply={applyCellBorderCommit}
       onCancel={cancelTableBorderPopover}
     />}
+    {mediaDetailsPopover && <MediaDetailsPopover
+      x={mediaDetailsPopover.x}
+      y={mediaDetailsPopover.y}
+      initial={mediaDetailsPopover.initial}
+      onApply={applyMediaDetails}
+      onCancel={() => { setMediaDetailsPopover(null); runtime.focus(); }}
+    />}
     {formulaLibraryPopover && <FormulaLibraryPopover
       x={formulaLibraryPopover.x}
       y={formulaLibraryPopover.y}
@@ -1923,13 +2001,21 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
         // completed render in a varying number of passes, so the overlay
         // could already be open before the flag was ever set.)
         const anchor = (event.target as Element | null)?.closest<HTMLAnchorElement>("a[href]");
-        if (anchor && (event.metaKey || event.ctrlKey)) event.preventDefault();
+        const linkedMedia = (event.target as Element | null)?.closest<HTMLElement>("[data-smart-href]");
+        if ((anchor || linkedMedia) && (event.metaKey || event.ctrlKey)) event.preventDefault();
       }}
       onClick={(event) => {
         const anchor = (event.target as Element | null)?.closest<HTMLAnchorElement>("a[href]");
-        if (!anchor || !(event.metaKey || event.ctrlKey)) return;
+        // An image atom with a Link set (docs/bugs/media-details-old-editor-field-parity.md)
+        // - plain data attributes, not a real <a> wrapper, in the live DOM
+        // (see surface/renderer.ts's own reasoning); Ctrl/Cmd+click opens it
+        // the same way a real text link does, matching this project's only
+        // existing link-opening convention rather than inventing a second one.
+        const linkedMedia = (event.target as Element | null)?.closest<HTMLElement>("[data-smart-href]");
+        const href = anchor?.href || linkedMedia?.getAttribute("data-smart-href");
+        if (!href || !(event.metaKey || event.ctrlKey)) return;
         event.preventDefault();
-        window.open(anchor.href, "_blank", "noopener,noreferrer");
+        window.open(href, "_blank", "noopener,noreferrer");
       }}
       onContextMenu={(event) => {
         if (readOnly) return;

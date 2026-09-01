@@ -313,6 +313,51 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
       const imageAlign = node.attrs?.align;
       if (imageAlign === "center") { element.style.display = "block"; element.style.margin = "0 auto"; element.style.float = "none"; }
       else if (imageAlign === "left" || imageAlign === "right") { element.style.display = "inline"; element.style.float = imageAlign; element.style.margin = imageAlign === "left" ? "0 8px 8px 0" : "0 0 8px 8px"; }
+      else {
+        // No align set - reset every property the two branches above can
+        // set, not just skip setting new ones. A pre-existing gap (found
+        // while verifying docs/bugs/media-details-old-editor-field-parity.md's
+        // new "clear align back to None" UI path): this renderer's other
+        // conditional style branches (e.g. borderRadius just below) always
+        // pair their "set" case with an explicit "else remove" case for
+        // exactly this reason - align's own else branches never existed
+        // before this UI made "align was set, then explicitly cleared" a
+        // real, reachable transition for the first time.
+        element.style.removeProperty("display");
+        element.style.removeProperty("float");
+        element.style.removeProperty("margin");
+      }
+      if (node.attrs?.borderRadius) element.style.borderRadius = `${Number(node.attrs.borderRadius)}px`; else element.style.removeProperty("border-radius");
+      // Plain data attributes, not a wrapping <a> - this element's identity
+      // is stable across renders (see this class's own diffing contract);
+      // introducing a conditional DOM-structure change here for something
+      // input.ts's click handling already reads directly is unnecessary
+      // risk. atomToHtml/modelDom.ts DO wrap in a real <a> for the
+      // string/one-shot export paths, which have no such stability
+      // constraint and need a real anchor for the link to work outside
+      // this live editor at all.
+      if (typeof node.attrs?.href === "string" && node.attrs.href) this.setAttribute(element, "data-smart-href", node.attrs.href, node.id);
+      else this.removeAttribute(element, "data-smart-href", node.id);
+      if (typeof node.attrs?.target === "string" && node.attrs.target) this.setAttribute(element, "data-smart-target", node.attrs.target, node.id);
+      else this.removeAttribute(element, "data-smart-target", node.id);
+      // Mirrored as data attributes too, matching href/target above - a
+      // host inspecting the live DOM (or this project's own e2e suite)
+      // should be able to see this data the same way it can see href, not
+      // just find it by reading the model directly. Purely descriptive
+      // metadata, so unlike align/borderRadius there's no matching CSS
+      // side effect to apply here.
+      if (node.attrs?.borderRadius) this.setAttribute(element, "data-smart-radius", String(node.attrs.borderRadius), node.id);
+      else this.removeAttribute(element, "data-smart-radius", node.id);
+      ([
+        ["licenseDescription", "data-smart-license-description"],
+        ["licenseSourceUrl", "data-smart-license-source-url"],
+        ["licenseType", "data-smart-license-type"],
+        ["licenseVersion", "data-smart-license-version"],
+        ["licenseAttribution", "data-smart-license-attribution"],
+      ] as const).forEach(([key, attrName]) => {
+        if (typeof node.attrs?.[key] === "string" && node.attrs[key]) this.setAttribute(element, attrName, String(node.attrs[key]), node.id);
+        else this.removeAttribute(element, attrName, node.id);
+      });
     } else if (node.type === "formula" || node.type === "block_formula") {
       const source = String(node.attrs?.source || "");
       const previousSource = element.getAttribute("data-smart-formula");

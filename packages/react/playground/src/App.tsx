@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { ClassicEditor, type CanonicalEditorRuntime, type CommentProvider, type CommentThread, type DocumentVersion, type MediaProvider, type StructuralSuggestion, type SuggestionProvider, type VersionProvider } from "smartrte-react";
+import { ClassicEditor, type CanonicalEditorRuntime, type CommentProvider, type CommentThread, type DocumentVersion, type MediaItem, type MediaProvider, type StructuralSuggestion, type SuggestionProvider, type VersionProvider } from "smartrte-react";
 import CanonicalSurface from "./CanonicalSurface";
 import ClipboardCapture from "./ClipboardCapture";
 import Gate13ReplaySurface from "./Gate13ReplaySurface";
@@ -10,7 +10,7 @@ const sha256Hex = async (file: File): Promise<string> => {
 };
 
 const createReferenceMediaProvider = (): MediaProvider => {
-  const library = new Map<string, { id: string; url: string; title: string; mimeType?: string; sizeBytes?: number; hashHex: string }>();
+  const library = new Map<string, { id: string; url: string; title: string; mimeType?: string; sizeBytes?: number; hashHex: string; license?: MediaItem["license"] }>();
   return {
     async upload(file, options) {
       if (options?.signal?.aborted) throw new DOMException("Upload cancelled", "AbortError");
@@ -25,7 +25,16 @@ const createReferenceMediaProvider = (): MediaProvider => {
       // match once the library is non-empty, since a missing filter is
       // treated as "no constraint" by the filter below.
       const hashHex = await sha256Hex(file);
-      library.set(id, { id, url, title: file.name, mimeType: file.type, sizeBytes: file.size, hashHex });
+      // Deterministic fixture license metadata for a real-provider-shaped
+      // e2e check of docs/bugs/media-details-old-editor-field-parity.md's
+      // auto-population claim (CanonicalAuthorityEditor.tsx's
+      // selectFromMediaManager) - a plain upload has none, matching every
+      // real "fresh upload" case; only this specific filename pattern
+      // simulates a host whose provider already has license data for an
+      // asset (a library item, not something invented per-upload).
+      const license = /^licensed-/.test(file.name)
+        ? { author: "Jane Doe", licenseType: "CC BY", sourceUrl: "https://example.test/license", workName: "A lovely test photo" } : undefined;
+      library.set(id, { id, url, title: file.name, mimeType: file.type, sizeBytes: file.size, hashHex, license });
       return { id, url };
     },
     async search(query, filters = {}, page = 1) {

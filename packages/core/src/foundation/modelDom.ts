@@ -3,6 +3,7 @@ import { nodeAtPath } from "./positions.js";
 import type { ModelDomMapping, SmartDocument, SmartElementNode, SmartNode, SmartPos } from "./types.js";
 import { renderMarkedText } from "./marks/dom.js";
 import { sanitizeAtomSource } from "./atom/security.js";
+import { sanitizeLinkHref, sanitizeLinkTarget } from "./security/urlPolicy.js";
 
 const atomTypes = new Set(["image", "block_image", "formula", "block_formula", "video", "audio", "divider"]);
 
@@ -72,6 +73,21 @@ const renderNode = (node: SmartNode, ownerDocument: Document): Node => {
     const source = sanitizeAtomSource(String(node.attrs?.src || ""), { kind: "image", allowBlobPreview: node.attrs?.status === "pending" });
     if (source) element.setAttribute("src", source);
     element.setAttribute("alt", typeof node.attrs?.alt === "string" ? node.attrs.alt : "");
+    if (node.attrs?.borderRadius) element.style.borderRadius = `${Number(node.attrs.borderRadius)}px`;
+    const linkHref = sanitizeLinkHref(typeof node.attrs?.href === "string" ? node.attrs.href : undefined);
+    if (linkHref) {
+      // A real <a> wrapper, unlike the live surface renderer's plain data
+      // attributes - this is a one-shot tree builder (no per-node element
+      // identity to preserve across renders), and clipboard/print output
+      // needs a genuine anchor for the link to survive outside this editor
+      // at all.
+      const link = ownerDocument.createElement("a");
+      link.setAttribute("href", linkHref);
+      const linkTarget = sanitizeLinkTarget(typeof node.attrs?.target === "string" ? node.attrs.target : undefined);
+      if (linkTarget) link.setAttribute("target", linkTarget);
+      link.appendChild(element);
+      return link;
+    }
   }
   if (node.type === "formula" || node.type === "block_formula") {
     const source = String(node.attrs?.source || "");

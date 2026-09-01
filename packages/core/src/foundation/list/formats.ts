@@ -28,6 +28,24 @@ const isEditorUiNode = (node: HtmlNode) =>
  */
 const TRANSPARENT_CONTAINER_TAGS = ["div", "section", "article", "figure"];
 
+/** Shared by both the inline `image` and block `block_image` parsing branches below - radius/license round-trip identically for both, only href/target's link-mark-fallback behavior deliberately differs between them (see each call site's own comment). */
+const imageStyleAndLicenseAttrs = (node: HtmlNode): Record<string, string | number> => {
+  const radius = Number(attr(node, "data-smart-radius"));
+  const licenseDescription = attr(node, "data-smart-license-description");
+  const licenseSourceUrl = attr(node, "data-smart-license-source-url");
+  const licenseType = attr(node, "data-smart-license-type");
+  const licenseVersion = attr(node, "data-smart-license-version");
+  const licenseAttribution = attr(node, "data-smart-license-attribution");
+  return {
+    ...(Number.isFinite(radius) && radius > 0 ? { borderRadius: radius } : {}),
+    ...(licenseDescription ? { licenseDescription } : {}),
+    ...(licenseSourceUrl ? { licenseSourceUrl } : {}),
+    ...(licenseType ? { licenseType } : {}),
+    ...(licenseVersion ? { licenseVersion } : {}),
+    ...(licenseAttribution ? { licenseAttribution } : {}),
+  };
+};
+
 /** See serializeCanonicalListHtml's own doc comment for why this is a module-scoped flag rather than a threaded parameter. */
 let renderFormulaHtmlMode = false;
 
@@ -217,12 +235,27 @@ const textWithMarks = (node: HtmlNode, inherited: readonly SmartMark[] = []): Sm
       // synchronous and the image hasn't loaded yet at this point.
       const width = parsePixelWidth(styleValue(node, "width")) ?? parsePixelWidth(attr(node, "width"));
       const height = parsePixelWidth(styleValue(node, "height")) ?? parsePixelWidth(attr(node, "height"));
+      // <a><img></a> (this project's own export - list/formats.ts's own
+      // serializeBlock/atom/formats.ts's atomToHtml wrap a linked image in a
+      // real anchor - or any real-world source doing the same): the link
+      // mark from that ancestor <a> arrives here via `inherited`, but
+      // SmartElementNode has no `marks` field at all (only SmartTextNode
+      // does) - without this, the href would be silently discarded the
+      // moment it reached this atomic-image branch. The live editor's own
+      // DOM instead encodes this as plain data-smart-href/-target
+      // attributes directly on the <img> (surface/renderer.ts) with no
+      // wrapping <a> at all, so both encodings are checked.
+      const inheritedLink = inherited.find((mark) => mark.type === "link");
+      const href = attr(node, "data-smart-href") || (inheritedLink?.attrs?.href as string | undefined);
+      const target = attr(node, "data-smart-target") || (inheritedLink?.attrs?.target as string | undefined);
       return [{ type: "image", id: generatedId(node, "image"), attrs: {
         src, alt: attr(node, "alt") || "", status: attr(node, "data-smart-status") || "ready",
         ...(attr(node, "data-smart-decorative") === "true" ? { decorative: true } : {}),
         ...(attr(node, "title") ? { title: attr(node, "title") } : {}),
         ...(attr(node, "data-smart-align") ? { align: attr(node, "data-smart-align") } : {}),
         ...(width !== null ? { width } : {}), ...(height !== null ? { height } : {}),
+        ...(href ? { href } : {}), ...(target ? { target } : {}),
+        ...imageStyleAndLicenseAttrs(node),
       } }];
     }
   }
@@ -350,6 +383,19 @@ const parseBlock = (node: HtmlNode): SmartElementNode | null => {
       src, alt: attr(node, "alt") || "", status: attr(node, "data-smart-status") || "ready",
       ...(attr(node, "data-smart-decorative") === "true" ? { decorative: true } : {}),
       ...(width !== null ? { width } : {}), ...(height !== null ? { height } : {}),
+      // Only from data-smart-href/-target directly on this element (our own
+      // round-tripped export, per this whole branch's own `declaredAtom`
+      // gate) - deliberately NOT also checking for a wrapping <a> the way
+      // the inline `image` atom's parsing does just above in textWithMarks.
+      // The bare-<img>-at-block-level fallback a few lines down has its own
+      // long-standing, evidence-based decision (a real Wikipedia "copy
+      // image" paste) to unwrap and drop an incidental <a> wrapper rather
+      // than treat it as a user-authored link - extending that to also
+      // read href here would silently reverse that decision for every
+      // third-party block-level image paste, not just this app's own.
+      ...(attr(node, "data-smart-href") ? { href: attr(node, "data-smart-href") } : {}),
+      ...(attr(node, "data-smart-target") ? { target: attr(node, "data-smart-target") } : {}),
+      ...imageStyleAndLicenseAttrs(node),
     } };
   }
   if (declaredAtom === "block_formula") return { type: "block_formula", id: generatedId(node, "formula"), attrs: { source: attr(node, "data-smart-formula") || rawText(node), notation: attr(node, "data-smart-notation") === "mathml" ? "mathml" : "latex" } };
