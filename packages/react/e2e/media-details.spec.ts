@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { openToolbarDropdown, toolbarMenuItem } from "./toolbarHelpers.js";
 
 const chooseMedia = async (page: import("@playwright/test").Page) => {
   const picker = page.getByRole("dialog", { name: "Media library" });
@@ -11,14 +12,44 @@ const chooseMedia = async (page: import("@playwright/test").Page) => {
  *
  * Replaces the old window.prompt("Alt text")-only edit path with a real
  * settings panel matching the previous editor's own field set (Link,
- * Target, Alt, Width, Radius, Align, License), triggered from MediaOverlay
- * (Direction B's own architecture - no reintroduced media context-menu
- * entry). Fields marked "already existed" in the investigation
+ * Target, Alt, Width, Radius, Align, License), triggered directly by an
+ * image right-click. Fields marked "already existed" in the investigation
  * (Alt/Width/Align) get regression coverage in existing specs already;
  * this file focuses on what's new here (Link/Target/Radius/License) and
  * the panel's own interaction contract.
  */
 test.describe("Media details panel", () => {
+  test("shows resize handles on left-click and the details editor on right-click", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    const surface = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
+    await page.getByRole("button", { name: "Insert image" }).click();
+    await chooseMedia(page);
+
+    const image = surface.locator('[data-smart-type="block_image"]');
+    const mediaMenu = page.locator('[data-srte-media-overlay="true"]');
+    const popover = page.locator('[data-srte-media-details-popover="true"]');
+    const handles = page.locator('[data-srte-media-resize-handle-direction]');
+
+    await image.click();
+    await expect(mediaMenu).toHaveCount(0);
+    await expect(handles).toHaveCount(8);
+    const editorBox = (await surface.boundingBox())!;
+    for (const handle of await handles.all()) {
+      const box = (await handle.boundingBox())!;
+      expect(box.x).toBeGreaterThanOrEqual(editorBox.x);
+      expect(box.y).toBeGreaterThanOrEqual(editorBox.y);
+      expect(box.x + box.width).toBeLessThanOrEqual(editorBox.x + editorBox.width);
+      expect(box.y + box.height).toBeLessThanOrEqual(editorBox.y + editorBox.height);
+    }
+
+    await image.click({ button: "right" });
+    await expect(popover).toBeVisible();
+    await expect(mediaMenu).toHaveCount(0);
+    await expect(handles).toHaveCount(8);
+    await page.keyboard.press("Escape");
+    await expect(popover).toHaveCount(0);
+  });
+
   test("sets link, radius, and align, applying real visible effects and a working Ctrl/Cmd+click", async ({ page, context }) => {
     await page.goto("/?canonicalAuthority=1&blocks=1");
     const surface = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
@@ -26,8 +57,7 @@ test.describe("Media details panel", () => {
     await chooseMedia(page);
 
     const image = surface.locator('[data-smart-type="block_image"]');
-    await image.click();
-    await page.getByRole("button", { name: "Edit", exact: true }).click();
+    await image.click({ button: "right" });
     const popover = page.locator('[data-srte-media-details-popover="true"]');
     await expect(popover).toBeVisible();
 
@@ -68,8 +98,7 @@ test.describe("Media details panel", () => {
     await chooseMedia(page);
     const image = surface.locator('[data-smart-type="block_image"]');
 
-    await image.click();
-    await page.getByRole("button", { name: "Edit", exact: true }).click();
+    await image.click({ button: "right" });
     const popover = page.locator('[data-srte-media-details-popover="true"]');
     await popover.locator('[data-srte-media-href-input]').fill("https://example.test/source");
     await popover.getByRole("button", { name: "Right", exact: true }).click();
@@ -77,8 +106,7 @@ test.describe("Media details panel", () => {
     await expect(popover).toHaveCount(0);
     await expect(image).toHaveAttribute("data-smart-href", "https://example.test/source");
 
-    await image.click();
-    await page.getByRole("button", { name: "Edit", exact: true }).click();
+    await image.click({ button: "right" });
     await popover.locator('[data-srte-media-href-input]').fill("");
     await popover.getByRole("button", { name: "None", exact: true }).click();
     await popover.getByRole("button", { name: "Apply", exact: true }).click();
@@ -93,8 +121,7 @@ test.describe("Media details panel", () => {
     const surface = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
     await page.getByRole("button", { name: "Insert image" }).click();
     await chooseMedia(page);
-    await surface.locator('[data-smart-type="block_image"]').click();
-    await page.getByRole("button", { name: "Edit", exact: true }).click();
+    await surface.locator('[data-smart-type="block_image"]').click({ button: "right" });
     const popover = page.locator('[data-srte-media-details-popover="true"]');
 
     await popover.locator('[data-srte-media-href-input]').fill("javascript:alert(1)");
@@ -108,8 +135,7 @@ test.describe("Media details panel", () => {
     const surface = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
     await page.getByRole("button", { name: "Insert image" }).click();
     await chooseMedia(page);
-    await surface.locator('[data-smart-type="block_image"]').click();
-    await page.getByRole("button", { name: "Edit", exact: true }).click();
+    await surface.locator('[data-smart-type="block_image"]').click({ button: "right" });
     const popover = page.locator('[data-srte-media-details-popover="true"]');
 
     await popover.locator('[data-srte-media-license-description-input]').fill("A lovely test photo");
@@ -136,16 +162,14 @@ test.describe("Media details panel", () => {
     await chooseMedia(page);
     const image = surface.locator('[data-smart-type="block_image"]');
 
-    await image.click();
-    await page.getByRole("button", { name: "Edit", exact: true }).click();
+    await image.click({ button: "right" });
     const popover = page.locator('[data-srte-media-details-popover="true"]');
     await popover.locator('[data-srte-media-href-input]').fill("https://example.test/should-not-apply");
     await popover.getByRole("button", { name: "Cancel", exact: true }).click();
     await expect(popover).toHaveCount(0);
     await expect(image).not.toHaveAttribute("data-smart-href");
 
-    await image.click();
-    await page.getByRole("button", { name: "Edit", exact: true }).click();
+    await image.click({ button: "right" });
     await popover.locator('[data-srte-media-href-input]').fill("https://example.test/also-should-not-apply");
     await page.keyboard.press("Escape");
     await expect(popover).toHaveCount(0);
@@ -171,8 +195,11 @@ test.describe("Media details panel", () => {
     await expect(picker).toHaveCount(0);
     // Delete the just-inserted image so a distinct second insert (via
     // search, not upload) is unambiguous to assert on.
-    await surface.locator('[data-smart-type="block_image"]').click();
-    await page.getByRole("button", { name: "Delete", exact: true }).click();
+    await surface.locator('[data-smart-type="block_image"]').click({ button: "right" });
+    await expect(page.locator('[data-srte-media-details-popover="true"]')).toBeVisible();
+    await page.keyboard.press("Escape");
+    await openToolbarDropdown(page, "More to insert");
+    await toolbarMenuItem(page, "Delete selected media").click();
     await expect(surface.locator('[data-smart-type="block_image"]')).toHaveCount(0);
 
     await page.getByRole("button", { name: "Insert image" }).click();
@@ -204,8 +231,7 @@ test.describe("Media details panel", () => {
     await expect(image).toHaveAttribute("data-smart-license-source-url", "https://example.test/license");
     await expect(image).toHaveAttribute("data-smart-license-description", "A lovely test photo");
 
-    await image.click();
-    await page.getByRole("button", { name: "Edit", exact: true }).click();
+    await image.click({ button: "right" });
     const popover = page.locator('[data-srte-media-details-popover="true"]');
     await expect(popover.locator('[data-srte-media-license-attribution-input]')).toHaveValue("Jane Doe");
     await expect(popover.locator('[data-srte-media-license-type-select]')).toHaveValue("CC BY");

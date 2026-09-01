@@ -132,7 +132,8 @@ test.describe("canonical toolbar routing", () => {
     const image = surface.locator('[data-smart-type="block_image"]');
     await expect(image).toHaveAttribute("src", /^https:\/\/media\.playground\.test\//);
     await expect(image).toBeVisible();
-    await image.click();
+    await image.click({ button: "right" });
+    await page.keyboard.press("Escape");
     await openToolbarDropdown(page, "More to insert");
     await expect(toolbarMenuItem(page, "Enlarge selected media")).toBeEnabled();
     await openToolbarDropdown(page, "More to insert");
@@ -450,7 +451,8 @@ test.describe("canonical toolbar routing", () => {
     await chooseMedia(page, "image", "image.png", "image/png");
     const image = surface.locator('[data-smart-type="block_image"]');
     await expect(image).toHaveCount(1);
-    await image.click();
+    await image.click({ button: "right" });
+    await page.keyboard.press("Escape");
     await page.keyboard.press("ArrowRight");
     await page.keyboard.type("below image");
     await expect(surface.locator(":scope > p").last()).toContainText("below image");

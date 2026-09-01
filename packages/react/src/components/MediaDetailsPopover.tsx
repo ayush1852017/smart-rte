@@ -73,10 +73,9 @@ const alignButton = (current: MediaAlign, value: MediaAlign, label: string, onCl
  * multi-field dialog like this one, rather than LinkEditorPopover's simpler
  * live-Enter-to-apply form).
  *
- * Stays part of MediaOverlay's own selection-triggered flow, not a
- * reintroduced media context-menu entry - the Direction B redesign's
- * context-menu scope reduction (table-only) was a deliberate architecture
- * decision this doesn't reverse.
+ * Opened directly by an image's right-click interaction; the details panel
+ * is the image editing surface, while resize handles remain available
+ * independently around the selected image.
  */
 export function MediaDetailsPopover({ x, y, initial, onApply, onCancel }: MediaDetailsPopoverProps) {
   const [draft, setDraft] = useState<MediaDetailsDraft>(initial);
@@ -105,7 +104,12 @@ export function MediaDetailsPopover({ x, y, initial, onApply, onCancel }: MediaD
 
   useEffect(() => {
     const dismissIfOutside = (event: Event) => {
-      if (!rootRef.current?.contains(event.target as Node)) onCancelRef.current();
+      const target = event.target as Node;
+      const elementTarget = target instanceof Element ? target : target.parentElement;
+      // Resize handles live outside this dialog and must receive their own
+      // pointer gesture without the editor closing on the first pointerdown.
+      if (elementTarget?.closest("[data-srte-media-resize-handle-direction]")) return;
+      if (!rootRef.current?.contains(target)) onCancelRef.current();
     };
     window.addEventListener("pointerdown", dismissIfOutside, true);
     window.addEventListener("mousedown", dismissIfOutside, true);

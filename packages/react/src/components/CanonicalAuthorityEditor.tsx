@@ -327,6 +327,8 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
   // since nothing was ever applied to the model).
   const colorPreviewCheckpointRef = useRef<SmartEditorCheckpoint | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const [mediaContextMenu, setMediaContextMenu] = useState<{ x: number; y: number; nodeId: string } | null>(null);
+  const [mediaResizeTarget, setMediaResizeTarget] = useState<{ nodeId: string } | null>(null);
   // Tracks the exact caret position (path+offset) the link overlay was
   // last dismissed at (Escape/outside click) - suppresses an instant
   // re-popup while the caret hasn't moved, without needing a separate
@@ -528,6 +530,13 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
   // node.type.includes("formula") for its own correct "Formula source"
   // prompt.
   const resizableAtomSelected = mediaAtomSelected && selectedAtomNode?.type !== "formula" && selectedAtomNode?.type !== "block_formula";
+  const selectedAtomId = atomSelected && "nodeId" in currentAtomScope ? currentAtomScope.nodeId : null;
+  useEffect(() => {
+    if (mediaContextMenu && (!mediaAtomSelected || mediaContextMenu.nodeId !== selectedAtomId)) setMediaContextMenu(null);
+  }, [mediaContextMenu, mediaAtomSelected, selectedAtomId]);
+  useEffect(() => {
+    if (mediaResizeTarget && (!mediaAtomSelected || mediaResizeTarget.nodeId !== selectedAtomId)) setMediaResizeTarget(null);
+  }, [mediaResizeTarget, mediaAtomSelected, selectedAtomId]);
   // Context menu scope reduction: link no longer gets a right-click menu -
   // LinkEditorPopover (already built and wired for the toolbar's Link
   // button, per §1's investigation) auto-appears, anchored to the link's
@@ -998,13 +1007,10 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
    * the same way Tab special-cases list.indent/outdent's dynamic params.
    */
   /**
-   * Context menu scope reduction: table-only now. Marks (already on the
-   * toolbar) and atom/link (moved to their own dedicated overlays -
-   * MediaOverlay below, and the auto-triggered LinkEditorPopover - see
-   * linkAnchorElement) no longer register contextMenu contributions at
-   * all (marks/plugin.ts, atom/plugin.ts) or get hardcoded item blocks
-   * here - only table plugin contributions (the generic loop) and the
-   * cell-colour items remain.
+   * The generic plugin context menu remains table-scoped. Images use their
+   * direct right-click details editor below, other media keeps its dedicated
+   * quick-action menu, while marks stay on the toolbar and links use the
+   * auto-triggered LinkEditorPopover.
    */
   const resolveContextMenuItems = (): ContextMenuItem[] => {
     const many = () => ids(128);
@@ -1411,6 +1417,27 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
     setLinkPopover(null);
   };
 
+  const openMediaDetails = (scope: ResolvedScope, node: SmartElementNode, element?: HTMLElement) => {
+    if (scope.kind !== "atomic-node") return;
+    const rect = (element || selectedAtomElement)?.getBoundingClientRect();
+    setMediaDetailsPopover({
+      x: rect ? rect.left : 0, y: rect ? rect.bottom + 6 : 0, scope,
+      initial: {
+        alt: String(node.attrs?.alt || ""),
+        href: String(node.attrs?.href || ""),
+        openInNewTab: node.attrs?.target === "_blank",
+        width: typeof node.attrs?.width === "number" ? node.attrs.width : undefined,
+        borderRadius: typeof node.attrs?.borderRadius === "number" ? node.attrs.borderRadius : undefined,
+        align: node.attrs?.align === "left" || node.attrs?.align === "center" || node.attrs?.align === "right" ? node.attrs.align : undefined,
+        licenseDescription: String(node.attrs?.licenseDescription || ""),
+        licenseSourceUrl: String(node.attrs?.licenseSourceUrl || ""),
+        licenseType: String(node.attrs?.licenseType || ""),
+        licenseVersion: String(node.attrs?.licenseVersion || ""),
+        licenseAttribution: String(node.attrs?.licenseAttribution || ""),
+      },
+    });
+  };
+
   const editSelectedAtom = (resizeBy?: number) => {
     const scope = atomScope();
     if (scope.kind !== "atomic-node") return;
@@ -1422,23 +1449,7 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
       // media-details-old-editor-field-parity.md) - formulas keep their
       // existing prompt unchanged below, since this panel's fields
       // (link/align/radius/license) don't apply to a formula atom at all.
-      const rect = selectedAtomElement?.getBoundingClientRect();
-      setMediaDetailsPopover({
-        x: rect ? rect.left : 0, y: rect ? rect.bottom + 6 : 0, scope,
-        initial: {
-          alt: String(node.attrs?.alt || ""),
-          href: String(node.attrs?.href || ""),
-          openInNewTab: node.attrs?.target === "_blank",
-          width: typeof node.attrs?.width === "number" ? node.attrs.width : undefined,
-          borderRadius: typeof node.attrs?.borderRadius === "number" ? node.attrs.borderRadius : undefined,
-          align: node.attrs?.align === "left" || node.attrs?.align === "center" || node.attrs?.align === "right" ? node.attrs.align : undefined,
-          licenseDescription: String(node.attrs?.licenseDescription || ""),
-          licenseSourceUrl: String(node.attrs?.licenseSourceUrl || ""),
-          licenseType: String(node.attrs?.licenseType || ""),
-          licenseVersion: String(node.attrs?.licenseVersion || ""),
-          licenseAttribution: String(node.attrs?.licenseAttribution || ""),
-        },
-      });
+      openMediaDetails(scope, node);
       return;
     }
     const operations = resizeBy === undefined
@@ -1899,18 +1910,34 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
         runtime.focus();
       }}
     />}
-    {!readOnly && mediaAtomSelected && selectedAtomElement && <MediaOverlay
+    {!readOnly && mediaResizeTarget && mediaResizeTarget.nodeId === selectedAtomId && mediaAtomSelected && selectedAtomElement && <MediaOverlay
       atomElement={selectedAtomElement}
       alt={typeof selectedAtomNode?.attrs?.alt === "string" ? selectedAtomNode.attrs.alt : ""}
       width={typeof selectedAtomNode?.attrs?.width === "number" ? selectedAtomNode.attrs.width : undefined}
       height={typeof selectedAtomNode?.attrs?.height === "number" ? selectedAtomNode.attrs.height : undefined}
       src={typeof selectedAtomNode?.attrs?.src === "string" ? selectedAtomNode.attrs.src : undefined}
+      showMenu={false}
       resizable={resizableAtomSelected}
-      onEdit={() => editSelectedAtom()}
-      onResize={(by) => editSelectedAtom(by)}
+      onEdit={() => undefined}
+      onResize={() => undefined}
       onResizeTo={resizeSelectedAtomTo}
-      onDelete={deleteSelectedAtom}
-      onDismiss={() => runtime.focus()}
+      onDelete={() => undefined}
+      onDismiss={() => setMediaResizeTarget(null)}
+    />}
+    {!readOnly && mediaContextMenu && mediaAtomSelected && selectedAtomElement && <MediaOverlay
+      atomElement={selectedAtomElement}
+      alt={typeof selectedAtomNode?.attrs?.alt === "string" ? selectedAtomNode.attrs.alt : ""}
+      width={typeof selectedAtomNode?.attrs?.width === "number" ? selectedAtomNode.attrs.width : undefined}
+      height={typeof selectedAtomNode?.attrs?.height === "number" ? selectedAtomNode.attrs.height : undefined}
+      src={typeof selectedAtomNode?.attrs?.src === "string" ? selectedAtomNode.attrs.src : undefined}
+      x={mediaContextMenu.x}
+      y={mediaContextMenu.y}
+      resizable={resizableAtomSelected}
+      onEdit={() => { setMediaContextMenu(null); editSelectedAtom(); }}
+      onResize={(by) => { setMediaContextMenu(null); editSelectedAtom(by); }}
+      onResizeTo={resizeSelectedAtomTo}
+      onDelete={() => { setMediaContextMenu(null); deleteSelectedAtom(); }}
+      onDismiss={() => { setMediaContextMenu(null); runtime.focus(); }}
     />}
     {colorPopover && <ColorPickerPopover
       x={colorPopover.x}
@@ -2013,22 +2040,31 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
         // existing link-opening convention rather than inventing a second one.
         const linkedMedia = (event.target as Element | null)?.closest<HTMLElement>("[data-smart-href]");
         const href = anchor?.href || linkedMedia?.getAttribute("data-smart-href");
-        if (!href || !(event.metaKey || event.ctrlKey)) return;
-        event.preventDefault();
-        window.open(href, "_blank", "noopener,noreferrer");
+        if (href && (event.metaKey || event.ctrlKey)) {
+          event.preventDefault();
+          window.open(href, "_blank", "noopener,noreferrer");
+          return;
+        }
+        const imageTarget = (event.target as Element | null)?.closest<HTMLElement>("[data-smart-type=\"image\"], [data-smart-type=\"block_image\"]");
+        if (!imageTarget) return;
+        setMediaContextMenu(null);
+        const mappedImage = runtime.surface.renderer?.mapping.domToNode(imageTarget);
+        if (mappedImage) setMediaResizeTarget({ nodeId: mappedImage.nodeId });
       }}
       onContextMenu={(event) => {
         if (readOnly) return;
         event.preventDefault();
+        setMediaContextMenu(null);
         // Atom selection (unlike caret/text placement) is not native
         // browser behavior - it's InputController's own clickListener
         // (surface/input.ts), bound to the "click" DOM event, which never
         // fires for a right-click. Without this, right-clicking an atom
         // directly (no preceding left-click) left whatever selection was
         // already there in place, so atomic-node scope never resolved and
-        // MediaOverlay (which shows whenever atomSelected is true) never
-        // appeared - right-clicking media looked like right-clicking
-        // nothing. Mirrors clickListener's own atom-selection logic
+        // the media interaction (details editor for images, quick-action
+        // menu for other media) never appeared - right-clicking media looked
+        // like right-clicking nothing. Mirrors clickListener's own
+        // atom-selection logic
         // exactly.
         const atomTarget = (event.target as Element | null)?.closest<HTMLElement>("[data-smart-atomic]");
         const mapped = atomTarget ? runtime.surface.renderer?.mapping.domToNode(atomTarget) : null;
@@ -2037,6 +2073,18 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
           if (range) {
             runtime.editor.setSelection({ type: "node", anchor: range.from, head: range.to }, { source: "api" });
             runtime.surface.renderer?.render(runtime.editor.document, runtime.editor.selection);
+          }
+          if (mapped.node.type !== "divider" && mapped.node.type !== "unknown") {
+            setContextMenu(null);
+            const isImage = mapped.node.type === "image" || mapped.node.type === "block_image";
+            if (isImage) {
+              const scope = runtime.editor.resolveScope({ want: "atomic-node" }) as ResolvedScope;
+              setMediaResizeTarget({ nodeId: mapped.nodeId });
+              if (scope.kind === "atomic-node") openMediaDetails(scope, mapped.node, atomTarget || undefined);
+              return;
+            }
+            setMediaContextMenu({ x: event.clientX, y: event.clientY, nodeId: mapped.nodeId });
+            return;
           }
         } else if (isCollapsedTextSelection(runtime.editor.selection)) {
           // Chromium/Firefox reposition the native caret to the click
@@ -2070,10 +2118,8 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
             runtime.surface.renderer?.render(runtime.editor.document, runtime.editor.selection);
           }
         }
-        // Table-only now (context menu scope reduction) - media/link moved
-        // to their own dedicated overlays, marks live on the toolbar only.
-        // A right-click that doesn't resolve to a table cell opens nothing
-        // at all, rather than an empty "No actions here" menu.
+        // A right-click that is not handled by the media branch above and
+        // does not resolve to a table cell opens no generic menu.
         const rightClickTableScope = runtime.editor.resolveScope({ want: "table-grid" });
         if ("kind" in rightClickTableScope && rightClickTableScope.kind === "table-grid") {
           setContextMenu({ x: event.clientX, y: event.clientY });

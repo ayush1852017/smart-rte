@@ -350,7 +350,7 @@ test.describe("Phase 8b canonical product authority", () => {
     ];
     const atomSession: Intent[] = [
       { name: "atom.insert.image", run: async (currentPage) => { await placeCaret(currentPage, '[data-smart-authority="canonical"] [contenteditable="true"] > p', true); await button("Insert image")(currentPage); await chooseMedia(currentPage, "image", "generated.png", "image/png"); } },
-      { name: "atom.resize", run: async (currentPage) => { await currentPage.locator('[data-smart-type="block_image"]').click(); await button("Grow selected atom")(currentPage); await button("Shrink selected atom")(currentPage); } },
+      { name: "atom.resize", run: async (currentPage) => { const image = currentPage.locator('[data-smart-type="block_image"]'); await image.click({ button: "right" }); await currentPage.keyboard.press("Escape"); await button("Grow selected atom")(currentPage); await button("Shrink selected atom")(currentPage); } },
       { name: "atom.update", run: async (currentPage) => { await button("Edit selected atom")(currentPage); } },
       { name: "atom.delete", run: button("Delete selected atom") },
       { name: "atom.insert.video", run: async (currentPage) => { await placeCaret(currentPage, '[data-smart-authority="canonical"] [contenteditable="true"] > p', true); await button("Insert video")(currentPage); await chooseMedia(currentPage, "video", "generated.mp4", "video/mp4"); } },
@@ -3269,12 +3269,10 @@ test.describe("Phase 8b canonical product authority", () => {
   });
 
   /**
-   * Context menu scope reduction: media no longer has a right-click
-   * "Delete" item - rewritten to use MediaOverlay's own Delete button,
-   * the item's new home. Was "deletes an inserted image atom via the
-   * right-click context menu".
+   * Image right-click opens the full details editor; deletion remains
+   * available through the selected-media toolbar command.
    */
-  test("deletes an inserted image atom via the media overlay", async ({ page }) => {
+  test("deletes an inserted image atom after opening its details editor", async ({ page }) => {
     await page.goto("/?canonicalAuthority=1&blocks=1");
     await placeCaret(page, '[data-smart-authority="canonical"] [contenteditable="true"] > p', true);
     await page.getByRole("button", { name: "Insert image", exact: true }).click();
@@ -3282,11 +3280,13 @@ test.describe("Phase 8b canonical product authority", () => {
     const editor = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
     const image = editor.locator('[data-smart-type="block_image"]');
     await expect(image).toHaveCount(1);
-    await image.click();
+    await image.click({ button: "right" });
 
-    const overlay = page.locator('[data-srte-media-overlay="true"]');
-    await expect(overlay).toBeVisible();
-    await page.getByRole("button", { name: "Delete", exact: true }).click();
+    const details = page.locator('[data-srte-media-details-popover="true"]');
+    await expect(details).toBeVisible();
+    await page.keyboard.press("Escape");
+    await openToolbarDropdown(page, "More to insert");
+    await toolbarMenuItem(page, "Delete selected media").click();
     await expect(image).toHaveCount(0);
   });
 
@@ -3458,13 +3458,11 @@ test.describe("Phase 8b canonical product authority", () => {
    * Follow-up to the divider fix above: making `divider` atomic+selectable
    * (needed so ordinary caret/Backspace/Delete behave correctly around an
    * `<hr>`) also made it satisfy the same "atomic node selected" scope that
-   * unconditionally rendered MediaOverlay - a component with Edit/Resize
-   * buttons and an Alt-text/Size/Source panel that assumes every atom is
-   * real media with src/width/height/alt, none of which a divider has.
-   * Selecting a divider must not surface that popup at all; selecting a
-   * real image must still surface it exactly as before.
+   * previously rendered MediaOverlay for every selectable atom. Selecting a
+   * divider must not surface media UI; images show resize handles on left-click
+   * and their details editor on right-click.
    */
-  test("selecting a divider does not surface the media overlay, but selecting an image still does", async ({ page }) => {
+  test("selecting a divider does not surface media UI, but image interactions remain scoped", async ({ page }) => {
     await page.goto("/?canonicalAuthority=1&blocks=1");
     const editor = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
     await placeCaretAtEnd(page);
@@ -3488,7 +3486,11 @@ test.describe("Phase 8b canonical product authority", () => {
     await expect(overlay).not.toBeVisible();
 
     await editor.locator("img").click();
-    await expect(overlay).toBeVisible();
+    await expect(overlay).not.toBeVisible();
+    await expect(page.locator('[data-srte-media-resize-handle-direction]')).toHaveCount(8);
+    await editor.locator("img").click({ button: "right" });
+    await expect(page.locator('[data-srte-media-details-popover="true"]')).toBeVisible();
+    await expect(overlay).toHaveCount(0);
   });
 
   /**
@@ -3557,15 +3559,11 @@ test.describe("Phase 8b canonical product authority", () => {
    *    on the exact same atom-selection fix.
    *
    * Context menu scope reduction (later work order): the menu is now
-   * table-only. Marks (already on the toolbar) and atom/link (moved to
-   * MediaOverlay and an auto-triggered LinkEditorPopover respectively) no
-   * longer produce any context-menu items or even open the menu at all -
-   * right-clicking plain text, media, or a link opens nothing. This test
-   * previously also asserted marks/atom/link contextMenu items appeared on
-   * right-click; that coverage moved to the dedicated overlay tests below
-   * ("media overlay ..." / "link overlay ...").
+   * table-only for ordinary text. Images use their dedicated right-click
+   * details editor, other media keeps its quick-action menu, and links keep
+   * their existing editor popover behavior.
    */
-  test("scopes the context menu to table only - opens nothing for plain text, media, or a link", async ({ page }) => {
+  test("scopes the context menu to tables and media", async ({ page }) => {
     await page.goto("/?canonicalAuthority=1&blocks=1");
     const editor = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
     const menu = page.locator('[data-srte-context-menu="true"]');
@@ -3586,9 +3584,8 @@ test.describe("Phase 8b canonical product authority", () => {
     expect(tableItems.some((id) => id?.startsWith("marks.contextMenu."))).toBe(false);
     await page.keyboard.press("Escape");
 
-    // Atom, right-clicked directly with NO preceding left-click: no menu,
-    // but atomic-node scope still resolves correctly (confirmed by the
-    // dedicated MediaOverlay tests actually seeing the overlay appear).
+    // Atom, right-clicked directly with NO preceding left-click: the media
+    // details editor must resolve the clicked atom, not the previous selection.
     await page.evaluate(() => {
       const runtime = (window as typeof window & { __smartProductCanonical?: {
         editor: { document: { children: unknown[] }; schema: { version: number }; state: { revision: number } };
@@ -3603,10 +3600,13 @@ test.describe("Phase 8b canonical product authority", () => {
     });
     const image = editor.locator('[data-smart-id="ctxmenu-atom-img"]');
     await image.click({ button: "right" });
-    await page.waitForTimeout(100);
+    await expect(page.locator('[data-srte-media-details-popover="true"]')).toBeVisible();
+    await expect(page.locator('[data-srte-media-overlay="true"]')).toHaveCount(0);
+    await expect(page.locator('[data-srte-media-resize-handle-direction]')).toHaveCount(8);
     await expect(menu).toHaveCount(0);
+    await page.keyboard.press("Escape");
 
-    // Link: no menu either - the auto overlay is the edit surface now.
+    // Link: no generic context menu - the auto overlay is the edit surface.
     await page.evaluate(() => {
       const runtime = (window as typeof window & { __smartProductCanonical?: {
         editor: { document: { children: unknown[] }; schema: { version: number }; state: { revision: number } };
@@ -4605,14 +4605,9 @@ test.describe("Phase 8b canonical product authority", () => {
   });
 
   /**
-   * Context menu scope reduction: media's Edit/Resize actions moved from
-   * the right-click menu to MediaOverlay, which appears automatically
-   * whenever an atom is selected (no right-click needed at all) - still
-   * calling the exact same editSelectedAtom the toolbar's "Edit media"/
-   * "Resize +/-" buttons already use. Was "resizes and edits a media atom
-   * via the right-click context menu".
+   * Image width can be edited directly from the right-click details editor.
    */
-  test("resizes a media atom via the media overlay", async ({ page }) => {
+  test("resizes a media atom via the media details editor", async ({ page }) => {
     await page.goto("/?canonicalAuthority=1&blocks=1");
     const editor = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
     await page.evaluate(() => {
@@ -4628,11 +4623,13 @@ test.describe("Phase 8b canonical product authority", () => {
       runtime.replaceValue({ schemaVersion: runtime.editor.schema.version, revision: runtime.editor.state.revision + 1, document: doc });
     });
     const image = editor.locator('[data-smart-id="media-ctx-img"]');
-    await image.click();
+    await image.click({ button: "right" });
     const overlay = page.locator('[data-srte-media-overlay="true"]');
-    await expect(overlay).toBeVisible();
-    await expect(overlay).toContainText("160");
-    await page.getByRole("button", { name: "Resize +", exact: true }).click();
+    await expect(overlay).toHaveCount(0);
+    const details = page.locator('[data-srte-media-details-popover="true"]');
+    await expect(details).toBeVisible();
+    await details.locator('[data-srte-media-width-input]').fill("180");
+    await details.getByRole("button", { name: "Apply", exact: true }).click();
     const width = await page.evaluate(() => {
       const runtime = (window as typeof window & { __smartProductCanonical?: { editor: { document: { children: unknown[] } } } }).__smartProductCanonical!;
       const collect = (node: { type: string; id: string; attrs?: { width?: number }; children?: unknown[] }, out: typeof node[] = []): typeof out => {
@@ -4648,10 +4645,7 @@ test.describe("Phase 8b canonical product authority", () => {
 
   /**
    * Post-batch follow-up (user report: "images doesn't have a resizer") -
-   * the Resize +/- buttons were the only resize affordance for media,
-   * unlike tables which already had a drag handle. Added a corner drag
-   * handle to MediaOverlay, reusing TableResizeHandles.tsx's live-preview-
-   * during-drag / commit-on-release pattern.
+   * media now exposes all four side handles and four corner handles.
    */
   test("resizes a media atom by dragging its corner handle, preserving aspect ratio", async ({ page }) => {
     await page.goto("/?canonicalAuthority=1&blocks=1");
@@ -4668,9 +4662,11 @@ test.describe("Phase 8b canonical product authority", () => {
       runtime.replaceValue({ schemaVersion: runtime.editor.schema.version, revision: runtime.editor.state.revision + 1, document: doc });
     });
     const image = editor.locator('[data-smart-id="media-drag-img"]');
-    await image.click();
-    await expect(page.locator('[data-srte-media-overlay="true"]')).toBeVisible();
-    const handle = page.locator('[data-srte-media-resize-handle="true"]');
+    await image.click({ button: "right" });
+    await expect(page.locator('[data-srte-media-details-popover="true"]')).toBeVisible();
+    await expect(page.locator('[data-srte-media-overlay="true"]')).toHaveCount(0);
+    await expect(page.locator('[data-srte-media-resize-handle-direction]')).toHaveCount(8);
+    const handle = page.locator('[data-srte-media-resize-handle-direction="se"]');
     await expect(handle).toBeVisible();
 
     const box = (await handle.boundingBox())!;
@@ -4694,6 +4690,55 @@ test.describe("Phase 8b canonical product authority", () => {
     expect(attrs?.height).toBeGreaterThan(90);
     // Aspect ratio (160:90 = 1.778) stays close to the original.
     expect(attrs!.width! / attrs!.height!).toBeCloseTo(160 / 90, 1);
+  });
+
+  test("resizes a media atom horizontally and vertically with side handles", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    const editor = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
+    await page.evaluate(() => {
+      const runtime = (window as typeof window & {
+        __smartProductCanonical?: { editor: { document: { children: unknown[] }; schema: { version: number }; state: { revision: number } }; replaceValue: (value: unknown) => void };
+      }).__smartProductCanonical!;
+      runtime.replaceValue({
+        schemaVersion: runtime.editor.schema.version,
+        revision: runtime.editor.state.revision + 1,
+        document: { type: "doc", id: "media-side-doc", children: [{
+          type: "paragraph", id: "media-side-p",
+          children: [{ type: "image", id: "media-side-img", attrs: { src: "https://example.com/x.png", alt: "x", width: 160, height: 90 } }],
+        }] },
+      });
+    });
+
+    const image = editor.locator('[data-smart-id="media-side-img"]');
+    await image.click({ button: "right" });
+    await expect(page.locator('[data-srte-media-details-popover="true"]')).toBeVisible();
+    await expect(page.locator('[data-srte-media-overlay="true"]')).toHaveCount(0);
+    await expect(page.locator('[data-srte-media-resize-handle-direction]')).toHaveCount(8);
+
+    const dragHandle = async (direction: "e" | "s", deltaX: number, deltaY: number) => {
+      const handle = page.locator(`[data-srte-media-resize-handle-direction="${direction}"]`);
+      const box = (await handle.boundingBox())!;
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(box.x + box.width / 2 + deltaX, box.y + box.height / 2 + deltaY, { steps: 5 });
+      await page.mouse.up();
+      await page.waitForTimeout(100);
+    };
+    const attrsOf = () => page.evaluate(() => {
+      const runtime = (window as typeof window & { __smartProductCanonical?: { editor: { document: { children: unknown[] } } } }).__smartProductCanonical!;
+      const imageNode = (runtime.editor.document.children as Array<{ children?: Array<{ id: string; attrs?: { width?: number; height?: number } }> }>).flatMap((node) => node.children || []).find((node) => node.id === "media-side-img");
+      return imageNode?.attrs;
+    });
+
+    await dragHandle("e", 40, 0);
+    let attrs = await attrsOf();
+    expect(attrs?.width).toBe(200);
+    expect(attrs?.height).toBe(90);
+
+    await dragHandle("s", 0, 20);
+    attrs = await attrsOf();
+    expect(attrs?.width).toBe(200);
+    expect(attrs?.height).toBe(110);
   });
 
   /**
@@ -4888,10 +4933,11 @@ test.describe("Phase 8b canonical product authority", () => {
     const formula = editor.locator('[data-smart-type="formula"]');
     await expect(formula).toHaveCount(1);
 
-    // insertFormulaFromLibrary already leaves the just-inserted atom
-    // selected ("node" selection, so the auto-opened edit prompt targets
-    // it) - no extra click needed; MediaOverlay is already showing for it.
+    // The inserted atom is selected, but the media context menu is now
+    // intentionally opened only by an explicit right-click.
     const overlay = page.locator('[data-srte-media-overlay="true"]');
+    await expect(overlay).toHaveCount(0);
+    await formula.dispatchEvent("contextmenu", { bubbles: true, cancelable: true, button: 2, clientX: 120, clientY: 120 });
     await expect(overlay).toBeVisible();
     await expect(overlay.getByRole("button", { name: "Edit", exact: true })).toBeVisible();
     await expect(overlay.getByRole("button", { name: "Delete", exact: true })).toBeVisible();
