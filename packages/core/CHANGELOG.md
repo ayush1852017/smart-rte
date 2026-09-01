@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.0-beta.3
+
+- Add `href`/`target` (a clickable link), `borderRadius` (corner rounding), and license metadata fields (`licenseDescription`, `licenseSourceUrl`, `licenseType`, `licenseVersion`, `licenseAttribution`) to the image atom schema. `href` is validated the same way as the existing `link` mark; exported HTML wraps a linked image in a real `<a>` for portability outside the editor. Fix a pre-existing renderer gap where clearing an image's `align` back to unset never removed the CSS float/display/margin it had previously applied.
+
 ## 1.0.0-beta.2
 
 - Add an opt-in `renderFormulaHtml` option to `serializeCanonicalListHtml` that bakes real KaTeX-rendered HTML into exported formula elements, instead of leaving an empty placeholder — for consumers (e.g. a read-only preview) that display this HTML directly without also running KaTeX against it themselves. Off by default; no change for existing consumers.

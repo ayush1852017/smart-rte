@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.0-beta.6
+
+- Replace the media Edit overlay's plain alt-text prompt with a full "Media details" panel: link (with open-in-new-tab), corner radius, alignment, and license fields (description, source URL, type, version, attribution), matching the pre-canonical editor's own edit-panel field set. A library-picked image's existing license metadata is now carried onto the inserted atom instead of being discarded. Depends on `smartrte-core@1.0.0-beta.3`.
+
 ## 1.0.0-beta.5
 
 - Add an opt-in `renderFormulaHtml` prop (on `ClassicEditor`/`CanonicalAuthorityEditor`) that bakes real KaTeX-rendered HTML into the formula elements of `onChange`'s exported HTML, instead of an empty placeholder — for hosts that display saved content directly (e.g. a read-only preview panel) without also running KaTeX against it. Depends on `smartrte-core@1.0.0-beta.2`.
