@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.0-beta.8
+
+- Add a `tools` prop (`ClassicEditor`, `CanonicalAuthorityEditor`, and the standalone embed) letting a host hide any individual toolbar tool — Bold, Video, Version history, Review, and around 40 others — without wrapping or restyling the component. Every tool is visible by default; composes with existing gates (a required provider or capability must still be present). See the README's "Hiding individual toolbar tools" section for the full list and usage.
+- Retire the never-shipped `showVersionHistory`/`showReview` props in favor of `tools.versionHistory`/`tools.comments`/`tools.suggestions`.
+- Also export `EditorCapabilityPreset` from the package's public entry point (previously only reachable indirectly through `CanonicalAuthorityEditorProps`).
+
 ## 1.0.0-beta.7
 
 - Fix the mobile "More tools" overflow menu getting clipped almost entirely off-screen when the editor is embedded inside a host container with `overflow: hidden` — the same fix already applied to the desktop toolbar dropdowns, now also covering this menu (the only overflow affordance on narrow viewports).
