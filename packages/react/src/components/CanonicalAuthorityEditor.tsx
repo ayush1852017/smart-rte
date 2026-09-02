@@ -97,6 +97,7 @@ import { MediaDetailsPopover, type MediaDetailsDraft } from "./MediaDetailsPopov
 import { ContextMenu, type ContextMenuItem } from "./ContextMenu.js";
 import { ToolbarButton, ToolbarDropdown, ToolbarGroup, ToolbarMenuItem, MobileMoreMenu } from "./ToolbarPrimitives.js";
 import type { EditorCapabilityPreset } from "../capabilityPresets.js";
+import { resolveToolbarTools, type ToolbarTools } from "../toolbarTools.js";
 import { exportDocxDocument, importStyledDocxDocument, importPdfDocument } from "smartrte-core/foundation";
 import { printSmartDocumentAsPdf } from "../adapters/pdfPrint.js";
 import {
@@ -141,10 +142,19 @@ export interface CanonicalAuthorityEditorProps {
    * for images too.
    */
   mediaManager?: boolean;
-  /** Whether to show the Version History toolbar control and panel. Defaults to true. */
-  showVersionHistory?: boolean;
-  /** Whether to show the Review toolbar control and review panels/markers. Defaults to true. */
-  showReview?: boolean;
+  /**
+   * Per-tool toolbar visibility - "developers should be able to hide tools
+   * which are not for their use" (docs/bugs/per-tool-toolbar-visibility.md).
+   * Every tool defaults to visible; a host only needs to name the ones they
+   * want off (`tools={{ video: false, versionHistory: false }}`). Composes
+   * with, never overrides, the deeper existing gates: a tool whose required
+   * provider is absent (`versionProvider`/`commentProvider`/
+   * `suggestionProvider`/`mediaProvider`) or whose plugin was excluded via
+   * `preset` (e.g. `insertTable` under `preset="simple"`) still won't
+   * render even if explicitly set to `true` here - see ToolbarTools.ts's
+   * own doc comment for the full contract and scoping decisions.
+   */
+  tools?: Partial<ToolbarTools>;
   /** Host-owned save/list/load/remove boundary for document version history. */
   versionProvider?: VersionProvider;
   /** Host-owned save/list/remove boundary for comment threads. Absent hides the comment toolbar buttons and markers entirely, mirroring versionProvider's absent-disables-the-feature contract. */
@@ -261,8 +271,7 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
   mediaProvider,
   mediaPicker: MediaPicker = DefaultMediaPicker,
   mediaManager = true,
-  showVersionHistory = true,
-  showReview = true,
+  tools,
   versionProvider,
   commentProvider,
   suggestionProvider,
@@ -508,6 +517,19 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
   // an `unknown` node (Phase 10's disable-safety contract, unchanged) -
   // this only hides the *toolbar affordance* for creating new ones.
   const tablesEnabled = Boolean(runtime.editor.schema.nodes.table);
+  // Per-tool toolbar visibility (toolbarTools.ts) - `tools` is a pure
+  // UI-visibility layer, composed with (never overriding) the deeper
+  // existing gates below: a required provider being absent, or a plugin
+  // having been excluded via `preset`, still wins even if a tool is
+  // explicitly left enabled here.
+  const t = resolveToolbarTools(tools);
+  const showInsertTable = t.insertTable && tablesEnabled;
+  const showImageTool = t.image && Boolean(mediaProvider);
+  const showVideoTool = t.video && Boolean(mediaProvider);
+  const showAudioTool = t.audio && Boolean(mediaProvider);
+  const showVersionHistoryTool = t.versionHistory && Boolean(versionProvider);
+  const showCommentsTool = t.comments && Boolean(commentProvider);
+  const showSuggestionsTool = t.suggestions && Boolean(suggestionProvider);
   const tableSelected = currentTableScope.kind === "table-grid";
   const selectedTableElement = tableSelected
     ? runtime.surface.renderer?.mapping.nodeToDom((currentTableScope as TableGridScope).tableId) as HTMLTableElement | undefined
@@ -1602,20 +1624,21 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
   // same as before. "Code" isn't promoted - see the docs/bugs/ writeup on
   // why it stayed the dropdown's sole remaining item at wide widths.
   const textStylesMenuItems = <>
-    <ToolbarMenuItem icon="code" label="Code" pressed={markCoverage("inlineCode")} disabled={readOnly} onClick={() => toggleMark("inlineCode")} />
-    <ToolbarMenuItem icon="superscript" label="Superscript" pressed={markCoverage("superscript")} disabled={readOnly} onClick={() => toggleMark("superscript")} widePromote />
-    <ToolbarMenuItem icon="subscript" label="Subscript" pressed={markCoverage("subscript")} disabled={readOnly} onClick={() => toggleMark("subscript")} widePromote />
-    <ToolbarMenuItem icon="textColor" label="Text colour" disabled={readOnly} widePromote onClick={(event) => {
+    {t.code && <ToolbarMenuItem icon="code" label="Code" pressed={markCoverage("inlineCode")} disabled={readOnly} onClick={() => toggleMark("inlineCode")} />}
+    {t.superscript && <ToolbarMenuItem icon="superscript" label="Superscript" pressed={markCoverage("superscript")} disabled={readOnly} onClick={() => toggleMark("superscript")} widePromote />}
+    {t.subscript && <ToolbarMenuItem icon="subscript" label="Subscript" pressed={markCoverage("subscript")} disabled={readOnly} onClick={() => toggleMark("subscript")} widePromote />}
+    {t.textColor && <ToolbarMenuItem icon="textColor" label="Text colour" disabled={readOnly} widePromote onClick={(event) => {
       const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
       setColorPopover({ x: rect.left, y: rect.bottom + 4, target: { kind: "mark", markId: "textColor" }, initialValue: currentMarkColor("textColor") });
-    }} />
-    <ToolbarMenuItem icon="backgroundColor" label="Background colour" disabled={readOnly} widePromote onClick={(event) => {
+    }} />}
+    {t.backgroundColor && <ToolbarMenuItem icon="backgroundColor" label="Background colour" disabled={readOnly} widePromote onClick={(event) => {
       const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
       setColorPopover({ x: rect.left, y: rect.bottom + 4, target: { kind: "mark", markId: "backgroundColor" }, initialValue: currentMarkColor("backgroundColor") });
-    }} />
-    <ToolbarMenuItem icon="fontSize" label="Font size" disabled={readOnly} onClick={() => applyAttributedMark("fontSize")} widePromote />
-    <ToolbarMenuItem icon="fontFamily" label="Font family" disabled={readOnly} onClick={() => applyAttributedMark("fontFamily")} widePromote />
+    }} />}
+    {t.fontSize && <ToolbarMenuItem icon="fontSize" label="Font size" disabled={readOnly} onClick={() => applyAttributedMark("fontSize")} widePromote />}
+    {t.fontFamily && <ToolbarMenuItem icon="fontFamily" label="Font family" disabled={readOnly} onClick={() => applyAttributedMark("fontFamily")} widePromote />}
   </>;
+  const showMoreTextStyles = t.code || t.superscript || t.subscript || t.textColor || t.backgroundColor || t.fontSize || t.fontFamily;
   const paragraphToolsMenuItems = <>
     <ToolbarMenuItem icon="moveUp" label="Move block up" disabled={readOnly} onClick={() => runBlock("up")} />
     <ToolbarMenuItem icon="moveDown" label="Move block down" disabled={readOnly} onClick={() => runBlock("down")} />
@@ -1633,7 +1656,7 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
    * 639px breakpoint) had no way to reach it at all - see
    * docs/bugs/list-preset-missing-from-mobile-more-menu.md.
    */
-  const listPresetSelect = <div style={{ padding: "4px 8px" }}>
+  const listPresetSelect = t.listPreset && <div style={{ padding: "4px 8px" }}>
     <select aria-label="List preset" title="List type / preset" disabled={readOnly || currentListParts.length !== 1} value={currentListPreset} onChange={(event) => {
       const preset = event.target.value;
       if (!preset || currentListParts.length !== 1) return;
@@ -1662,17 +1685,17 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
   // for the mechanism) - Insert video/audio and the selected-media actions
   // stay dropdown-only, matching the report's own named tool list.
   const insertMoreMenuItems = <>
-    <ToolbarMenuItem icon="unlink" label="Remove link" disabled={readOnly} onClick={removeLink} widePromote />
-    <ToolbarMenuItem icon="video" label="Insert video" disabled={readOnly || !mediaProvider} onClick={() => setMediaKind("video")} />
-    <ToolbarMenuItem icon="audio" label="Insert audio" disabled={readOnly || !mediaProvider} onClick={() => setMediaKind("audio")} />
-    <ToolbarMenuItem icon="formula" label="Insert formula" disabled={readOnly} widePromote onClick={(event) => {
+    {t.removeLink && <ToolbarMenuItem icon="unlink" label="Remove link" disabled={readOnly} onClick={removeLink} widePromote />}
+    {showVideoTool && <ToolbarMenuItem icon="video" label="Insert video" disabled={readOnly} onClick={() => setMediaKind("video")} />}
+    {showAudioTool && <ToolbarMenuItem icon="audio" label="Insert audio" disabled={readOnly} onClick={() => setMediaKind("audio")} />}
+    {t.insertFormula && <ToolbarMenuItem icon="formula" label="Insert formula" disabled={readOnly} widePromote onClick={(event) => {
       const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
       setFormulaLibraryPopover({ x: rect.left, y: rect.bottom + 4 });
-    }} />
-    <ToolbarMenuItem icon="specialChar" label="Special characters" disabled={readOnly} widePromote onClick={(event) => {
+    }} />}
+    {t.specialCharacters && <ToolbarMenuItem icon="specialChar" label="Special characters" disabled={readOnly} widePromote onClick={(event) => {
       const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
       setSpecialCharPopover({ x: rect.left, y: rect.bottom + 4 });
-    }} />
+    }} />}
     <ToolbarMenuItem icon="edit" label="Edit selected media" disabled={readOnly || !mediaAtomSelected} onClick={() => editSelectedAtom()} />
     <ToolbarMenuItem icon="zoomIn" label="Enlarge selected media" disabled={readOnly || !resizableAtomSelected} onClick={() => editSelectedAtom(20)} />
     <ToolbarMenuItem icon="zoomOut" label="Shrink selected media" disabled={readOnly || !resizableAtomSelected} onClick={() => editSelectedAtom(-20)} />
@@ -1719,15 +1742,23 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
     }} />
   </>;
   const saveCopyMenuItems = <>
-    <ToolbarMenuItem label="Save as HTML" onClick={() => runExport("html")} />
-    <ToolbarMenuItem label="Save as Markdown" onClick={() => runExport("markdown")} />
-    <ToolbarMenuItem label="Save as Word document" onClick={() => void runDocxExport()} />
-    <ToolbarMenuItem label="Save as PDF" onClick={runPdfExport} />
-    <ToolbarMenuItem icon="json" label="Save as Smart RTE file" onClick={() => runExport("native")} />
+    {t.saveAsHtml && <ToolbarMenuItem label="Save as HTML" onClick={() => runExport("html")} />}
+    {t.saveAsMarkdown && <ToolbarMenuItem label="Save as Markdown" onClick={() => runExport("markdown")} />}
+    {t.saveAsWord && <ToolbarMenuItem label="Save as Word document" onClick={() => void runDocxExport()} />}
+    {t.saveAsPdf && <ToolbarMenuItem label="Save as PDF" onClick={runPdfExport} />}
+    {t.saveAsSmartRte && <ToolbarMenuItem icon="json" label="Save as Smart RTE file" onClick={() => runExport("native")} />}
   </>;
-  const reviewMenuItems = <>
+  const showSaveCopy = t.saveAsHtml || t.saveAsMarkdown || t.saveAsWord || t.saveAsPdf || t.saveAsSmartRte;
+  // "Review" splits into two independently-toggleable tools (comments,
+  // suggestions) - not an arbitrary split, it maps directly onto the two
+  // already-separate providers this architecture has (commentProvider,
+  // suggestionProvider). Kept as ONE dropdown trigger (labeled "Review")
+  // rather than two, showing whichever half(s) are actually enabled.
+  const commentsMenuItems = <>
     <ToolbarMenuItem icon="addComment" label="Add comment" disabled={!canComment} onClick={startComment} />
     <ToolbarMenuItem icon="comments" label="Comments" pressed={commentPanelOpen} disabled={!commentProvider} onClick={() => setCommentPanelOpen((open) => !open)} />
+  </>;
+  const suggestionsMenuItems = <>
     <ToolbarMenuItem icon="suggest" label="Suggest deletion" disabled={!canSuggestDelete} onClick={suggestDelete} />
     <ToolbarMenuItem icon="suggest" label="Suggest insertion" disabled={readOnly || !suggestionProvider} onClick={startSuggestInsert} />
     <ToolbarMenuItem icon="suggest" label="Suggest removing this" disabled={readOnly || !suggestionProvider} onClick={suggestBlockRemoval} />
@@ -1738,32 +1769,38 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
       disabled={readOnly || !suggestionProvider} onClick={() => setTrackChangesEnabled((enabled) => !enabled)}
     />
   </>;
+  const reviewMenuItems = <>
+    {showCommentsTool && commentsMenuItems}
+    {showCommentsTool && showSuggestionsTool && <div className="srte-menu-separator" />}
+    {showSuggestionsTool && suggestionsMenuItems}
+  </>;
+  const showReviewDropdown = showCommentsTool || showSuggestionsTool;
 
   return <section className={`srte-root srte-editor srte-canonical-authority${className ? ` ${className}` : ""}`} data-smart-authority="canonical">
     <div className="srte-toolbar" role="toolbar" aria-label="Formatting toolbar">
       <ToolbarGroup>
-        <ToolbarButton icon="bold" label="Bold" pressed={markCoverage("bold")} disabled={readOnly} onClick={() => toggleMark("bold")} />
-        <ToolbarButton icon="italic" label="Italic" pressed={markCoverage("italic")} disabled={readOnly} onClick={() => toggleMark("italic")} />
-        <ToolbarButton icon="underline" label="Underline" pressed={markCoverage("underline")} disabled={readOnly} onClick={() => toggleMark("underline")} />
-        <ToolbarButton icon="strikethrough" label="Strikethrough" pressed={markCoverage("strikethrough")} disabled={readOnly} onClick={() => toggleMark("strikethrough")} />
+        {t.bold && <ToolbarButton icon="bold" label="Bold" pressed={markCoverage("bold")} disabled={readOnly} onClick={() => toggleMark("bold")} />}
+        {t.italic && <ToolbarButton icon="italic" label="Italic" pressed={markCoverage("italic")} disabled={readOnly} onClick={() => toggleMark("italic")} />}
+        {t.underline && <ToolbarButton icon="underline" label="Underline" pressed={markCoverage("underline")} disabled={readOnly} onClick={() => toggleMark("underline")} />}
+        {t.strikethrough && <ToolbarButton icon="strikethrough" label="Strikethrough" pressed={markCoverage("strikethrough")} disabled={readOnly} onClick={() => toggleMark("strikethrough")} />}
         {/* Wide-viewport promoted copies of tools that also live in "More text styles" - see textStylesMenuItems's own comment. */}
-        <ToolbarButton icon="superscript" label="Superscript" pressed={markCoverage("superscript")} disabled={readOnly} onClick={() => toggleMark("superscript")} widePromote />
-        <ToolbarButton icon="subscript" label="Subscript" pressed={markCoverage("subscript")} disabled={readOnly} onClick={() => toggleMark("subscript")} widePromote />
-        <ToolbarButton icon="textColor" label="Text colour" disabled={readOnly} widePromote onClick={(event) => {
+        {t.superscript && <ToolbarButton icon="superscript" label="Superscript" pressed={markCoverage("superscript")} disabled={readOnly} onClick={() => toggleMark("superscript")} widePromote />}
+        {t.subscript && <ToolbarButton icon="subscript" label="Subscript" pressed={markCoverage("subscript")} disabled={readOnly} onClick={() => toggleMark("subscript")} widePromote />}
+        {t.textColor && <ToolbarButton icon="textColor" label="Text colour" disabled={readOnly} widePromote onClick={(event) => {
           const rect = event.currentTarget.getBoundingClientRect();
           setColorPopover({ x: rect.left, y: rect.bottom + 4, target: { kind: "mark", markId: "textColor" }, initialValue: currentMarkColor("textColor") });
-        }} />
-        <ToolbarButton icon="backgroundColor" label="Background colour" disabled={readOnly} widePromote onClick={(event) => {
+        }} />}
+        {t.backgroundColor && <ToolbarButton icon="backgroundColor" label="Background colour" disabled={readOnly} widePromote onClick={(event) => {
           const rect = event.currentTarget.getBoundingClientRect();
           setColorPopover({ x: rect.left, y: rect.bottom + 4, target: { kind: "mark", markId: "backgroundColor" }, initialValue: currentMarkColor("backgroundColor") });
-        }} />
-        <ToolbarButton icon="fontSize" label="Font size" disabled={readOnly} onClick={() => applyAttributedMark("fontSize")} widePromote />
-        <ToolbarButton icon="fontFamily" label="Font family" disabled={readOnly} onClick={() => applyAttributedMark("fontFamily")} widePromote />
-        <ToolbarDropdown icon="textColor" label="More text styles" priority={2}>{textStylesMenuItems}</ToolbarDropdown>
+        }} />}
+        {t.fontSize && <ToolbarButton icon="fontSize" label="Font size" disabled={readOnly} onClick={() => applyAttributedMark("fontSize")} widePromote />}
+        {t.fontFamily && <ToolbarButton icon="fontFamily" label="Font family" disabled={readOnly} onClick={() => applyAttributedMark("fontFamily")} widePromote />}
+        {showMoreTextStyles && <ToolbarDropdown icon="textColor" label="More text styles" priority={2}>{textStylesMenuItems}</ToolbarDropdown>}
       </ToolbarGroup>
 
       <ToolbarGroup>
-        <select
+        {t.blockType && <select
           aria-label="Block type"
           title="Block type"
           value={currentBlockType}
@@ -1776,43 +1813,43 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
           <option value="paragraph">Paragraph</option>
           {Array.from({ length: 6 }, (_, index) => <option key={index + 1} value={`heading-${index + 1}`}>Heading {index + 1}</option>)}
           <option value="code_block">Code block</option>
-        </select>
-        <ToolbarButton icon="alignLeft" label="Align left" ariaLabel="Align left" iconOnly disabled={readOnly} onClick={() => transactBlock(setBlockAttributes(runtime.editor.document, blockScope(), { attrs: { align: "left" } }, blockContext()))} />
-        <ToolbarButton icon="alignCenter" label="Align center" ariaLabel="Align center" iconOnly disabled={readOnly} onClick={() => transactBlock(setBlockAttributes(runtime.editor.document, blockScope(), { attrs: { align: "center" } }, blockContext()))} />
-        <ToolbarButton icon="alignRight" label="Align right" ariaLabel="Align right" iconOnly disabled={readOnly} onClick={() => transactBlock(setBlockAttributes(runtime.editor.document, blockScope(), { attrs: { align: "right" } }, blockContext()))} />
-        <ToolbarButton icon="alignJustify" label="Justify" ariaLabel="Align justify" iconOnly disabled={readOnly} onClick={() => transactBlock(setBlockAttributes(runtime.editor.document, blockScope(), { attrs: { align: "justify" } }, blockContext()))} />
-        <ToolbarButton icon="quote" label="Quote" ariaLabel="Blockquote" disabled={readOnly} onClick={toggleBlockquote} />
+        </select>}
+        {t.alignLeft && <ToolbarButton icon="alignLeft" label="Align left" ariaLabel="Align left" iconOnly disabled={readOnly} onClick={() => transactBlock(setBlockAttributes(runtime.editor.document, blockScope(), { attrs: { align: "left" } }, blockContext()))} />}
+        {t.alignCenter && <ToolbarButton icon="alignCenter" label="Align center" ariaLabel="Align center" iconOnly disabled={readOnly} onClick={() => transactBlock(setBlockAttributes(runtime.editor.document, blockScope(), { attrs: { align: "center" } }, blockContext()))} />}
+        {t.alignRight && <ToolbarButton icon="alignRight" label="Align right" ariaLabel="Align right" iconOnly disabled={readOnly} onClick={() => transactBlock(setBlockAttributes(runtime.editor.document, blockScope(), { attrs: { align: "right" } }, blockContext()))} />}
+        {t.alignJustify && <ToolbarButton icon="alignJustify" label="Justify" ariaLabel="Align justify" iconOnly disabled={readOnly} onClick={() => transactBlock(setBlockAttributes(runtime.editor.document, blockScope(), { attrs: { align: "justify" } }, blockContext()))} />}
+        {t.quote && <ToolbarButton icon="quote" label="Quote" ariaLabel="Blockquote" disabled={readOnly} onClick={toggleBlockquote} />}
         <ToolbarDropdown icon="moveUp" label="More paragraph tools" priority={2}>{paragraphToolsMenuItems}</ToolbarDropdown>
       </ToolbarGroup>
 
       <ToolbarGroup>
-        <ToolbarButton icon="bulletedList" label="Bulleted list" ariaLabel="Bulleted list" pressed={listStyleActive("disc")} disabled={readOnly} onClick={() => toggleList("disc")} />
-        <ToolbarButton icon="numberedList" label="Numbered list" ariaLabel="Numbered list" pressed={listStyleActive("decimal")} disabled={readOnly} onClick={() => toggleList("decimal")} />
-        <ToolbarButton icon="checklist" label="Checklist" ariaLabel="Checklist" pressed={listStyleActive("disc", true)} disabled={readOnly} onClick={() => toggleList("disc", true)} />
+        {t.bulletedList && <ToolbarButton icon="bulletedList" label="Bulleted list" ariaLabel="Bulleted list" pressed={listStyleActive("disc")} disabled={readOnly} onClick={() => toggleList("disc")} />}
+        {t.numberedList && <ToolbarButton icon="numberedList" label="Numbered list" ariaLabel="Numbered list" pressed={listStyleActive("decimal")} disabled={readOnly} onClick={() => toggleList("decimal")} />}
+        {t.checklist && <ToolbarButton icon="checklist" label="Checklist" ariaLabel="Checklist" pressed={listStyleActive("disc", true)} disabled={readOnly} onClick={() => toggleList("disc", true)} />}
         <ToolbarDropdown icon="restart" label="More list tools" priority={2}>
           {listPresetSelect}
-          <div className="srte-menu-separator" />
+          {t.listPreset && <div className="srte-menu-separator" />}
           {listToolsMenuItems}
         </ToolbarDropdown>
       </ToolbarGroup>
 
       <ToolbarGroup>
-        <ToolbarButton icon="link" label="Link" ariaLabel="Insert or edit link" disabled={readOnly} onClick={openLinkPopover} />
-        <ToolbarButton icon="image" label="Image" ariaLabel="Insert image" disabled={readOnly || !mediaProvider} onClick={() => setMediaKind("image")} />
+        {t.link && <ToolbarButton icon="link" label="Link" ariaLabel="Insert or edit link" disabled={readOnly} onClick={openLinkPopover} />}
+        {showImageTool && <ToolbarButton icon="image" label="Image" ariaLabel="Insert image" disabled={readOnly} onClick={() => setMediaKind("image")} />}
         {/* Wide-viewport promoted copies of tools that also live in "More to insert" - see insertMoreMenuItems's own comment. */}
-        <ToolbarButton icon="unlink" label="Remove link" disabled={readOnly} onClick={removeLink} widePromote />
-        <ToolbarButton icon="formula" label="Insert formula" disabled={readOnly} widePromote onClick={(event) => {
+        {t.removeLink && <ToolbarButton icon="unlink" label="Remove link" disabled={readOnly} onClick={removeLink} widePromote />}
+        {t.insertFormula && <ToolbarButton icon="formula" label="Insert formula" disabled={readOnly} widePromote onClick={(event) => {
           const rect = event.currentTarget.getBoundingClientRect();
           setFormulaLibraryPopover({ x: rect.left, y: rect.bottom + 4 });
-        }} />
-        <ToolbarButton icon="specialChar" label="Special characters" disabled={readOnly} widePromote onClick={(event) => {
+        }} />}
+        {t.specialCharacters && <ToolbarButton icon="specialChar" label="Special characters" disabled={readOnly} widePromote onClick={(event) => {
           const rect = event.currentTarget.getBoundingClientRect();
           setSpecialCharPopover({ x: rect.left, y: rect.bottom + 4 });
-        }} />
+        }} />}
         <ToolbarDropdown icon="video" label="More to insert" priority={2}>{insertMoreMenuItems}</ToolbarDropdown>
       </ToolbarGroup>
 
-      {tablesEnabled && <ToolbarGroup>
+      {showInsertTable && <ToolbarGroup>
         <ToolbarButton
           icon="table" label="Insert table" ariaLabel="Insert table" disabled={readOnly}
           onClick={(event) => {
@@ -1829,15 +1866,15 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
         event.currentTarget.value = "";
       }} />
       <ToolbarGroup>
-        <ToolbarButton icon="import" label="Import" ariaLabel="Import document" disabled={readOnly} onClick={() => importRef.current?.click()} />
-        <ToolbarDropdown icon="saveCopy" label="Save a copy" priority={2}>{saveCopyMenuItems}</ToolbarDropdown>
-        {showVersionHistory && <ToolbarButton icon="history" label="Version history" ariaLabel="Version history" disabled={readOnly || !versionProvider} onClick={() => setVersionHistoryOpen(true)} />}
-        {showReview && <ToolbarDropdown icon="comments" label="Review" priority={2}>{reviewMenuItems}</ToolbarDropdown>}
+        {t.import && <ToolbarButton icon="import" label="Import" ariaLabel="Import document" disabled={readOnly} onClick={() => importRef.current?.click()} />}
+        {showSaveCopy && <ToolbarDropdown icon="saveCopy" label="Save a copy" priority={2}>{saveCopyMenuItems}</ToolbarDropdown>}
+        {showVersionHistoryTool && <ToolbarButton icon="history" label="Version history" ariaLabel="Version history" disabled={readOnly} onClick={() => setVersionHistoryOpen(true)} />}
+        {showReviewDropdown && <ToolbarDropdown icon="comments" label="Review" priority={2}>{reviewMenuItems}</ToolbarDropdown>}
       </ToolbarGroup>
 
       <ToolbarGroup>
-        <ToolbarButton icon="undo" label="Undo" ariaLabel="Undo" disabled={readOnly} onClick={() => { runtime.editor.undo(); runtime.focus(); }} />
-        <ToolbarButton icon="redo" label="Redo" ariaLabel="Redo" disabled={readOnly} onClick={() => { runtime.editor.redo(); runtime.focus(); }} />
+        {t.undo && <ToolbarButton icon="undo" label="Undo" ariaLabel="Undo" disabled={readOnly} onClick={() => { runtime.editor.undo(); runtime.focus(); }} />}
+        {t.redo && <ToolbarButton icon="redo" label="Redo" ariaLabel="Redo" disabled={readOnly} onClick={() => { runtime.editor.redo(); runtime.focus(); }} />}
       </ToolbarGroup>
 
       <MobileMoreMenu>
@@ -1849,10 +1886,9 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
         {listToolsMenuItems}
         <div className="srte-menu-separator" />
         {insertMoreMenuItems}
-        {tablesEnabled && <><div className="srte-menu-separator" />{tableToolsMenuItems}</>}
-        <div className="srte-menu-separator" />
-        {saveCopyMenuItems}
-        {showReview && <><div className="srte-menu-separator" />{reviewMenuItems}</>}
+        {showInsertTable && <><div className="srte-menu-separator" />{tableToolsMenuItems}</>}
+        {showSaveCopy && <><div className="srte-menu-separator" />{saveCopyMenuItems}</>}
+        {showReviewDropdown && <><div className="srte-menu-separator" />{reviewMenuItems}</>}
       </MobileMoreMenu>
     </div>
     {mediaKind === "image" && mediaManager && mediaProvider && <MediaManager
@@ -1862,13 +1898,13 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
       onSelect={selectFromMediaManager}
     />}
     {mediaKind && mediaProvider && !(mediaKind === "image" && mediaManager) && <MediaPicker kind={mediaKind} onPick={(file) => void insertMediaFile(mediaKind, file)} onCancel={() => setMediaKind(null)} />}
-    {showVersionHistory && versionProvider && <VersionHistoryPanel
+    {showVersionHistoryTool && <VersionHistoryPanel
       open={versionHistoryOpen}
       onClose={() => setVersionHistoryOpen(false)}
       runtime={runtime}
-      versionProvider={versionProvider}
+      versionProvider={versionProvider!}
     />}
-    {showReview && commentProvider && rootRef.current && runtime.surface.renderer?.mapping && <CommentMarkers
+    {showCommentsTool && rootRef.current && runtime.surface.renderer?.mapping && <CommentMarkers
       positions={runtime.editor.positions}
       mapping={runtime.surface.renderer.mapping}
       containerElement={rootRef.current}
@@ -1876,7 +1912,7 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
       activeThreadId={activeThreadId}
       onSelectThread={selectThread}
     />}
-    {showReview && commentProvider && <CommentThreadPanel
+    {showCommentsTool && <CommentThreadPanel
       open={commentPanelOpen}
       onClose={() => { setCommentPanelOpen(false); setPendingCommentRange(null); }}
       threads={threads}
@@ -1889,7 +1925,7 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
       onDelete={deleteThread}
       busyThreadId={busyThreadId}
     />}
-    {showReview && suggestionProvider && rootRef.current && runtime.surface.renderer?.mapping && <StructuralSuggestionMarkers
+    {showSuggestionsTool && rootRef.current && runtime.surface.renderer?.mapping && <StructuralSuggestionMarkers
       positions={runtime.editor.positions}
       mapping={runtime.surface.renderer.mapping}
       containerElement={rootRef.current}
@@ -1897,7 +1933,7 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
       activeSuggestionId={activeSuggestionId}
       onSelectSuggestion={selectSuggestion}
     />}
-    {showReview && suggestionProvider && <SuggestionPanel
+    {showSuggestionsTool && <SuggestionPanel
       open={suggestionPanelOpen}
       onClose={() => { setSuggestionPanelOpen(false); setPendingSuggestInsertAt(null); }}
       document={runtime.editor.document}

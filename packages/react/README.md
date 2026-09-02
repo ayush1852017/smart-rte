@@ -96,6 +96,7 @@ export default App;
 | `defaultFont` | `string` | `undefined` | Default font family for the editor content |
 | `theme` | `"light" \| "dark"` | `"light"` | Built-in theme mode |
 | `className` | `string` | `undefined` | Custom CSS class for theming via CSS variable overrides |
+| `tools` | `Partial<ToolbarTools>` | every tool `true` | Hide individual toolbar tools (Bold, Video, Version history, etc.) — see [Hiding individual toolbar tools](#hiding-individual-toolbar-tools) below |
 
 ### Advanced Examples
 
@@ -116,6 +117,99 @@ import { ClassicEditor } from 'smartrte-react';
     checklist: true,
   }}
 />
+```
+
+#### Hiding individual toolbar tools
+
+The `table`/`media`/`formula` props above turn off a whole *capability* — no
+tables anywhere, or media/formulas removed from the schema entirely. If you
+just want a **smaller toolbar** while keeping every capability intact (e.g.
+hide Video, Audio, Version history, and Review for a specific product
+surface, without touching what content the editor can actually store), use
+`tools` instead. It's a plain object: name the tools you want off, everything
+else stays on by default. No wrapping, no CSS overrides, no forking the
+component.
+
+```tsx
+import { ClassicEditor } from 'smartrte-react';
+
+<ClassicEditor
+  tools={{
+    video: false,
+    audio: false,
+    versionHistory: false,
+    comments: false,
+    suggestions: false,
+  }}
+/>
+```
+
+**How it composes with everything else:** a tool only ever needs *both*
+things to be true to show up — your `tools` flag says yes, *and* whatever
+that tool actually depends on is present. So:
+
+- `tools.video`/`tools.audio`/`tools.image` also need a `mediaProvider` (or
+  `mediaManager`) to be configured at all — turning the flag on can't make
+  media insertion appear out of nowhere if you never wired up a provider.
+- `tools.versionHistory` also needs a `versionProvider`; `tools.comments`
+  needs a `commentProvider`; `tools.suggestions` needs a `suggestionProvider`.
+- `tools.insertTable` also needs the table capability to actually be enabled
+  (i.e. you haven't set `table={false}`) — you can't use `tools` to bring
+  back a capability you turned off elsewhere.
+
+In other words: `tools` can only ever hide something, never force something
+into existence that isn't otherwise configured. This means it's always safe
+to leave `tools` unset — every consumer who doesn't pass it sees the exact
+toolbar they see today.
+
+**Every toggleable key**, grouped the way they appear in the toolbar:
+
+```ts
+interface ToolbarTools {
+  // Text formatting
+  bold, italic, underline, strikethrough, code,
+  superscript, subscript, textColor, backgroundColor, fontSize, fontFamily,
+
+  // Paragraph
+  blockType,   // the Paragraph/Heading/Code block dropdown
+  alignLeft, alignCenter, alignRight, alignJustify, quote,
+
+  // Lists
+  bulletedList, numberedList, checklist,
+  listPreset,  // the numbered-list style picker (1,2,3 / a,b,c / i,ii,iii / A,B,C / I,II,III)
+
+  // Insert
+  link, removeLink, image, video, audio, insertFormula, specialCharacters, insertTable,
+
+  // Document
+  import,
+  saveAsHtml, saveAsMarkdown, saveAsWord, saveAsPdf, saveAsSmartRte,
+  versionHistory, comments, suggestions,
+
+  // History
+  undo, redo,
+}
+```
+
+A few notes on what's *not* in this list, on purpose: actions that only ever
+apply to something you already have selected — moving a block up/down,
+indenting a list item, adding/removing a table row or column, resizing a
+selected image — aren't individually toggleable. They only make sense as
+part of using the tool that created them (a table, a list, an image), so
+they follow that tool's own visibility rather than needing a separate flag
+each. If you turn off `insertTable`, its row/column tools go with it
+automatically — there's no separate flag to remember.
+
+If you're using the exported `CanonicalAuthorityEditor` directly instead of
+`ClassicEditor`, `tools` works exactly the same way. And if you're using the
+standalone embed (`window.SmartRTE.ClassicEditor.init(...)`), pass `tools`
+in the same options object you pass `target`/`value`/etc.
+
+```ts
+window.SmartRTE.ClassicEditor.init({
+  target: document.getElementById('editor'),
+  tools: { video: false, audio: false },
+});
 ```
 
 #### Complete Example with All Features

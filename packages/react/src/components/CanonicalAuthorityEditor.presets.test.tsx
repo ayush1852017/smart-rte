@@ -43,4 +43,16 @@ describe("CanonicalAuthorityEditor: preset-driven toolbar gating", () => {
 
     act(() => root.unmount());
   });
+
+  it("allows developers to hide Version History and Review controls via the tools prop", () => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    act(() => root.render(<CanonicalAuthorityEditor defaultValue="<p>hi</p>" tools={{ versionHistory: false, comments: false, suggestions: false }} />));
+
+    expect(host.querySelector('[aria-label="Version history"]')).toBeNull();
+    expect(Array.from(host.querySelectorAll("summary")).some((el) => el.textContent?.includes("Review"))).toBe(false);
+
+    act(() => root.unmount());
+  });
 });

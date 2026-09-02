@@ -4,6 +4,7 @@ import { foundationSchema, parseCanonicalListHtml, serializeCanonicalListHtml } 
 import { ClassicEditor as ClassicEditorComponent } from "../components/ClassicEditorAuthority.js";
 import type { SmartEditorHandle } from "../canonicalEditorRuntime.js";
 import type { SrteTheme } from "../theme.js";
+import type { ToolbarTools } from "../toolbarTools.js";
 
 type InitOptions = {
   target: HTMLElement;
@@ -16,6 +17,8 @@ type InitOptions = {
   media?: boolean;
   formula?: boolean;
   showFontSize?: boolean;
+  /** Per-tool toolbar visibility - see toolbarTools.ts. Replaces the old, retired showVersionHistory/showReview flags with the same general mechanism CanonicalAuthorityEditor itself uses. */
+  tools?: Partial<ToolbarTools>;
   // Optional: a callback to receive change events
   onChange?: (html: string) => void;
   theme?: SrteTheme;
@@ -41,6 +44,7 @@ function ClassicEditorHost(
     media?: boolean;
     formula?: boolean;
     showFontSize?: boolean;
+    tools?: Partial<ToolbarTools>;
     onChange?: (html: string) => void;
     theme?: SrteTheme;
     className?: string;
@@ -109,6 +113,7 @@ function ClassicEditorHost(
         media={props.media}
         formula={props.formula}
         showFontSize={props.showFontSize}
+        tools={props.tools}
         theme={props.theme}
         className={props.className}
       />
