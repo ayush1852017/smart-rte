@@ -428,9 +428,13 @@ export const SRTE_DEFAULT_CSS = `
   .srte-toolbar-group[data-srte-priority="3"],
   .srte-toolbar-menu[data-srte-priority="2"] { display: none; }
   .srte-mobile-more { display: block; }
+  /* left/top are no longer set here - ToolbarPrimitives.tsx now computes
+     them via inline style (JS-measured, position:fixed, viewport-clamped;
+     see MobileMoreMenu's own doc comment), which always wins over any
+     value set here regardless of specificity or source order. Sizing/
+     scroll behavior stays defined here since inline positioning doesn't
+     touch those properties. */
   .srte-mobile-more .srte-menu {
-    left: auto;
-    right: 0;
     width: min(280px, calc(100vw - 16px));
     min-width: 0;
     max-height: min(70dvh, 480px);

@@ -287,14 +287,63 @@ export function ToolbarGroup({ priority, children }: { priority?: 3; children: R
  * primary row starts shedding groups - this is plain CSS visibility
  * toggling of pre-rendered content, not JS media-query logic, matching how
  * the rest of this responsive system already works.
+ *
+ * The panel itself renders `position: fixed` with JS-measured coordinates,
+ * the same fix and reasoning as `ToolbarDropdown` (docs/bugs/
+ * toolbar-dropdown-clipped-by-host-overflow-hidden.md) - this component was
+ * NOT covered by that fix at the time (incorrectly assumed to be
+ * unaffected since it already had its own separate mobile CSS), but it has
+ * the exact same `position: absolute` vulnerability to a host's own
+ * `overflow: hidden` container, and since this is the ONLY toolbar
+ * overflow affordance on narrow viewports (every ToolbarDropdown hides
+ * entirely below the mobile breakpoint), a clipped host is more likely to
+ * matter here, not less. Confirmed live: a real narrow host wrapping the
+ * editor in `overflow: hidden` computed this panel at `left: -214px` -
+ * mostly off-screen, functionally invisible despite being technically
+ * present in the DOM.
  */
 export function MobileMoreMenu({ children }: { children: React.ReactNode }) {
   const detailsRef = useRef<HTMLDetailsElement | null>(null);
   useDismissDetailsOnOutsideClick(detailsRef);
+  const [placement, setPlacement] = useState<{ left: number; top: number } | null>(null);
+
+  useLayoutEffect(() => {
+    const details = detailsRef.current;
+    if (!details) return;
+    const recompute = () => {
+      if (!details.open) { setPlacement(null); return; }
+      const margin = 8;
+      const triggerRect = details.getBoundingClientRect();
+      const menu = details.querySelector<HTMLElement>(":scope > .srte-menu");
+      const menuWidth = menu?.offsetWidth ?? Math.min(280, window.innerWidth - 16);
+      const menuHeight = menu?.offsetHeight ?? 0;
+      const viewportWidth = window.innerWidth;
+      const viewportHeight = window.innerHeight;
+      // Right-aligned to the trigger, matching this menu's original
+      // CSS-only `right: 0` intent - clamped into the viewport instead of
+      // being allowed to run off it or get clipped by an ancestor.
+      const preferredLeft = triggerRect.right - menuWidth;
+      const left = Math.min(Math.max(margin, preferredLeft), Math.max(margin, viewportWidth - menuWidth - margin));
+      const overflowsBottom = triggerRect.bottom + 6 + menuHeight > viewportHeight - margin;
+      const top = overflowsBottom ? Math.max(margin, triggerRect.top - menuHeight - 6) : triggerRect.bottom + 6;
+      setPlacement({ left, top });
+    };
+    recompute();
+    details.addEventListener("toggle", recompute);
+    return () => details.removeEventListener("toggle", recompute);
+  }, []);
+
   return <details ref={detailsRef} className="srte-toolbar-menu srte-mobile-more">
     <summary className="srte-tool-button srte-menu-trigger" aria-label="More tools" onMouseDown={(event) => event.preventDefault()}>
       {toolbarIcons.more}
     </summary>
-    <div className="srte-menu" role="menu">{children}</div>
+    <div
+      className="srte-menu"
+      role="menu"
+      data-srte-menu-fixed="true"
+      style={{ left: placement?.left ?? 0, top: placement?.top ?? 0, visibility: placement ? "visible" : "hidden" }}
+    >
+      {children}
+    </div>
   </details>;
 }

@@ -859,3 +859,72 @@ test.describe("toolbar dropdown menu: not clipped by a host's own overflow: hidd
     await expect(dropdown).not.toHaveAttribute("open", "");
   });
 });
+
+/**
+ * docs/bugs/mobile-more-menu-clipped-and-missing-list-preset.md
+ *
+ * MobileMoreMenu (the narrow-viewport "..." kebab overflow trigger) had the
+ * exact same position:absolute-clipped-by-host-overflow:hidden vulnerability
+ * as ToolbarDropdown (the test above) - it was NOT covered by that earlier
+ * fix, incorrectly assumed to be unaffected. Since this is the ONLY
+ * overflow affordance on narrow viewports (every ToolbarDropdown hides
+ * entirely below the mobile breakpoint), a clipped host matters here even
+ * more, not less: reported live at `left: -214px`, mostly off-screen.
+ */
+test.describe("mobile 'More tools' kebab menu: not clipped by a host's overflow:hidden, and includes the List preset control", () => {
+  test("the kebab menu is position:fixed and stays fully within the viewport inside a narrow overflow:hidden host", async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 700 });
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    await page.waitForSelector(".srte-toolbar");
+
+    await page.evaluate(() => {
+      const root = document.querySelector<HTMLElement>(".srte-root.srte-editor")!;
+      const host = document.createElement("div");
+      host.className = "smartrte-container";
+      host.style.width = "375px";
+      host.style.overflow = "hidden";
+      root.parentNode!.insertBefore(host, root);
+      host.appendChild(root);
+    });
+
+    await page.locator(".srte-mobile-more > summary").click();
+    const menu = page.locator(".srte-mobile-more .srte-menu");
+    await expect(menu).toBeVisible();
+    expect(await menu.evaluate((el) => getComputedStyle(el).position)).toBe("fixed");
+
+    const box = await menu.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.x, "menu left edge must be within the viewport, not off-screen").toBeGreaterThanOrEqual(0);
+    expect(box!.x + box!.width, "menu right edge must be within the viewport").toBeLessThanOrEqual(375);
+
+    // Genuinely usable, not just positioned correctly - matches the other
+    // clipped-menu regression's own "click a real item" check.
+    await page.getByRole("menuitem", { name: "Move block down", exact: true }).click();
+    await expect(page.locator(".srte-mobile-more")).not.toHaveAttribute("open", "");
+  });
+
+  test("the List preset control (decimal/alpha/roman/outline styles) is reachable from the mobile menu, not desktop-only", async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 700 });
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    await page.waitForSelector(".srte-toolbar");
+
+    // Numbered list is a plain always-visible ToolbarButton (not gated
+    // behind any dropdown/mobile-menu), so this must happen with the kebab
+    // menu closed - the open menu is a position:fixed, high-z-index
+    // overlay that would otherwise intercept this click.
+    await selectFirstText(page);
+    await page.getByRole("button", { name: "Numbered list" }).click();
+
+    await page.locator(".srte-mobile-more > summary").click();
+    const mobilePresetSelect = page.locator(".srte-mobile-more select[aria-label='List preset']");
+    await expect(mobilePresetSelect).toBeVisible();
+    await mobilePresetSelect.selectOption("ordered-upper-alpha");
+
+    const listStyle = await page.evaluate(() => {
+      const runtime = (window as typeof window & { __smartProductCanonical?: { editor: { document: { children: Array<{ type: string; attrs?: Record<string, unknown> }> } } } }).__smartProductCanonical!;
+      const list = runtime.editor.document.children.find((node) => node.type === "list");
+      return list?.attrs?.preset;
+    });
+    expect(listStyle).toBe("ordered-upper-alpha");
+  });
+});

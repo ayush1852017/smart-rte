@@ -141,7 +141,11 @@ export interface CanonicalAuthorityEditorProps {
    * for images too.
    */
   mediaManager?: boolean;
-  /** Host-owned save/list/load/remove boundary for document version history. Absent hides the version-history toolbar button entirely, mirroring mediaProvider's absent-disables-the-feature contract. */
+  /** Whether to show the Version History toolbar control and panel. Defaults to true. */
+  showVersionHistory?: boolean;
+  /** Whether to show the Review toolbar control and review panels/markers. Defaults to true. */
+  showReview?: boolean;
+  /** Host-owned save/list/load/remove boundary for document version history. */
   versionProvider?: VersionProvider;
   /** Host-owned save/list/remove boundary for comment threads. Absent hides the comment toolbar buttons and markers entirely, mirroring versionProvider's absent-disables-the-feature contract. */
   commentProvider?: CommentProvider;
@@ -257,6 +261,8 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
   mediaProvider,
   mediaPicker: MediaPicker = DefaultMediaPicker,
   mediaManager = true,
+  showVersionHistory = true,
+  showReview = true,
   versionProvider,
   commentProvider,
   suggestionProvider,
@@ -1616,6 +1622,32 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
     <ToolbarMenuItem icon="indent" label="Indent block" disabled={readOnly} onClick={() => runBlock("indent")} />
     <ToolbarMenuItem icon="outdent" label="Outdent block" disabled={readOnly} onClick={() => runBlock("outdent")} />
   </>;
+  /**
+   * Named multi-level marker presets (decimal/lower-alpha/upper-alpha/
+   * roman/outline) - a distinct control from the plain Bulleted/Numbered/
+   * Checklist buttons above, which only toggle a raw list style. Extracted
+   * to a variable so it can be reused verbatim in both the desktop "More
+   * list tools" dropdown and MobileMoreMenu below - it was previously
+   * hardcoded only into the dropdown, meaning a narrow/mobile viewport
+   * (where every ToolbarDropdown hides entirely, per theme.ts's
+   * 639px breakpoint) had no way to reach it at all - see
+   * docs/bugs/list-preset-missing-from-mobile-more-menu.md.
+   */
+  const listPresetSelect = <div style={{ padding: "4px 8px" }}>
+    <select aria-label="List preset" title="List type / preset" disabled={readOnly || currentListParts.length !== 1} value={currentListPreset} onChange={(event) => {
+      const preset = event.target.value;
+      if (!preset || currentListParts.length !== 1) return;
+      // A preset choice applies to the whole list, regardless of how deep
+      // the cursor is nested — see outermostListId.
+      const rootId = outermostListId(currentListParts[0].listId);
+      runtime.executeOperations(setListPreset(runtime.editor.document, { ...currentListParts[0], listId: rootId }, { preset }, blockContext()), { preserveSelectionById: true });
+    }} style={{ width: "100%" }}>
+      <option value="">List preset</option>
+      {SMART_LIST_PRESETS.map((preset) => <option key={preset.id} value={preset.id}>
+        {preset.kind === "bullet" ? `Bullet · ${preset.label}` : `Number · ${preset.label}`}
+      </option>)}
+    </select>
+  </div>;
   const listToolsMenuItems = <>
     <ToolbarMenuItem icon="checkSquare" label="Check selected items" pressed={currentListScope.kind === "list-selection" && currentListScope.items.every((item) => findNode(runtime.editor.document, item.itemId)?.attrs?.checked === true)} disabled={readOnly || currentList?.attrs?.checkable !== true} onClick={toggleCheckedItems} />
     <ToolbarMenuItem icon="indent" label="Indent list item" disabled={readOnly || !canIndent} onClick={() => runList("indent")} />
@@ -1758,21 +1790,7 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
         <ToolbarButton icon="numberedList" label="Numbered list" ariaLabel="Numbered list" pressed={listStyleActive("decimal")} disabled={readOnly} onClick={() => toggleList("decimal")} />
         <ToolbarButton icon="checklist" label="Checklist" ariaLabel="Checklist" pressed={listStyleActive("disc", true)} disabled={readOnly} onClick={() => toggleList("disc", true)} />
         <ToolbarDropdown icon="restart" label="More list tools" priority={2}>
-          <div style={{ padding: "4px 8px" }}>
-            <select aria-label="List preset" title="List type / preset" disabled={readOnly || currentListParts.length !== 1} value={currentListPreset} onChange={(event) => {
-              const preset = event.target.value;
-              if (!preset || currentListParts.length !== 1) return;
-              // A preset choice applies to the whole list, regardless of how deep
-              // the cursor is nested — see outermostListId.
-              const rootId = outermostListId(currentListParts[0].listId);
-              runtime.executeOperations(setListPreset(runtime.editor.document, { ...currentListParts[0], listId: rootId }, { preset }, blockContext()), { preserveSelectionById: true });
-            }} style={{ width: "100%" }}>
-              <option value="">List preset</option>
-              {SMART_LIST_PRESETS.map((preset) => <option key={preset.id} value={preset.id}>
-                {preset.kind === "bullet" ? `Bullet · ${preset.label}` : `Number · ${preset.label}`}
-              </option>)}
-            </select>
-          </div>
+          {listPresetSelect}
           <div className="srte-menu-separator" />
           {listToolsMenuItems}
         </ToolbarDropdown>
@@ -1813,8 +1831,8 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
       <ToolbarGroup>
         <ToolbarButton icon="import" label="Import" ariaLabel="Import document" disabled={readOnly} onClick={() => importRef.current?.click()} />
         <ToolbarDropdown icon="saveCopy" label="Save a copy" priority={2}>{saveCopyMenuItems}</ToolbarDropdown>
-        <ToolbarButton icon="history" label="Version history" ariaLabel="Version history" disabled={readOnly || !versionProvider} onClick={() => setVersionHistoryOpen(true)} />
-        <ToolbarDropdown icon="comments" label="Review" priority={2}>{reviewMenuItems}</ToolbarDropdown>
+        {showVersionHistory && <ToolbarButton icon="history" label="Version history" ariaLabel="Version history" disabled={readOnly || !versionProvider} onClick={() => setVersionHistoryOpen(true)} />}
+        {showReview && <ToolbarDropdown icon="comments" label="Review" priority={2}>{reviewMenuItems}</ToolbarDropdown>}
       </ToolbarGroup>
 
       <ToolbarGroup>
@@ -1827,14 +1845,14 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
         <div className="srte-menu-separator" />
         {paragraphToolsMenuItems}
         <div className="srte-menu-separator" />
+        {listPresetSelect}
         {listToolsMenuItems}
         <div className="srte-menu-separator" />
         {insertMoreMenuItems}
         {tablesEnabled && <><div className="srte-menu-separator" />{tableToolsMenuItems}</>}
         <div className="srte-menu-separator" />
         {saveCopyMenuItems}
-        <div className="srte-menu-separator" />
-        {reviewMenuItems}
+        {showReview && <><div className="srte-menu-separator" />{reviewMenuItems}</>}
       </MobileMoreMenu>
     </div>
     {mediaKind === "image" && mediaManager && mediaProvider && <MediaManager
@@ -1844,13 +1862,13 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
       onSelect={selectFromMediaManager}
     />}
     {mediaKind && mediaProvider && !(mediaKind === "image" && mediaManager) && <MediaPicker kind={mediaKind} onPick={(file) => void insertMediaFile(mediaKind, file)} onCancel={() => setMediaKind(null)} />}
-    {versionProvider && <VersionHistoryPanel
+    {showVersionHistory && versionProvider && <VersionHistoryPanel
       open={versionHistoryOpen}
       onClose={() => setVersionHistoryOpen(false)}
       runtime={runtime}
       versionProvider={versionProvider}
     />}
-    {commentProvider && rootRef.current && runtime.surface.renderer?.mapping && <CommentMarkers
+    {showReview && commentProvider && rootRef.current && runtime.surface.renderer?.mapping && <CommentMarkers
       positions={runtime.editor.positions}
       mapping={runtime.surface.renderer.mapping}
       containerElement={rootRef.current}
@@ -1858,7 +1876,7 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
       activeThreadId={activeThreadId}
       onSelectThread={selectThread}
     />}
-    {commentProvider && <CommentThreadPanel
+    {showReview && commentProvider && <CommentThreadPanel
       open={commentPanelOpen}
       onClose={() => { setCommentPanelOpen(false); setPendingCommentRange(null); }}
       threads={threads}
@@ -1871,7 +1889,7 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
       onDelete={deleteThread}
       busyThreadId={busyThreadId}
     />}
-    {suggestionProvider && rootRef.current && runtime.surface.renderer?.mapping && <StructuralSuggestionMarkers
+    {showReview && suggestionProvider && rootRef.current && runtime.surface.renderer?.mapping && <StructuralSuggestionMarkers
       positions={runtime.editor.positions}
       mapping={runtime.surface.renderer.mapping}
       containerElement={rootRef.current}
@@ -1879,7 +1897,7 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
       activeSuggestionId={activeSuggestionId}
       onSelectSuggestion={selectSuggestion}
     />}
-    {suggestionProvider && <SuggestionPanel
+    {showReview && suggestionProvider && <SuggestionPanel
       open={suggestionPanelOpen}
       onClose={() => { setSuggestionPanelOpen(false); setPendingSuggestInsertAt(null); }}
       document={runtime.editor.document}
