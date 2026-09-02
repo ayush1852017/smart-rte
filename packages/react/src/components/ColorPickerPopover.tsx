@@ -1,4 +1,5 @@
 import React, { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { getFixedPositioningOrigin } from "./fixedPositioning.js";
 
 export interface ColorPickerPopoverProps {
   x: number;
@@ -162,7 +163,8 @@ export function ColorPickerPopover({ x, y, label, initialValue = "#000000", rece
     const overflowsBottom = y + height > viewportHeight - margin;
     const top = overflowsBottom ? y - height : y;
     const clampedTop = Math.min(Math.max(margin, top), Math.max(margin, viewportHeight - margin));
-    setPlacement({ left: clampedLeft, top: clampedTop });
+    const origin = getFixedPositioningOrigin(el);
+    setPlacement({ left: clampedLeft - origin.left, top: clampedTop - origin.top });
   }, [x, y]);
 
   const stage = (nextHsv: [number, number, number]) => {

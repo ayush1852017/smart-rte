@@ -7,6 +7,7 @@ import {
   Sigma, Strikethrough, Subscript, Superscript, Table2, Trash2, Type, Underline, Undo2, Unlink2, Upload, Video,
   Pencil, ZoomIn, ZoomOut,
 } from "lucide-react";
+import { getFixedPositioningOrigin } from "./fixedPositioning.js";
 
 /**
  * The toolbar's icon set (Phase: Direction B toolbar redesign, 2026-08-29).
@@ -215,9 +216,12 @@ const useDismissDetailsOnOutsideClick = (ref: React.RefObject<HTMLDetailsElement
  * anchored inside that container gets visually clipped the moment it needs
  * to extend past the container's own bounds, which is exactly when a
  * narrow host is most likely to need the dropdown in the first place.
- * `position: fixed`'s containing block is the viewport (barring an
- * ancestor with its own transform/filter, not the case here), so it always
- * escapes ANY ancestor's overflow clipping regardless of DOM depth.
+ * `position: fixed`'s containing block is normally the viewport, so this
+ * escapes ANY ancestor's overflow clipping regardless of DOM depth - unless
+ * an ancestor has its own transform/perspective/filter, which becomes the
+ * containing block instead (see fixedPositioning.ts, and
+ * docs/bugs/toolbar-menu-misplaced-inside-transformed-ancestor.md); the
+ * placement math below accounts for that case too.
  */
 export function ToolbarDropdown({ icon, label, priority, children }: {
   icon?: ToolbarIconKey;
@@ -245,7 +249,8 @@ export function ToolbarDropdown({ icon, label, priority, children }: {
       const left = Math.min(Math.max(margin, triggerRect.left), Math.max(margin, viewportWidth - menuWidth - margin));
       const overflowsBottom = triggerRect.bottom + 6 + menuHeight > viewportHeight - margin;
       const top = overflowsBottom ? Math.max(margin, triggerRect.top - menuHeight - 6) : triggerRect.bottom + 6;
-      setPlacement({ left, top });
+      const origin = getFixedPositioningOrigin(details);
+      setPlacement({ left: left - origin.left, top: top - origin.top });
     };
     recompute();
     details.addEventListener("toggle", recompute);
@@ -326,7 +331,8 @@ export function MobileMoreMenu({ children }: { children: React.ReactNode }) {
       const left = Math.min(Math.max(margin, preferredLeft), Math.max(margin, viewportWidth - menuWidth - margin));
       const overflowsBottom = triggerRect.bottom + 6 + menuHeight > viewportHeight - margin;
       const top = overflowsBottom ? Math.max(margin, triggerRect.top - menuHeight - 6) : triggerRect.bottom + 6;
-      setPlacement({ left, top });
+      const origin = getFixedPositioningOrigin(details);
+      setPlacement({ left: left - origin.left, top: top - origin.top });
     };
     recompute();
     details.addEventListener("toggle", recompute);

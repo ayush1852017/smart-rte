@@ -1,5 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ColorPickerPopover } from "./ColorPickerPopover.js";
+import { getFixedPositioningOrigin } from "./fixedPositioning.js";
 
 export type BorderStyle = "solid" | "dashed" | "dotted";
 export interface BorderSides { top: boolean; right: boolean; bottom: boolean; left: boolean }
@@ -96,7 +97,8 @@ export function TableBorderPopover({ x, y, initial, recentColors, onPreview, onA
     const overflowsBottom = y + height > viewportHeight - margin;
     const top = overflowsBottom ? y - height : y;
     const clampedTop = Math.min(Math.max(margin, top), Math.max(margin, viewportHeight - margin));
-    setPlacement({ left: clampedLeft, top: clampedTop });
+    const origin = getFixedPositioningOrigin(el);
+    setPlacement({ left: clampedLeft - origin.left, top: clampedTop - origin.top });
   }, [x, y]);
 
   useEffect(() => {

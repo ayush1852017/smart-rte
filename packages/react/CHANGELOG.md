@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.0-beta.9
+
+- Fix toolbar dropdowns, the mobile "More tools" kebab menu, and the text/background colour and table-border popovers rendering far from their own trigger when the editor is embedded inside a host container that has its own CSS `transform` on an ancestor - e.g. a Radix/shadcn `Dialog`'s own centering transform. These overlays now correctly account for the resulting change of containing block instead of assuming it's always the viewport.
+
 ## 1.0.0-beta.8
 
 - Add a `tools` prop (`ClassicEditor`, `CanonicalAuthorityEditor`, and the standalone embed) letting a host hide any individual toolbar tool — Bold, Video, Version history, Review, and around 40 others — without wrapping or restyling the component. Every tool is visible by default; composes with existing gates (a required provider or capability must still be present). See the README's "Hiding individual toolbar tools" section for the full list and usage.

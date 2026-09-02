@@ -928,3 +928,108 @@ test.describe("mobile 'More tools' kebab menu: not clipped by a host's overflow:
     expect(listStyle).toBe("ordered-upper-alpha");
   });
 });
+
+/**
+ * docs/bugs/toolbar-menu-misplaced-inside-transformed-ancestor.md
+ *
+ * `position: fixed`'s containing block is normally the viewport - but a
+ * `transform` on any ancestor becomes the containing block instead, which
+ * is exactly what a Radix/shadcn `Dialog` applies for its own centering
+ * (`fixed top-[50%] left-[50%] translate-x-[-50%] translate-y-[-50%]`).
+ * A real Sootr host embeds the editor inside such a dialog (e.g. editing a
+ * question), and every JS-measured `position: fixed` overlay in this
+ * codebase (ToolbarDropdown, MobileMoreMenu, ColorPickerPopover,
+ * TableBorderPopover) computed its `left`/`top` in viewport space without
+ * accounting for this, so the overlay rendered at the right coordinates
+ * relative to the *dialog*, landing far from its trigger and often near the
+ * wrong edge of the actual browser window - reported live as "kebab menu
+ * overlay showing out of position".
+ */
+// A menu may legitimately flip above its trigger instead of below (both
+// ToolbarDropdown and MobileMoreMenu do this once there isn't room below,
+// e.g. a tall menu inside a short viewport) - what matters for this bug is
+// that the menu sits immediately adjacent to its trigger either way, not
+// hundreds of pixels off in the wrong direction.
+type Box = { x: number; y: number; width: number; height: number };
+const expectAdjacentVertically = (menuBox: Box, triggerBox: Box) => {
+  const gapBelow = menuBox.y - (triggerBox.y + triggerBox.height);
+  const gapAbove = triggerBox.y - (menuBox.y + menuBox.height);
+  expect(Math.min(Math.abs(gapBelow), Math.abs(gapAbove))).toBeLessThan(50);
+};
+
+test.describe("toolbar overlays: correctly positioned inside a transformed ancestor (e.g. a host's centering dialog)", () => {
+  const wrapInTransformedDialogHost = (page: Page, width: number) => page.evaluate((width) => {
+    const root = document.querySelector<HTMLElement>(".srte-root.srte-editor")!;
+    const host = document.createElement("div");
+    host.setAttribute("data-test-transformed-dialog-host", "true");
+    host.style.position = "fixed";
+    host.style.top = "50%";
+    host.style.left = "50%";
+    host.style.transform = "translate(-50%, -50%)";
+    host.style.width = `${width}px`;
+    root.parentNode!.insertBefore(host, root);
+    host.appendChild(root);
+  }, width);
+
+  test("a desktop dropdown lands next to its own trigger, not off in a corner", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    await page.waitForSelector(".srte-toolbar");
+    await wrapInTransformedDialogHost(page, 700);
+
+    const dropdown = page.locator("details.srte-toolbar-menu", { has: page.locator("summary", { hasText: "More text styles" }) });
+    const triggerBox = (await dropdown.locator("summary").boundingBox())!;
+    await dropdown.locator("summary").click();
+    const menu = page.locator("details.srte-toolbar-menu[open] > .srte-menu[data-srte-menu-fixed=\"true\"]");
+    await expect(menu).toBeVisible();
+    expect(await menu.evaluate((el) => getComputedStyle(el).position)).toBe("fixed");
+    const menuBox = (await menu.boundingBox())!;
+
+    expect(Math.abs(menuBox.x - triggerBox.x)).toBeLessThan(250);
+    expectAdjacentVertically(menuBox, triggerBox);
+
+    await dropdown.getByRole("menuitem", { name: "Text colour", exact: true }).click();
+    await expect(dropdown).not.toHaveAttribute("open", "");
+  });
+
+  test("the mobile 'More tools' kebab menu lands next to its own trigger, not off in a corner", async ({ page }) => {
+    // Tall enough that the whole transformed dialog host (which sizes to
+    // its full editor content) fits without itself being pushed off-screen
+    // top/bottom - this test is about the transform/containing-block bug,
+    // not about simulating a dialog's own internal scrolling.
+    await page.setViewportSize({ width: 500, height: 1400 });
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    await page.waitForSelector(".srte-toolbar");
+    await wrapInTransformedDialogHost(page, 375);
+
+    const trigger = page.locator(".srte-mobile-more > summary");
+    const triggerBox = (await trigger.boundingBox())!;
+    await trigger.click();
+    const menu = page.locator(".srte-mobile-more .srte-menu");
+    await expect(menu).toBeVisible();
+    expect(await menu.evaluate((el) => getComputedStyle(el).position)).toBe("fixed");
+    const menuBox = (await menu.boundingBox())!;
+
+    expect(Math.abs(menuBox.x - triggerBox.x)).toBeLessThan(250);
+    expectAdjacentVertically(menuBox, triggerBox);
+
+    await page.getByRole("menuitem", { name: "Move block down", exact: true }).click();
+    await expect(page.locator(".srte-mobile-more")).not.toHaveAttribute("open", "");
+  });
+
+  test("the text colour popover lands next to its trigger", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    await selectFirstText(page);
+    await wrapInTransformedDialogHost(page, 700);
+
+    await openToolbarDropdown(page, "More text styles");
+    const item = toolbarMenuItem(page, "Text colour");
+    const itemBox = (await item.boundingBox())!;
+    await item.click();
+    const popover = page.locator('[data-srte-color-popover="true"]');
+    await expect(popover).toBeVisible();
+    const popoverBox = (await popover.boundingBox())!;
+
+    expect(Math.abs(popoverBox.x - itemBox.x)).toBeLessThan(80);
+    expect(Math.abs(popoverBox.y - itemBox.y)).toBeLessThan(80);
+  });
+});
