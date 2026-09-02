@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.0-beta.7
+
+- Fix the mobile "More tools" overflow menu getting clipped almost entirely off-screen when the editor is embedded inside a host container with `overflow: hidden` — the same fix already applied to the desktop toolbar dropdowns, now also covering this menu (the only overflow affordance on narrow viewports).
+- Add the "List preset" control (decimal/lower-alpha/upper-alpha/roman-numeral/outline numbering styles, plus bullet-glyph presets) to the mobile "More tools" menu — previously only reachable from the desktop toolbar's "More list tools" dropdown, leaving narrow-viewport users with no way to use anything beyond plain bulleted/numbered/checklist lists.
+
 ## 1.0.0-beta.6
 
 - Replace the media Edit overlay's plain alt-text prompt with a full "Media details" panel: link (with open-in-new-tab), corner radius, alignment, and license fields (description, source URL, type, version, attribution), matching the pre-canonical editor's own edit-panel field set. A library-picked image's existing license metadata is now carried onto the inserted atom instead of being discarded. Depends on `smartrte-core@1.0.0-beta.3`.
