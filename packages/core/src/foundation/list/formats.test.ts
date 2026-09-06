@@ -248,6 +248,59 @@ describe("Phase 3 list format fidelity", () => {
   });
 
   /**
+   * Real Sootr content authored in the pre-migration legacy editor, reported
+   * live: "Some old sootr content is not proper rendering to editor",
+   * screenshot showing a real document with dozens of `[Unsupported: span]`
+   * placeholders and one `[Unsupported: b]` where real text should be.
+   * Unlike the blockquote/div-wrapped-table fix above, this content has
+   * bare <span>/<b> lines sitting DIRECTLY AT THE DOCUMENT ROOT (and inside
+   * <div> wrappers at the root), interleaved with real blocks (another
+   * <blockquote>, a nested <blockquote> at the very end) - the root parser
+   * had no inline fallback at all before this fix, and a naive single
+   * "collect every root-level inline child into one paragraph" fallback
+   * would have merged dozens of unrelated lines together and reordered them
+   * relative to the two blockquotes.
+   */
+  it("parses a real legacy Sootr export with bare inline content interleaved with blocks at the document root, instead of falling back to unknown nodes", () => {
+    const html = readFileSync(new URL("../../../../react/e2e/fixtures/sootr-legacy-editor-bare-inline-export.html", import.meta.url), "utf8");
+    const doc = parseCanonicalListHtml(html);
+    const collect = (node: SmartDocument | SmartDocument["children"][number], out: unknown[] = []): unknown[] => {
+      out.push(node);
+      ("children" in node ? node.children || [] : []).forEach((child) => collect(child as SmartDocument["children"][number], out));
+      return out;
+    };
+    const all = collect(doc) as Array<{ type: string; text?: string; marks?: Array<{ type: string }> }>;
+    expect(all.filter((node) => node.type === "unknown")).toEqual([]);
+
+    const fullText = all.filter((node) => node.type === "text").map((node) => node.text).join(" ");
+    // Lines that were bare root-level <span>/<b> content in the source,
+    // spanning the full document from the opening blockquote through the
+    // very last, deeply nested one.
+    expect(fullText).toContain("What you have to learn:");
+    expect(fullText).toContain("Digestive system components");
+    expect(fullText).toContain("alimentary canal (digestive canal or gastrointestinal tract)");
+    expect(fullText).toContain("Alimentary canal:");
+    expect(fullText).toContain("Accessory digestive organs");
+    expect(fullText).toContain("Lower digestive tract:");
+    expect(fullText).toContain("Nursing relevance:");
+    expect(fullText).toContain("The organisation of the digestive system");
+
+    // Bold marks on bare root-level <b> text must survive, not just the text.
+    const boldTexts = all.filter((node) => node.type === "text" && node.marks?.some((mark) => mark.type === "bold")).map((node) => node.text);
+    expect(boldTexts.some((text) => text?.includes("Digestive system components"))).toBe(true);
+    expect(boldTexts.some((text) => text?.includes("Nursing relevance:"))).toBe(true);
+
+    // Two real blockquotes (one opening, one at the very end, nested inside
+    // a <div>) must both survive as real blockquote nodes, not be
+    // flattened or dropped.
+    expect(all.filter((node) => node.type === "blockquote")).toHaveLength(2);
+
+    // The image inside the trailing <div> must survive as a real atom, not
+    // an unknown placeholder or lost text.
+    expect(all.some((node) => node.type === "image" || node.type === "block_image")).toBe(true);
+  });
+
+  /**
    * 2026-08-26: reported as "images copied from the web render as
    * [Unsupported: img]". Confirmed via real captured clipboard HTML (an
    * actual Ctrl+C from a live Wikipedia page's infobox photo, driven

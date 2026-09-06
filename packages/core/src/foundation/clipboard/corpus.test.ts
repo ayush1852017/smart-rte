@@ -61,8 +61,17 @@ const fixtures = [
 // meant paste from Word/Google Docs/Google Sheets silently dropped ALL cell
 // border styling; it's now correctly captured. A genuine fidelity
 // improvement, not a regression - hashes updated to match.
+// word-macos hash changed again: parseCanonicalListHtml's root/blockquote/
+// td/li parsing (parseMixedBlockContent) now suppresses whitespace-only text
+// nodes sitting directly between block-level tags - e.g. the raw indentation
+// newline this fixture's own captured HTML has directly inside each <td>,
+// before its real <p>. Previously this became a spurious extra paragraph
+// containing only that whitespace; confirmed by inspecting the fixture's raw
+// HTML directly (`<td ...>` followed by a newline then `<p ...>`) that
+// dropping it is correct, matching ordinary browser whitespace-collapsing
+// between block elements, not a loss of real content.
 const expectedCanonicalHashes: Record<string, string> = {
-  "word-macos-clipboard.clipboard.json": "22d879f1",
+  "word-macos-clipboard.clipboard.json": "686def01",
   "google-docs-clipboard.clipboard.json": "bf053d8d",
   "google-sheets-clipboard.clipboard.json": "ea5704d2",
   "excel-clipboard.clipboard.json": "78a735fa",

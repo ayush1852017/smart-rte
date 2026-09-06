@@ -24,7 +24,7 @@ const isEditorUiNode = (node: HtmlNode) =>
  * meaningful block content - most often a <table> - in one or more <div>s
  * (table-wrapper divs, layout divs) that carry no semantic meaning of
  * their own. parseBlock has no case for any of these tags; see
- * parseBlockList below for how they're unwrapped instead of swallowed.
+ * parseMixedBlockContent below for how they're unwrapped instead of swallowed.
  */
 const TRANSPARENT_CONTAINER_TAGS = ["div", "section", "article", "figure"];
 
@@ -457,16 +457,10 @@ const parseBlock = (node: HtmlNode): SmartElementNode | null => {
   if (tag === "blockquote") {
     // Real-world exports (Sootr among them) put inline content - <span>
     // wrapper runs, bare text, <br> - directly inside <blockquote> with no
-    // wrapping <p>. Without this split, elementChildren+parseBlock alone
-    // sent every such child through the generic "unrecognized tag" fallback
-    // at the bottom of this function, producing an unknown block node per
-    // span (rendered as "[Unsupported: span]") instead of parsed text/marks
-    // - the same directInline pattern td/li already use below.
+    // wrapping <p>. See parseMixedBlockContent's own comment for why this
+    // must be grouped run-by-run rather than collected into one paragraph.
     const blockTags = ["p", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "blockquote", "pre", "table"];
-    const isBlockLike = (child: HtmlNode) => blockTags.includes(child.tagName || "") || TRANSPARENT_CONTAINER_TAGS.includes(child.tagName || "");
-    const children = parseBlockList(elementChildren(node).filter(isBlockLike));
-    const directInline = (node.childNodes || []).filter((child) => !child.tagName || !isBlockLike(child)).flatMap((child) => textWithMarks(child));
-    if (directInline.length) children.unshift({ type: "paragraph", id: createNodeId(), children: directInline });
+    const children = parseMixedBlockContent(node.childNodes || [], blockTags);
     return {
       type: "blockquote", id: generatedId(node, "quote"),
       ...(Object.keys(parsedBlockAttrs(node)).length ? { attrs: parsedBlockAttrs(node) } : {}),
@@ -544,10 +538,7 @@ const parseBlock = (node: HtmlNode): SmartElementNode | null => {
     if (textColor) cellAttrs.textColor = textColor;
     if (verticalAlign) cellAttrs.verticalAlign = verticalAlign;
     const blockTags = ["p", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "blockquote", "pre", "table"];
-    const isBlockLike = (child: HtmlNode) => blockTags.includes(child.tagName || "") || TRANSPARENT_CONTAINER_TAGS.includes(child.tagName || "");
-    const children = parseBlockList(elementChildren(node).filter(isBlockLike));
-    const directInline = (node.childNodes || []).filter((child) => !child.tagName || !isBlockLike(child)).flatMap((child) => textWithMarks(child));
-    if (directInline.length) children.unshift({ type: "paragraph", id: createNodeId(), children: directInline });
+    const children = parseMixedBlockContent(node.childNodes || [], blockTags);
     if (!children.length) children.push({ type: "paragraph", id: createNodeId(), children: [] });
     return { type: "table_cell", id: generatedId(node, "cell"), attrs: cellAttrs, children };
   }
@@ -585,16 +576,8 @@ const parseBlock = (node: HtmlNode): SmartElementNode | null => {
     const htmlStyle = withoutListMarkerStyle(attr(node, "style"));
     if (htmlStyle) attrs.htmlStyle = htmlStyle;
     if (Number.isInteger(value) && value >= 1) attrs.numberOverride = value;
-    const children: SmartElementNode[] = [];
-    const blockTags = ["p", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "blockquote", "pre", "div", "table", "figure"];
-    const inlineNodes = (node.childNodes || []).filter((child) => !child.tagName || !blockTags.includes(child.tagName));
-    const directText = inlineNodes.flatMap((child) => textWithMarks(child));
-    if (directText.length) children.push({ type: "paragraph", id: createNodeId(), children: directText });
-    // blockTags already lists "div"/"figure" as block-worthy, but parseBlock
-    // itself has no case for either - parseBlockList is what actually
-    // unwraps them (rather than swallowing their content into one opaque
-    // `unknown` node) instead of parsing them directly.
-    children.push(...parseBlockList(elementChildren(node).filter((child) => blockTags.includes(child.tagName || ""))));
+    const blockTags = ["p", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "blockquote", "pre", "table"];
+    const children = parseMixedBlockContent(node.childNodes || [], blockTags);
     if (!children.length) children.push({ type: "paragraph", id: createNodeId(), children: [] });
     return { type: "list_item", id: generatedId(node, "item"), ...(Object.keys(attrs).length ? { attrs } : {}), children };
   }
@@ -606,25 +589,107 @@ const parseBlock = (node: HtmlNode): SmartElementNode | null => {
 };
 
 /**
- * A thin wrapper around parseBlock for "list of block-level children"
- * call sites: a transparent container (TRANSPARENT_CONTAINER_TAGS) is
- * recursed into and its own children spliced in flat, rather than parsed
- * as one opaque node - a div wrapping N real blocks (a table, N
- * paragraphs, or nothing at all) produces exactly those N blocks instead
- * of a single `unknown` placeholder that hides all of them.
+ * Generic inline-formatting tags recognized by textWithMarks. Used by
+ * parseMixedBlockContent to decide when a bare (non-<p>-wrapped) element
+ * sitting at block level should be reinterpreted as inline text instead of
+ * left as parseBlock's own "unknown" round-trip-preserving placeholder.
+ * Deliberately narrow: an arbitrary/custom element (e.g. a host's own safe
+ * custom widget surviving the clipboard security boundary, see
+ * clipboard/pipeline.test.ts's "preserves a sanitized safe custom element
+ * as an unknown node") is NOT in this list, so it keeps going through the
+ * exact same "unknown" fallback as before - only tags that are
+ * unambiguously plain inline formatting ever get reinterpreted as text.
  */
-const parseBlockList = (nodes: readonly HtmlNode[]): SmartElementNode[] =>
-  nodes.flatMap((node) => {
-    if (TRANSPARENT_CONTAINER_TAGS.includes(node.tagName || "")) return parseBlockList(elementChildren(node));
+const GENERIC_INLINE_TAGS = ["span", "strong", "b", "em", "i", "u", "s", "strike", "del", "code", "sup", "sub", "a", "br"];
+
+/**
+ * Parses a mixed sequence of block and inline DOM children in place. A
+ * transparent container (TRANSPARENT_CONTAINER_TAGS) is recursed into and
+ * its own children spliced in flat, rather than parsed as one opaque node -
+ * a div wrapping N real blocks (a table, N paragraphs, or nothing at all)
+ * produces exactly those N blocks instead of a single `unknown` placeholder
+ * that hides all of them.
+ *
+ * Real-world exports (Sootr among them - both the document root and inside
+ * a <blockquote>/<td>/<li>) routinely put inline content - bare <span>
+ * wrapper runs, plain text, stray <br> - directly alongside real block
+ * children, with no wrapping <p>. Each *run* of consecutive non-block-like
+ * children is grouped into its own synthetic paragraph in place, preserving
+ * both the order of the surrounding real blocks and which inline runs were
+ * actually adjacent in the source. An earlier version of this function
+ * collected every inline child across the whole container into ONE
+ * paragraph and prepended it - correct only when inline content never
+ * appears between two blocks. Real legacy content interleaves several bare
+ * <span> lines between a <blockquote>, images, and paragraphs; merging them
+ * all into one paragraph at the front silently reordered content and
+ * mashed together lines that were never adjacent, and any other stray
+ * generic inline tag (e.g. a lone <b>) still fell through to the generic
+ * unrecognized-tag fallback and rendered as "[Unsupported: b]" wherever no
+ * caller-specific inline handling existed for it (previously: the document
+ * root, which had none at all).
+ *
+ * "a" is the one GENERIC_INLINE_TAGS entry with a real block-level meaning
+ * too - parseBlock's own "<a> wrapping only an <img>" case unwraps to a
+ * block image - so it's tried as a block first and only folded into the
+ * inline run if that doesn't apply.
+ */
+const parseMixedBlockContent = (nodes: readonly HtmlNode[], blockTags: readonly string[]): SmartElementNode[] => {
+  const result: SmartElementNode[] = [];
+  let inlineRun: HtmlNode[] = [];
+  const flushInlineRun = () => {
+    if (!inlineRun.length) return;
+    const children = inlineRun.flatMap((node) => textWithMarks(node));
+    inlineRun = [];
+    // A whitespace-only text node (a newline/indentation between block-level
+    // tags in pretty-printed source HTML - e.g. Word/Excel's real clipboard
+    // HTML) is insignificant, exactly like a browser's own whitespace
+    // collapsing between block elements - it must not produce its own
+    // spurious empty-looking paragraph. A run with any real text or any
+    // non-text child (an atom, a <br>) is kept in full, including any
+    // whitespace mixed into it (e.g. a genuine word-separating space).
+    const hasContent = children.some((child) => !isTextNode(child) || child.text.trim() !== "");
+    if (hasContent) result.push({ type: "paragraph", id: createNodeId(), children });
+  };
+  const pushBlock = (node: HtmlNode) => {
+    flushInlineRun();
     const parsed = parseBlock(node);
-    return parsed ? [parsed] : [];
+    if (parsed) result.push(parsed);
+  };
+  nodes.forEach((node) => {
+    // Matches textWithMarks's own first check - a UI-only element (e.g. a
+    // checklist item's check-control <button>) has no tag this function
+    // would otherwise recognize as block-like, and previously reached
+    // parseBlock's generic "unknown" fallback instead of being silently
+    // dropped like every other reparse path already does for these.
+    if (isEditorUiNode(node)) return;
+    const tag = node.tagName;
+    if (!tag) { inlineRun.push(node); return; }
+    if (TRANSPARENT_CONTAINER_TAGS.includes(tag)) {
+      flushInlineRun();
+      result.push(...parseMixedBlockContent(node.childNodes || [], blockTags));
+      return;
+    }
+    if (blockTags.includes(tag)) return pushBlock(node);
+    if (GENERIC_INLINE_TAGS.includes(tag)) {
+      if (tag === "a") {
+        const parsed = parseBlock(node);
+        if (parsed && parsed.type !== "unknown") { flushInlineRun(); result.push(parsed); return; }
+      }
+      inlineRun.push(node);
+      return;
+    }
+    pushBlock(node);
   });
+  flushInlineRun();
+  return result;
+};
 
 export const parseCanonicalListHtml = (html: string): SmartDocument => {
   const fragment = parseFragment(html) as unknown as HtmlNode;
   const wrapper = elementChildren(fragment).find((node) => attr(node, "data-smart-document") === "true");
   const source = wrapper || fragment;
-  const children = parseBlockList(elementChildren(source));
+  const rootBlockTags = ["p", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "blockquote", "pre", "table", "hr", "img", "video", "audio"];
+  const children = parseMixedBlockContent(source.childNodes || [], rootBlockTags);
   return { type: "doc", id: attr(source, "data-smart-id") || createNodeId(), children: children.length ? children : [{ type: "paragraph", id: createNodeId(), children: [] }] };
 };
 

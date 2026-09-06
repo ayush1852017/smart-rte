@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { ClassicEditor, type CanonicalEditorRuntime, type CommentProvider, type CommentThread, type DocumentVersion, type MediaItem, type MediaProvider, type StructuralSuggestion, type SuggestionProvider, type VersionProvider } from "smartrte-react";
+import { parseCanonicalListHtml, foundationSchema } from "smartrte-core/foundation";
 import CanonicalSurface from "./CanonicalSurface";
 import ClipboardCapture from "./ClipboardCapture";
 import Gate13ReplaySurface from "./Gate13ReplaySurface";
@@ -161,6 +162,21 @@ function App() {
         onHtmlChange={(html) => console.log("Classic HTML:", html)}
         onRuntime={(runtime) => {
           (window as Window & { __smartProductCanonical?: CanonicalEditorRuntime }).__smartProductCanonical = runtime;
+          // Manual-testing helper: loads raw HTML the exact same way a host's
+          // `defaultValue`/`replaceContent` does (straight through
+          // parseCanonicalListHtml, no browser clipboard involved) - unlike
+          // pasting, which first goes through the browser's own clipboard
+          // HTML serialization and can silently normalize away the very
+          // malformed shapes (e.g. bare <span> siblings of a document root)
+          // that only reproduce when loading raw stored HTML directly.
+          // Usage from devtools console: loadRawHtml(`<p>...</p>`)
+          (window as Window & { loadRawHtml?: (html: string) => void }).loadRawHtml = (html: string) => {
+            runtime.replaceValue({
+              schemaVersion: foundationSchema.version,
+              revision: runtime.getRevision() + 1,
+              document: parseCanonicalListHtml(html),
+            });
+          };
         }}
       />
     </div>

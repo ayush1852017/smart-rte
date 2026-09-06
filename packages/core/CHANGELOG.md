@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.0-beta.4
+
+- Fix HTML import (paste and loading a document's initial value) rendering real content as unreadable `[Unsupported: ...]` placeholders when a bare `<span>`/`<b>`/other inline-formatting element sits directly at the document root, or is interleaved between real blocks (a `<blockquote>`, `<div>`-wrapped lines, images) with no wrapping `<p>` — a common shape from legacy, pre-migration editor exports. Also fixes the same gap in `<blockquote>`/table cells/list items for content interleaved between blocks (previously only content entirely before any block content was recovered correctly).
+
 ## 1.0.0-beta.3
 
 - Add `href`/`target` (a clickable link), `borderRadius` (corner rounding), and license metadata fields (`licenseDescription`, `licenseSourceUrl`, `licenseType`, `licenseVersion`, `licenseAttribution`) to the image atom schema. `href` is validated the same way as the existing `link` mark; exported HTML wraps a linked image in a real `<a>` for portability outside the editor. Fix a pre-existing renderer gap where clearing an image's `align` back to unset never removed the CSS float/display/margin it had previously applied.
