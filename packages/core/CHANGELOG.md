@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.0-beta.6
+
+- Fix pasting a long, list-free document (many short paragraphs, no images) being slow enough to look broken — the Office/Google Docs list normalizers recursed into every paragraph hunting for nested lists a `<p>` can never structurally contain. Pasting a few thousand blocks now completes in well under a second instead of multiple seconds to tens of seconds. See `docs/bugs/clipboard-paste-slow-on-large-list-free-documents.md` for the full investigation, including a known remaining limitation for very large (10,000+ block) pastes.
+
 ## 1.0.0-beta.5
 
 - Add a per-block `lineHeight` attribute (paragraph, heading, blockquote, code block) — a unitless multiplier matching CSS `line-height`'s own unitless mode (`1`, `1.5`, `2`, ...), consistent with how `align`/`indentLevel` are represented. Absence means no override (the browser/font's own natural line-height), not a forced `1`. Full HTML round-trip fidelity via a dedicated `data-smart-line-height` marker — deliberately does **not** fall back to reading a bare CSS `line-height` value on import (unlike `align`/`indentLevel`'s own CSS fallbacks): real captured clipboard fixtures show `line-height` is frequently an ambient, whole-document default baked onto every paragraph, not a deliberate per-paragraph choice, and recognizing it would have silently misattributed that default as an explicit override on every pasted document. Real Word line spacing (`w:spacing`/`w:line`/`w:lineRule="auto"`) on DOCX export; declared `lossy` there (confirmed empirically that DOCX reimport via mammoth drops it) and `unsupported` (content preserved) in Markdown. Inherits `full` PDF fidelity for free, since this package's "Save as PDF" prints the same HTML export.

@@ -78,6 +78,30 @@ describe("Phase 8a clipboard security boundary", () => {
     const html = `<p>${"x".repeat(DEFAULT_MAX_CLIPBOARD_BYTES)}</p>`;
     expect(() => parseClipboardPayload({ html }, { ownerDocument: document })).toThrow(ClipboardPayloadTooLargeError);
   });
+
+  /**
+   * "Is there any limit of pasting? ... couldn't paste this content" - a
+   * long, real-world document (many short paragraphs, no lists at all) was
+   * effectively un-pasteable well under the byte-size limit above: the
+   * mso-list/declared-level-list normalizers (normalizers.ts) recursed
+   * into every single paragraph hunting for nested lists, even though a
+   * <p>'s content model is inline-only and can never contain one. See
+   * docs/bugs/clipboard-paste-slow-on-large-list-free-documents.md. This
+   * is a smoke-test guard against a full regression back to that
+   * recursion, not a precise benchmark - a generous bound, chosen well
+   * above normal CI variance but far below what the unfixed code produced
+   * at this size (confirmed several seconds before this fix, well under
+   * one second after).
+   */
+  it("parses a large, list-free document without the fixed quadratic blowup", () => {
+    const paragraph = "<p>A representative paragraph of realistic MCQ-length text with a few words in it.</p>";
+    const html = paragraph.repeat(5000);
+    const start = performance.now();
+    const result = parseClipboardPayload({ html }, { ownerDocument: document });
+    const elapsed = performance.now() - start;
+    expect(result.document.children).toHaveLength(5000);
+    expect(elapsed).toBeLessThan(5000);
+  });
 });
 
 describe("clipboard source detection is a hint", () => {

@@ -4,6 +4,20 @@ import type { NormalizedClipboardPayload, SanitizedClipboardPayload, SourceNorma
 const listTags = new Set(["UL", "OL"]);
 const blockSelector = ":scope > p, :scope > h1, :scope > h2, :scope > h3, :scope > h4, :scope > h5, :scope > h6, :scope > ul, :scope > ol, :scope > blockquote, :scope > pre, :scope > table, :scope > div";
 const msoListPattern = /(?:^|;)\s*mso-list\s*:\s*([^\s;]+)\s+level(\d+)\s+([^\s;]+)/i;
+/**
+ * Elements whose HTML content model is inline-only - a real HTML parser
+ * never lets a <p>/<ul>/<ol>/<div> nest inside one of these (an outer <p>
+ * auto-closes first), so a nested Office mso-list paragraph or a
+ * declared-level <ul>/<ol> can never appear inside one. normalizeMsoLists/
+ * normalizeDeclaredLevelLists below recurse looking for exactly those two
+ * things - recursing into one of these tags is always wasted work. See
+ * docs/bugs/clipboard-paste-normalizer-quadratic-blowup-on-large-documents.md:
+ * on a real document with thousands of top-level paragraphs (the common
+ * case for a long pasted document with no lists at all), skipping this
+ * recursion is what turns an O(n) visit count with an accidentally
+ * document-size-scaled per-call cost back into genuinely linear work.
+ */
+const INLINE_LEAF_TAGS = new Set(["P", "SPAN", "B", "STRONG", "I", "EM", "U", "S", "A", "CODE", "BR", "IMG", "SUP", "SUB"]);
 
 const unwrap = (element: Element) => element.replaceWith(...Array.from(element.childNodes));
 
@@ -87,7 +101,7 @@ const normalizeMsoLists = (document: Document) => {
     for (let index = 0; index < children.length;) {
       const first = msoListEntry(children[index]);
       if (!first) {
-        visit(children[index]);
+        if (!INLINE_LEAF_TAGS.has(children[index].tagName)) visit(children[index]);
         index += 1;
         continue;
       }
@@ -177,7 +191,7 @@ const normalizeDeclaredLevelLists = (document: Document) => {
       run[0].replaceWith(...roots);
       run.slice(1).forEach((list) => list.remove());
     }
-    Array.from(parent.children).forEach((child) => visit(child));
+    Array.from(parent.children).forEach((child) => { if (!INLINE_LEAF_TAGS.has(child.tagName)) visit(child); });
   };
   visit(document.body);
 };
