@@ -2,6 +2,7 @@
 
 ## 1.0.0-beta.10
 
+- Add a "Line spacing" toolbar dropdown (Paragraph group) with presets (1, 1.15, 1.5, 2, 2.5), a "Default" entry that clears the override, and a custom numeric value entry, matching Google Docs' own line-spacing picker shape. Shows a checkmark on the current value, or no checkmark at all when the selection spans blocks with differing values. New `tools.lineHeight` visibility flag (default visible). Depends on `smartrte-core@1.0.0-beta.5`.
 - Add "Horizontal line" and "Page break" toolbar tools (in the "More to insert" group, plus wide-viewport-promoted standalone copies), and matching `tools.horizontalLine`/`tools.pageBreak` visibility flags. A page break renders as a dashed, labeled marker in the live editor — distinct from a horizontal line — and produces real pagination in both the exported HTML and this package's "Save as PDF" (a real browser print of that same HTML). Depends on `smartrte-core@1.0.0-beta.5`.
 - Fix formulas rendering invisible in "Save as PDF" output (see `smartrte-core@1.0.0-beta.5`'s own changelog entry for the root cause).
 - Rename the "Save as PDF" toolbar entry to "Print / Save as PDF" — it opens the browser's print dialog rather than triggering a direct file download like its "Save as ..." siblings; the new label sets the correct expectation instead of implying a one-click download.

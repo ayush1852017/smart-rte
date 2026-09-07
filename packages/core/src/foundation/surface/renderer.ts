@@ -114,6 +114,11 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
     else if (element.style.textAlign) element.style.removeProperty("text-align");
     if (node.attrs?.indentLevel) element.style.marginInlineStart = `${Number(node.attrs.indentLevel) * 2}em`;
     else if (element.style.marginInlineStart) element.style.removeProperty("margin-inline-start");
+    // Unitless, matching how the value is stored and validated (schema.ts's
+    // lineHeightAttr) - absence means "no override", the browser/font's own
+    // natural line-height, not a forced "1".
+    if (node.attrs?.lineHeight) element.style.lineHeight = String(node.attrs.lineHeight);
+    else if (element.style.lineHeight) element.style.removeProperty("line-height");
     if (node.type === "code_block") {
       const language = typeof node.attrs?.language === "string" && node.attrs.language.trim()
         ? node.attrs.language.trim()

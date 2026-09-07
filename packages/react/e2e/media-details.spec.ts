@@ -51,6 +51,22 @@ test.describe("Media details panel", () => {
   });
 
   test("sets link, radius, and align, applying real visible effects and a working Ctrl/Cmd+click", async ({ page, context }) => {
+    // The reference media provider's URLs (https://media.playground.test/...)
+    // have no real backend - without a real response, the freshly-inserted
+    // image has no intrinsic size while its `error` state is pending,
+    // which WebKit renders as a genuine 0x0 box (not a sized "broken
+    // image" glyph the way Chromium/Firefox do), racing this test's very
+    // next action (an immediate right-click) against a live DNS failure
+    // whose timing varies with the sandbox's network conditions - the
+    // same pre-existing fragility documented in
+    // docs/bugs/webkit-full-suite-timeout-flake.md. This test only right-
+    // clicks once up front and never depends on the image's rendered
+    // size afterward (unlike the resize-handle test below, deliberately
+    // left unmocked), so serving a real 1x1 PNG - the same fix already
+    // applied in canonical-authority.spec.ts's own media-upload test -
+    // makes the right-click deterministic without changing what's asserted.
+    const onePixelPng = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
+    await page.route("https://media.playground.test/**", (route) => route.fulfill({ status: 200, contentType: "image/png", body: onePixelPng }));
     await page.goto("/?canonicalAuthority=1&blocks=1");
     const surface = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
     await page.getByRole("button", { name: "Insert image" }).click();

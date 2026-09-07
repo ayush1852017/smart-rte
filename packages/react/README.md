@@ -172,7 +172,9 @@ interface ToolbarTools {
 
   // Paragraph
   blockType,   // the Paragraph/Heading/Code block dropdown
-  alignLeft, alignCenter, alignRight, alignJustify, quote,
+  alignLeft, alignCenter, alignRight, alignJustify,
+  lineHeight,  // the line-spacing dropdown (1/1.15/1.5/2/2.5 presets plus a custom value)
+  quote,
 
   // Lists
   bulletedList, numberedList, checklist,

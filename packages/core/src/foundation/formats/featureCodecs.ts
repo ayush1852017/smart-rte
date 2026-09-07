@@ -66,7 +66,7 @@ export const builtInFeatureFormatCodecs: readonly FeatureFormatCodec<FidelityFea
     if (format === "docx" && (contract.feature === "inline-marks" || contract.feature === "colors-fonts-sizes")) {
       return { ...base, serialize: (node) => markRunDocxProperties(node) };
     }
-    if (format === "docx" && (contract.feature === "headings-alignment" || contract.feature === "blockquote-code")) {
+    if (format === "docx" && (contract.feature === "headings-alignment" || contract.feature === "blockquote-code" || contract.feature === "line-height")) {
       return { ...base, serialize: (node) => blockToDocxEntry(asAtom(node)) };
     }
     return base;

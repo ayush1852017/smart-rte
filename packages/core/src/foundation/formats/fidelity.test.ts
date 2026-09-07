@@ -22,6 +22,7 @@ describe("built-in format fidelity contract", () => {
       "formulas",
       "special-characters",
       "page-break",
+      "line-height",
     ];
     expect(builtInFormatFidelity.map(({ feature }) => feature)).toEqual(features);
     builtInFormatFidelity.forEach(({ formats: capabilities }) => {

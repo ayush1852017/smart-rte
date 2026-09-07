@@ -88,14 +88,18 @@ const effectiveStyle = (node: SmartElementNode, depth: number): string | undefin
 };
 
 const blockAttributes = (node: SmartElementNode): string => {
+  const lineHeight = Number(node.attrs?.lineHeight);
+  const hasLineHeight = Number.isFinite(lineHeight) && lineHeight > 0;
   const declarations = [
     typeof node.attrs?.htmlStyle === "string" ? node.attrs.htmlStyle.replace(/;\s*$/, "") : "",
     typeof node.attrs?.align === "string" ? `text-align:${node.attrs.align}` : "",
     Number(node.attrs?.indentLevel) > 0 ? `margin-inline-start:${Number(node.attrs?.indentLevel) * 2}em` : "",
+    hasLineHeight ? `line-height:${lineHeight}` : "",
   ].filter(Boolean);
   return [
     node.attrs?.align ? ` data-smart-align="${escapeHtml(node.attrs.align)}"` : "",
     Number(node.attrs?.indentLevel) > 0 ? ` data-smart-indent="${escapeHtml(node.attrs?.indentLevel)}"` : "",
+    hasLineHeight ? ` data-smart-line-height="${escapeHtml(lineHeight)}"` : "",
     declarations.length ? ` style="${escapeHtml(declarations.join(";"))}"` : "",
   ].join("");
 };
@@ -360,6 +364,25 @@ const parsedBlockAttrs = (node: HtmlNode): Record<string, unknown> => {
   const indent = Number.isFinite(explicitIndent) && explicitIndent > 0 ? explicitIndent : computedIndent;
   if (align && ["left", "center", "right", "justify"].includes(align)) attrs.align = align;
   if (Number.isInteger(indent) && indent > 0) attrs.indentLevel = indent;
+  // Deliberately NOT falling back to a bare CSS `line-height` value the way
+  // align/indent fall back to their own CSS equivalents above - confirmed
+  // directly against two real captured clipboard fixtures
+  // (google-docs-clipboard.clipboard.json, native-smart-rte-clipboard.
+  // clipboard.json) that a real-world `line-height` is very often an
+  // AMBIENT/inherited value (a whole document's own default line spacing,
+  // or - for the native fixture - literally this editor's own global
+  // `line-height: 1.6` from theme.ts, baked onto every element by the
+  // browser's clipboard serialization, not a value the user ever
+  // deliberately set on that one paragraph) rather than a genuine
+  // per-paragraph override. `text-align`/`margin-inline-start` do not have
+  // this problem in practice - browsers do not routinely bake an ambient
+  // default onto every paragraph's inline style the way they do for
+  // line-height. Recognizing the bare CSS value would silently attach a
+  // meaningless "explicit" lineHeight to every pasted paragraph. Only this
+  // app's own explicit `data-smart-line-height` marker (written exclusively
+  // when the user deliberately applied it via the toolbar) is trusted.
+  const lineHeight = Number(attr(node, "data-smart-line-height"));
+  if (Number.isFinite(lineHeight) && lineHeight >= 0.1 && lineHeight <= 10) attrs.lineHeight = lineHeight;
   return attrs;
 };
 

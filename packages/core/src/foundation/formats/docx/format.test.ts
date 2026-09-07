@@ -399,6 +399,30 @@ describe("canonical DOCX format codec", () => {
     expect(serialized).toContain("After line");
   });
 
+  it("exports real Word line spacing, which does not survive DOCX import - matching the declared lossy fidelity", async () => {
+    const doc: SmartDocument = {
+      type: "doc", id: "doc",
+      children: [
+        { type: "paragraph", id: "p1", attrs: { lineHeight: 1.5 }, children: [{ type: "text", text: "Spaced paragraph" }] },
+        { type: "paragraph", id: "p2", attrs: { lineHeight: 2 }, children: [{ type: "text", text: "Double spaced" }] },
+      ],
+    };
+    const xml = smartDocumentToDocxXml(doc);
+    // Word's own "multiple" line-spacing unit (240ths of a single line) -
+    // 1.5 -> 360, 2.0 -> 480 - not a fabricated marker.
+    expect(xml).toContain('<w:spacing w:line="360" w:lineRule="auto"/>');
+    expect(xml).toContain('<w:spacing w:line="480" w:lineRule="auto"/>');
+
+    const buffer = await blobArrayBuffer(await exportDocxDocument(doc));
+    const imported = await importDocxDocumentWithMammoth(buffer);
+    // Confirmed empirically: mammoth's HTML conversion drops line-spacing
+    // entirely on import - the text survives, the spacing value does not.
+    const serialized = JSON.stringify(imported);
+    expect(serialized).not.toContain("lineHeight");
+    expect(serialized).toContain("Spaced paragraph");
+    expect(serialized).toContain("Double spaced");
+  });
+
   it("round-trips Unicode special characters through DOCX export and import, matching the declared full fidelity", async () => {
     const unicode: SmartDocument = {
       type: "doc", id: "doc",

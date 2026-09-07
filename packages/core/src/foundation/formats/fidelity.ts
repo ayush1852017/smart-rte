@@ -15,7 +15,8 @@ export type FidelityFeature =
   | "images-media"
   | "formulas"
   | "special-characters"
-  | "page-break";
+  | "page-break"
+  | "line-height";
 
 export interface FormatFidelityCapability {
   level: FidelityLevel;
@@ -156,6 +157,15 @@ export const builtInFormatFidelity: readonly FeatureFidelityContract[] = [
       markdown: capability("unsupported", "Markdown has no pagination concept. Exported as an inert `<!-- page break -->` HTML comment so the position is not silently dropped (matching this project's own history of atoms disappearing with no trace on markdown export); nothing parses this comment back into a page break on import, so this is genuinely `unsupported`, not merely undeclared."),
       docx: capability("lossy", "A real native Word page break (`<w:br w:type=\"page\"/>`) is emitted on export - Word paginates correctly when the file is opened. Confirmed empirically (format.test.ts) that mammoth's HTML conversion (this package's own DOCX import path) drops the page break entirely on re-import, with no trace - export fidelity is real, import fidelity is not."),
       pdf: capability("full", "This package's actual 'Save as PDF' is a real browser print of the same HTML export (react/src/adapters/pdfPrint.ts), so it inherits the html row's real pagination exactly - verified end to end via Playwright's own page.pdf() against the real print document, asserting a real page count increase. The separate atomToPdf per-node function (used only by this fidelity table's own test suite, not the real feature) is not the mechanism that produces this."),
+    },
+  },
+  {
+    feature: "line-height",
+    formats: {
+      html: capability("full", "A unitless multiplier (matching CSS line-height's own unitless mode) round-trips exactly via a data-smart-line-height attribute plus an inline `line-height:` style declaration."),
+      markdown: capability("unsupported", "Markdown has no line-spacing concept at all. The paragraph's own text is preserved in full (line-height is metadata about how it's displayed, not content) - only the spacing value itself is dropped, matching this project's non-destructive-fallback discipline (nothing else about the paragraph is lost)."),
+      docx: capability("lossy", "Word's native \"multiple\" line spacing (`w:spacing w:line=\"...\" w:lineRule=\"auto\"`) is emitted on export - Word itself displays the correct spacing when the file is opened. Confirmed empirically (format.test.ts) that mammoth's HTML conversion (this package's own DOCX import path) drops the spacing value entirely on re-import - export fidelity is real, import fidelity is not, the same asymmetry already documented for page-break."),
+      pdf: capability("full", "This package's actual 'Save as PDF' is a real browser print of the same HTML export, so it inherits the html row's real, correctly-spaced layout exactly - verified against the real print document's computed styles, not assumed."),
     },
   },
 ] as const;

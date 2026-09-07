@@ -160,10 +160,21 @@ const inlineRun = (node: SmartNode, context: DocxSerializationContext): string =
 
 const alignmentOf = (node: SmartElementNode) => typeof node.attrs?.align === "string" ? node.attrs.align : undefined;
 const indentLevelOf = (node: SmartElementNode) => Number(node.attrs?.indentLevel) || 0;
+/**
+ * Word's native "multiple" line spacing: `w:line` is in 240ths of a single
+ * line (240 = single/1.0, 360 = 1.5, 480 = double/2.0 - the same
+ * convention Word's own UI uses), `w:lineRule="auto"` is what makes it a
+ * multiplier rather than an exact fixed height (`"exact"`/`"atLeast"`
+ * would instead be a fixed point size, which is deliberately not what
+ * this feature stores - see schema.ts's lineHeightAttr doc comment on why
+ * a unitless multiplier was chosen over a fixed value).
+ */
+const lineHeightOf = (node: SmartElementNode) => Number(node.attrs?.lineHeight) || 0;
 
 const paragraphProperties = (block: SmartElementNode, extra = "") => [
   alignmentOf(block) ? `<w:jc w:val="${xmlEscape(alignmentOf(block))}"/>` : "",
   indentLevelOf(block) ? `<w:ind w:left="${indentLevelOf(block) * 480}"/>` : "",
+  lineHeightOf(block) ? `<w:spacing w:line="${Math.round(lineHeightOf(block) * 240)}" w:lineRule="auto"/>` : "",
   extra,
 ].join("");
 

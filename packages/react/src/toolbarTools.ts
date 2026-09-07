@@ -49,6 +49,8 @@ export interface ToolbarTools {
   alignCenter: boolean;
   alignRight: boolean;
   alignJustify: boolean;
+  /** The line-spacing dropdown (1/1.15/1.5/2/2.5 presets plus a custom value). */
+  lineHeight: boolean;
   quote: boolean;
   // Lists
   bulletedList: boolean;
@@ -95,7 +97,7 @@ export interface ToolbarTools {
 export const DEFAULT_TOOLBAR_TOOLS: ToolbarTools = {
   bold: true, italic: true, underline: true, strikethrough: true, code: true,
   superscript: true, subscript: true, textColor: true, backgroundColor: true, fontSize: true, fontFamily: true,
-  blockType: true, alignLeft: true, alignCenter: true, alignRight: true, alignJustify: true, quote: true,
+  blockType: true, alignLeft: true, alignCenter: true, alignRight: true, alignJustify: true, lineHeight: true, quote: true,
   bulletedList: true, numberedList: true, checklist: true, listPreset: true,
   link: true, removeLink: true, image: true, video: true, audio: true, insertFormula: true, specialCharacters: true,
   horizontalLine: true, pageBreak: true, insertTable: true,

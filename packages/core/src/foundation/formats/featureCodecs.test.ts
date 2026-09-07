@@ -36,8 +36,8 @@ describe("Phase 9 SS3 gate 3: FeatureFormatCodec declarations", () => {
    * remain whole-document walkers per docs/PHASE_9_CODEC_REFACTOR_SCOPE.md's
    * scope (HTML/Markdown scheduled last "if at all").
    */
-  it("attaches a real docx-only serialize function to the two Phase 11 Tier 2 codec-slice feature families", () => {
-    for (const feature of ["inline-marks", "colors-fonts-sizes", "headings-alignment", "blockquote-code"] as const) {
+  it("attaches a real docx-only serialize function to the two Phase 11 Tier 2 codec-slice feature families, and later line-height (same blockToDocxEntry projection)", () => {
+    for (const feature of ["inline-marks", "colors-fonts-sizes", "headings-alignment", "blockquote-code", "line-height"] as const) {
       const docx = builtInFeatureFormatCodecs.find((entry) => entry.feature === feature && entry.format === "docx")!;
       expect(docx.serialize, `${feature}/docx should have a real serialize function`).toBeTypeOf("function");
       expect(docx.parse, `${feature}/docx has no reverse mapping`).toBeUndefined();
@@ -48,11 +48,15 @@ describe("Phase 9 SS3 gate 3: FeatureFormatCodec declarations", () => {
     }
   });
 
-  it("leaves parse/serialize undefined for the 32 remaining cells backed only by whole-document walkers", () => {
-    const wired = new Set(["inline-marks/docx", "colors-fonts-sizes/docx", "headings-alignment/docx", "blockquote-code/docx"]);
+  it("leaves parse/serialize undefined for the 35 remaining cells backed only by whole-document walkers", () => {
+    const wired = new Set(["inline-marks/docx", "colors-fonts-sizes/docx", "headings-alignment/docx", "blockquote-code/docx", "line-height/docx"]);
     const withoutRealCodec = builtInFeatureFormatCodecs.filter((entry) =>
       entry.feature !== "images-media" && entry.feature !== "formulas" && entry.feature !== "page-break" && !wired.has(`${entry.feature}/${entry.format}`));
-    expect(withoutRealCodec).toHaveLength(9 * 4 - wired.size);
+    // 13 features total; images-media/formulas/page-break (3) get every
+    // format wired via atom/formats.ts's per-node functions, leaving 10
+    // features here - 5 of which (the `wired` set above) have their own
+    // single docx cell wired via blockToDocxEntry/docxProperties.
+    expect(withoutRealCodec).toHaveLength(10 * 4 - wired.size);
     for (const codec of withoutRealCodec) {
       expect(codec.serialize).toBeUndefined();
       expect(codec.parse).toBeUndefined();
@@ -75,6 +79,10 @@ describe("Phase 9 SS3 gate 3: FeatureFormatCodec declarations", () => {
     const codeBlock = { type: "code_block", id: "c1", attrs: { language: "js" }, children: [{ type: "text", text: "x" }] } as never;
     const blockquoteDocx = builtInFeatureFormatCodecs.find((entry) => entry.feature === "blockquote-code" && entry.format === "docx")!;
     expect(blockquoteDocx.serialize!(codeBlock, { format: "docx" })).toEqual({ nodeId: "c1", kind: "code", text: "x", style: "Code", language: "js" });
+
+    const spaced = { type: "paragraph", id: "p1", attrs: { lineHeight: 1.5 }, children: [{ type: "text", text: "Spaced" }] } as never;
+    const lineHeightDocx = builtInFeatureFormatCodecs.find((entry) => entry.feature === "line-height" && entry.format === "docx")!;
+    expect(lineHeightDocx.serialize!(spaced, { format: "docx" })).toEqual({ nodeId: "p1", kind: "paragraph", text: "Spaced", style: "Normal", lineSpacing240ths: 360 });
   });
 
   it("serializes a real formula atom to HTML, Markdown, DOCX, and PDF projections via the declared codecs", () => {

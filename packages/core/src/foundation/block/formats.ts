@@ -23,6 +23,8 @@ export interface CanonicalDocxBlock {
   readonly alignment?: "left" | "center" | "right" | "justify";
   /** DOCX left indentation in twips (720 twips per canonical indent level). */
   readonly indentTwips?: number;
+  /** Word's native "multiple" line spacing unit: 240ths of a single line (240 = 1.0, 360 = 1.5). See formats/docx/export.ts's lineHeightOf for the same convention in the real exporter. */
+  readonly lineSpacing240ths?: number;
   readonly language?: string;
   readonly quoteDepth?: number;
 }
@@ -47,6 +49,7 @@ export const blockToDocxEntry = (node: SmartElementNode, quoteDepth = 0): Canoni
   const alignment = typeof node.attrs?.align === "string" && ["left", "center", "right", "justify"].includes(node.attrs.align)
     ? node.attrs.align as CanonicalDocxBlock["alignment"] : undefined;
   const indentLevel = Math.max(0, Number(node.attrs?.indentLevel) || 0);
+  const lineHeight = Number(node.attrs?.lineHeight) || 0;
   return {
     nodeId: node.id,
     kind: node.type === "code_block" ? "code" : node.type === "heading" ? "heading" : "paragraph",
@@ -55,6 +58,7 @@ export const blockToDocxEntry = (node: SmartElementNode, quoteDepth = 0): Canoni
     ...(level ? { outlineLevel: level - 1 } : {}),
     ...(alignment ? { alignment } : {}),
     ...(indentLevel ? { indentTwips: indentLevel * 720 } : {}),
+    ...(lineHeight ? { lineSpacing240ths: Math.round(lineHeight * 240) } : {}),
     ...(node.type === "code_block" && typeof node.attrs?.language === "string" ? { language: node.attrs.language } : {}),
     ...(quoteDepth ? { quoteDepth } : {}),
   };

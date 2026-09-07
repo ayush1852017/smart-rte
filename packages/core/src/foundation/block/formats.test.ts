@@ -10,7 +10,7 @@ import {
 } from "./formats.js";
 
 const fixture: SmartDocument = { type: "doc", id: "doc", children: [
-  { type: "heading", id: "h", attrs: { level: 2, align: "center", indentLevel: 1 }, children: [{ type: "text", text: "Title", marks: [{ type: "bold" }] }] },
+  { type: "heading", id: "h", attrs: { level: 2, align: "center", indentLevel: 1, lineHeight: 1.5 }, children: [{ type: "text", text: "Title", marks: [{ type: "bold" }] }] },
   { type: "blockquote", id: "q", children: [
     { type: "paragraph", id: "qp", children: [{ type: "text", text: "Quoted" }] },
   ] },
@@ -18,16 +18,17 @@ const fixture: SmartDocument = { type: "doc", id: "doc", children: [
 ] };
 
 describe("Phase 5 block format fidelity", () => {
-  it("round-trips HTML with hierarchy, language, alignment, and indentation", () => {
+  it("round-trips HTML with hierarchy, language, alignment, indentation, and line-height", () => {
     const html = serializeCanonicalBlockHtml(fixture);
-    expect(html).toContain('<h2 data-smart-id="h" data-smart-align="center" data-smart-indent="1"');
+    expect(html).toContain('<h2 data-smart-id="h" data-smart-align="center" data-smart-indent="1" data-smart-line-height="1.5"');
+    expect(html).toContain("line-height:1.5");
     expect(html).toContain('<blockquote data-smart-id="q"><p data-smart-id="qp">Quoted</p></blockquote>');
     expect(html).toContain('<pre data-smart-id="c" data-smart-align="left"');
     expect(html).toContain('<code class="language-ts">const x = 1;');
     expect(parseCanonicalBlockHtml(html)).toEqual(fixture);
   });
 
-  it("round-trips Markdown semantically while dropping unsupported align/indent non-destructively", () => {
+  it("round-trips Markdown semantically while dropping unsupported align/indent/line-height non-destructively", () => {
     const markdown = serializeCanonicalBlockMarkdown(fixture);
     expect(markdown).toContain("## **Title**");
     expect(markdown).toContain("> Quoted");
@@ -40,11 +41,15 @@ describe("Phase 5 block format fidelity", () => {
     ]);
     expect(JSON.stringify(parsed)).not.toContain("align");
     expect(JSON.stringify(parsed)).not.toContain("indentLevel");
+    expect(JSON.stringify(parsed)).not.toContain("lineHeight");
+    // The heading's own text ("Title") is preserved in full - only the
+    // spacing/alignment/indent metadata is dropped, not the content itself.
+    expect(JSON.stringify(parsed)).toContain("Title");
   });
 
-  it("maps DOCX heading/quote/alignment/indent semantically and provides a visual PDF projection", () => {
+  it("maps DOCX heading/quote/alignment/indent/line-height semantically and provides a visual PDF projection", () => {
     expect(canonicalBlocksToDocx(fixture)).toEqual([
-      { nodeId: "h", kind: "heading", text: "Title", style: "Heading2", outlineLevel: 1, alignment: "center", indentTwips: 720 },
+      { nodeId: "h", kind: "heading", text: "Title", style: "Heading2", outlineLevel: 1, alignment: "center", indentTwips: 720, lineSpacing240ths: 360 },
       { nodeId: "qp", kind: "paragraph", text: "Quoted", style: "Quote", quoteDepth: 1 },
       { nodeId: "c", kind: "code", text: "const x = 1;\n", style: "Code", alignment: "left", language: "ts" },
     ]);

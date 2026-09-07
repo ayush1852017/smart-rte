@@ -3314,6 +3314,136 @@ test.describe("Phase 8b canonical product authority", () => {
   });
 
   /**
+   * "Line height support" (2026-09-07) - a genuinely new capability, built
+   * the same way alignment/indent-level already are: schema attribute ->
+   * command (reused setBlockAttributes directly, no new command needed) ->
+   * renderer -> UI. Covers the full interaction: applying a preset shows a
+   * real rendered line-height and a checkmark, applying a custom value
+   * works the same way, and switching back to "Default" clears the
+   * override entirely (not a forced "1").
+   */
+  test("applies a line-height preset via the toolbar, showing a checkmark on the active value, and 'Default' clears it", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    const editor = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
+    const paragraph = editor.locator("p").first();
+    await placeCaret(page, '[data-smart-authority="canonical"] [contenteditable="true"] p');
+
+    await openToolbarDropdown(page, "Line spacing");
+    await toolbarMenuItem(page, "1.5").click();
+    await expect(paragraph).toHaveCSS("line-height", /.+/);
+    const appliedHeight = await paragraph.evaluate((el) => getComputedStyle(el).lineHeight);
+
+    // Re-derive the expected pixel line-height from the element's own font
+    // size (1.5x) instead of hardcoding a pixel value, so this doesn't
+    // depend on the exact base font-size this playground happens to use.
+    const fontSize = await paragraph.evaluate((el) => Number.parseFloat(getComputedStyle(el).fontSize));
+    expect(Number.parseFloat(appliedHeight)).toBeCloseTo(fontSize * 1.5, 0);
+
+    await openToolbarDropdown(page, "Line spacing");
+    await expect(toolbarMenuItem(page, "1.5")).toHaveAttribute("aria-pressed", "true");
+    await expect(toolbarMenuItem(page, "Default")).toHaveAttribute("aria-pressed", "false");
+
+    await toolbarMenuItem(page, "Default").click();
+    // "Default" removes the override entirely - the element's line-height
+    // goes back to the browser/font's own natural value (whatever that
+    // computes to here), not a forced "1"/"normal" this test would need to
+    // hardcode. Confirmed by re-reading the live model's own attrs instead.
+    const lineHeightAttr = await page.evaluate(() => {
+      const runtime = (window as typeof window & { __smartProductCanonical?: { editor: { document: { children: Array<{ attrs?: Record<string, unknown> }> } } } }).__smartProductCanonical!;
+      return runtime.editor.document.children[0]?.attrs?.lineHeight;
+    });
+    expect(lineHeightAttr).toBeUndefined();
+    await openToolbarDropdown(page, "Line spacing");
+    await expect(toolbarMenuItem(page, "Default")).toHaveAttribute("aria-pressed", "true");
+  });
+
+  test("applies a custom line-height value via the toolbar's numeric input", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    await placeCaret(page, '[data-smart-authority="canonical"] [contenteditable="true"] p');
+    await openToolbarDropdown(page, "Line spacing");
+    const customInput = page.getByRole("spinbutton", { name: "Custom line spacing" });
+    await customInput.fill("1.75");
+    await customInput.press("Enter");
+
+    const lineHeightAttr = await page.evaluate(() => {
+      const runtime = (window as typeof window & { __smartProductCanonical?: { editor: { document: { children: Array<{ attrs?: Record<string, unknown> }> } } } }).__smartProductCanonical!;
+      return runtime.editor.document.children[0]?.attrs?.lineHeight;
+    });
+    expect(lineHeightAttr).toBe(1.75);
+
+    // Reopening shows the custom value pre-filled (not one of the fixed
+    // presets, so no preset item is checked, but the input itself reflects
+    // the real current value rather than always resetting blank).
+    await openToolbarDropdown(page, "Line spacing");
+    await expect(page.getByRole("spinbutton", { name: "Custom line spacing" })).toHaveValue("1.75");
+    for (const preset of ["1", "1.15", "1.5", "2", "2.5", "Default"]) {
+      await expect(toolbarMenuItem(page, preset)).toHaveAttribute("aria-pressed", "false");
+    }
+  });
+
+  test("shows no checkmark (mixed state) when the selection spans blocks with different line-heights", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=2");
+    const editor = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
+
+    await placeCaret(page, '[data-smart-authority="canonical"] [contenteditable="true"] p', false);
+    await openToolbarDropdown(page, "Line spacing");
+    await toolbarMenuItem(page, "1.5").click();
+
+    await placeCaret(page, '[data-smart-authority="canonical"] [contenteditable="true"] p', true);
+    await openToolbarDropdown(page, "Line spacing");
+    await toolbarMenuItem(page, "2").click();
+
+    // Select across both paragraphs.
+    await page.evaluate(() => {
+      const root = document.querySelector<HTMLElement>('[contenteditable="true"]')!;
+      const paragraphs = root.querySelectorAll("p");
+      const range = document.createRange();
+      range.setStart(paragraphs[0], 0);
+      range.setEnd(paragraphs[paragraphs.length - 1], paragraphs[paragraphs.length - 1].childNodes.length);
+      const selection = window.getSelection()!;
+      selection.removeAllRanges();
+      selection.addRange(range);
+      document.dispatchEvent(new Event("selectionchange"));
+    });
+
+    await openToolbarDropdown(page, "Line spacing");
+    for (const preset of ["1", "1.15", "1.5", "2", "2.5", "Default"]) {
+      await expect(toolbarMenuItem(page, preset)).toHaveAttribute("aria-pressed", "false");
+    }
+    await expect(editor.locator("p").first()).toHaveCSS("line-height", /.+/);
+  });
+
+  /**
+   * PDF fidelity for line-height is declared `full` specifically because
+   * this package's real "Save as PDF" is a browser print of the same HTML
+   * export (formats/pdf/format.ts's buildPdfPrintDocument), not a separate
+   * PDF-generation path - so it inherits whatever the HTML export produces
+   * exactly. Verified directly against the real popup's own computed
+   * style, not assumed from the HTML string alone.
+   */
+  test("a custom line-height value renders correctly in the actual 'Save as PDF' output, not just live in the editor", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    await placeCaret(page, '[data-smart-authority="canonical"] [contenteditable="true"] p');
+    await openToolbarDropdown(page, "Line spacing");
+    await toolbarMenuItem(page, "2").click();
+
+    const popupPromise = page.waitForEvent("popup");
+    await openToolbarDropdown(page, "Save a copy");
+    await toolbarMenuItem(page, "Print / Save as PDF").click();
+    const popup = await popupPromise;
+    await popup.waitForLoadState();
+
+    const printedParagraph = popup.locator("p").first();
+    await expect(printedParagraph).toHaveCSS("line-height", /.+/);
+    const [printedHeight, printedFontSize] = await printedParagraph.evaluate((el) => {
+      const style = getComputedStyle(el);
+      return [Number.parseFloat(style.lineHeight), Number.parseFloat(style.fontSize)];
+    });
+    expect(printedHeight).toBeCloseTo(printedFontSize * 2, 0);
+    await popup.close();
+  });
+
+  /**
    * Post-Phase-11.5 bug batch item 1: a real Sootr export (fixtures/
    * test-html-sootr.html - kept permanently, both as this regression's
    * fixture and as the real-document fixture Tier 3's performance-

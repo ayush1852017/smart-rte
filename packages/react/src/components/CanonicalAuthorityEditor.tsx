@@ -464,6 +464,36 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
   };
   const blockScope = () => runtime.editor.resolveScope({ want: "block-range" }) as ResolvedScope;
   const blockContext = () => ({ schema: runtime.editor.schema, positions: runtime.editor.positions });
+  /**
+   * `SelectionDescription` (resolveScope({want:"describe"})) tracks mark
+   * coverage (markCoverage below) but has no equivalent for block
+   * *attributes* - `blockTypes` is the closest thing, and it's just node
+   * types, not attrs. This mirrors foundation/block/commands.ts's own
+   * (core-internal, not exported) blockScopes/selectedBlockIds traversal -
+   * a "mixed" scope is a caret/selection spanning more than one real
+   * block-range part (e.g. a paragraph plus a list item), each of which
+   * carries its own blockIds.
+   */
+  const selectedLineHeightBlockIds = (scope: ResolvedScope): string[] => {
+    const collect = (candidate: ResolvedScope): string[] =>
+      candidate.kind === "block-range" ? candidate.blockIds
+        : candidate.kind === "mixed" ? candidate.parts.flatMap(collect)
+          : [];
+    return [...new Set(collect(scope))];
+  };
+  /** `undefined` = no block selected/no override anywhere, a number = every selected block shares that exact value, `"mixed"` = selected blocks disagree - same three-state shape as markCoverage's boolean|"mixed"|undefined. */
+  const currentLineHeight = (): number | "mixed" | undefined => {
+    const ids = selectedLineHeightBlockIds(blockScope());
+    if (!ids.length) return undefined;
+    const values = ids.map((id) => {
+      const value = findNode(runtime.editor.document, id)?.attrs?.lineHeight;
+      return typeof value === "number" ? value : undefined;
+    });
+    const unique = [...new Set(values)];
+    return unique.length === 1 ? unique[0] : "mixed";
+  };
+  const setLineHeight = (value: number | undefined) =>
+    transactBlock(setBlockAttributes(runtime.editor.document, blockScope(), { attrs: { lineHeight: value } }, blockContext()));
   const listScope = () => runtime.editor.resolveScope({ want: "list-selection" }) as ResolvedScope;
   const tableScope = () => runtime.editor.resolveScope({ want: "table-grid" }) as ResolvedScope;
   const atomScope = () => runtime.editor.resolveScope({ want: "atomic-node" }) as ResolvedScope;
@@ -1640,6 +1670,57 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
     {t.fontFamily && <ToolbarMenuItem icon="fontFamily" label="Font family" disabled={readOnly} onClick={() => applyAttributedMark("fontFamily")} widePromote />}
   </>;
   const showMoreTextStyles = t.code || t.superscript || t.subscript || t.textColor || t.backgroundColor || t.fontSize || t.fontFamily;
+  /**
+   * Line spacing - matches Google Docs' own reference shape: a short preset
+   * list plus a custom/exact value entry, with a checkmark on whichever
+   * preset (or "Default") currently applies. "Default" clears the
+   * attribute entirely (setLineHeight(undefined)) rather than writing an
+   * explicit "1" - the block then renders at the browser/font's own
+   * natural line-height, matching how no override ever forces a value for
+   * align/indent either. A mixed-value selection (blocks disagreeing)
+   * shows no checkmark on any entry, matching every comparison below
+   * evaluating false against the "mixed" sentinel with no special-casing
+   * needed.
+   */
+  const LINE_HEIGHT_PRESETS = [1, 1.15, 1.5, 2, 2.5];
+  const lineHeightMenuItems = <>
+    <ToolbarMenuItem label="Default" pressed={currentLineHeight() === undefined} disabled={readOnly} onClick={() => setLineHeight(undefined)} />
+    {LINE_HEIGHT_PRESETS.map((preset) => <ToolbarMenuItem key={preset} label={String(preset)} pressed={currentLineHeight() === preset} disabled={readOnly} onClick={() => setLineHeight(preset)} />)}
+    <div className="srte-menu-separator" />
+    {/*
+      aria-label, not <label htmlFor>+id - this same JSX tree is rendered
+      twice (the desktop dropdown and its MobileMoreMenu copy, matching
+      every other dual-rendered tool in this file), and a hardcoded id
+      would collide the moment both are mounted, which they always are
+      (CSS visibility, not conditional rendering, is what hides one of
+      them - see MobileMoreMenu's own doc comment). aria-label has no such
+      uniqueness constraint.
+    */}
+    <div className="srte-line-height-custom" style={{ padding: "4px 8px", display: "flex", alignItems: "center", gap: 6 }}>
+      <span aria-hidden="true" style={{ fontSize: 12, whiteSpace: "nowrap" }}>Custom:</span>
+      <input
+        aria-label="Custom line spacing"
+        type="number"
+        min={0.1}
+        max={10}
+        step={0.05}
+        disabled={readOnly}
+        defaultValue={(() => { const current = currentLineHeight(); return typeof current === "number" && !LINE_HEIGHT_PRESETS.includes(current) ? current : ""; })()}
+        placeholder="e.g. 1.75"
+        style={{ width: "100%", minWidth: 0 }}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter") return;
+          const value = Number(event.currentTarget.value);
+          if (Number.isFinite(value) && value >= 0.1 && value <= 10) setLineHeight(value);
+          event.currentTarget.closest("details")?.removeAttribute("open");
+        }}
+        onBlur={(event) => {
+          const value = Number(event.currentTarget.value);
+          if (event.currentTarget.value && Number.isFinite(value) && value >= 0.1 && value <= 10) setLineHeight(value);
+        }}
+      />
+    </div>
+  </>;
   const paragraphToolsMenuItems = <>
     <ToolbarMenuItem icon="moveUp" label="Move block up" disabled={readOnly} onClick={() => runBlock("up")} />
     <ToolbarMenuItem icon="moveDown" label="Move block down" disabled={readOnly} onClick={() => runBlock("down")} />
@@ -1831,6 +1912,7 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
         {t.alignCenter && <ToolbarButton icon="alignCenter" label="Align center" ariaLabel="Align center" iconOnly disabled={readOnly} onClick={() => transactBlock(setBlockAttributes(runtime.editor.document, blockScope(), { attrs: { align: "center" } }, blockContext()))} />}
         {t.alignRight && <ToolbarButton icon="alignRight" label="Align right" ariaLabel="Align right" iconOnly disabled={readOnly} onClick={() => transactBlock(setBlockAttributes(runtime.editor.document, blockScope(), { attrs: { align: "right" } }, blockContext()))} />}
         {t.alignJustify && <ToolbarButton icon="alignJustify" label="Justify" ariaLabel="Align justify" iconOnly disabled={readOnly} onClick={() => transactBlock(setBlockAttributes(runtime.editor.document, blockScope(), { attrs: { align: "justify" } }, blockContext()))} />}
+        {t.lineHeight && <ToolbarDropdown icon="lineHeight" label="Line spacing" priority={2}>{lineHeightMenuItems}</ToolbarDropdown>}
         {t.quote && <ToolbarButton icon="quote" label="Quote" ariaLabel="Blockquote" disabled={readOnly} onClick={toggleBlockquote} />}
         <ToolbarDropdown icon="moveUp" label="More paragraph tools" priority={2}>{paragraphToolsMenuItems}</ToolbarDropdown>
       </ToolbarGroup>
@@ -1896,6 +1978,8 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
         {textStylesMenuItems}
         <div className="srte-menu-separator" />
         {paragraphToolsMenuItems}
+        {t.lineHeight && <div className="srte-menu-separator" />}
+        {t.lineHeight && lineHeightMenuItems}
         <div className="srte-menu-separator" />
         {listPresetSelect}
         {listToolsMenuItems}

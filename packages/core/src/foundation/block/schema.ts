@@ -4,7 +4,19 @@ import type { Attrs, AttributeSpec, NodeSpec } from "../types.js";
 const stringAttr: AttributeSpec = { validate: (value) => typeof value === "string" };
 const alignmentAttr: AttributeSpec = { validate: (value) => ["left", "center", "right", "justify"].includes(String(value)) };
 const indentLevelAttr: AttributeSpec = { validate: (value) => Number.isInteger(value) && Number(value) >= 0 && Number(value) <= 10 };
-const blockAttrs = { align: alignmentAttr, indentLevel: indentLevelAttr };
+/**
+ * A unitless multiplier, matching CSS `line-height`'s own unitless mode
+ * (e.g. `1.5` means "1.5x the element's own font size") - deliberately not
+ * a fixed px/pt value, which would stop scaling correctly the moment
+ * `fontSize` changes on the same block. Range is generous but bounded
+ * (Google Docs' own preset list tops out at 2.5; 0.1-10 comfortably covers
+ * every preset plus realistic custom values without accepting nonsense
+ * like a negative multiplier). Absence of this attribute (not "1") means
+ * "no override" - the block renders at the browser/font's own natural
+ * line-height, exactly like `align`/`indentLevel` already work.
+ */
+const lineHeightAttr: AttributeSpec = { validate: (value) => typeof value === "number" && Number.isFinite(value) && value >= 0.1 && value <= 10 };
+const blockAttrs = { align: alignmentAttr, indentLevel: indentLevelAttr, lineHeight: lineHeightAttr };
 
 /** Node specs owned by the block family - extracted out of foundation/schema.ts's previously hardcoded foundationSchema literal (Phase 10). */
 export const blockNodeSpecs: readonly NodeSpec[] = [
