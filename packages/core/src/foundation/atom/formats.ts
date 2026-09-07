@@ -64,6 +64,15 @@ export const atomToHtml = (node: SmartElementNode, options?: { renderFormulaHtml
     return `<${node.type} data-smart-id="${escape(node.id)}" data-smart-type="${node.type}" src="${escape(src)}" controls${dimensions(node)}${node.type === "video" ? attr("poster", node.attrs?.poster) : ""}></${node.type}>`;
   }
   if (node.type === "divider") return `<hr data-smart-id="${escape(node.id)}" data-smart-type="divider">`;
+  // Both `break-before: page` (the current CSS Fragmentation property) and
+  // `page-break-before: always` (its older, still widely-honored alias) are
+  // set directly on the marker so it actually paginates wherever this HTML
+  // is printed - including this package's own "Save as PDF" (a real browser
+  // print of this exact HTML; see react/src/adapters/pdfPrint.ts's own doc
+  // comment). A screen-media renderer (the live editor) ignores both
+  // properties entirely, so this is safe to always emit rather than gating
+  // behind @media print.
+  if (node.type === "page_break") return `<div data-smart-id="${escape(node.id)}" data-smart-type="page_break" style="break-before: page; page-break-before: always;" role="separator" aria-label="Page break"></div>`;
   throw new Error(`Unsupported atom type "${node.type}".`);
 };
 
@@ -107,25 +116,43 @@ export const atomFromHtmlElement = (rawElement: Element): SmartElementNode | nul
     return { type, id, attrs: { src, status: "ready", ...(type === "video" && element.getAttribute("poster") ? { poster: element.getAttribute("poster")! } : {}), ...(number("width") ? { width: number("width") } : {}), ...(number("height") ? { height: number("height") } : {}) } };
   }
   if (type === "divider" || element.tagName === "HR") return { type: "divider", id };
+  if (type === "page_break") return { type: "page_break", id };
   return null;
 };
 
+/**
+ * page_break: Markdown has no pagination concept at all (declared
+ * `unsupported` in formats/fidelity.ts) - emitting nothing would silently
+ * delete the marker with no trace, the same class of bug this project has
+ * hit before for images/formulas (see formats/fidelity.ts's own
+ * images-media/formulas notes on that history). An HTML comment is inert
+ * in every real Markdown renderer (so it never appears as visible garbage
+ * text) but keeps the marker's *position* recorded in the exported file -
+ * genuinely honest `unsupported`, not a round-trippable format: nothing
+ * parses this comment back into a page_break node on import.
+ */
 export const atomToMarkdown = (node: SmartElementNode): string => {
   if (node.type === "image" || node.type === "block_image") return `![${String(node.attrs?.alt || "")}](${String(node.attrs?.src || "")})`;
   if (node.type === "formula" || node.type === "block_formula") return node.type === "formula" ? `$${String(node.attrs?.source || "")}$` : `$$\n${String(node.attrs?.source || "")}\n$$`;
   // Media is unsupported in Markdown. Preserve a readable link instead of dropping content.
   if (node.type === "video" || node.type === "audio") return `[${node.type}: ${String(node.attrs?.src || "")}](${String(node.attrs?.src || "")})`;
   if (node.type === "divider") return "---";
+  if (node.type === "page_break") return "<!-- page break -->";
   return "";
 };
 
-export interface AtomDocxRun { readonly kind: "image" | "text"; readonly source: string; readonly alt?: string }
+export interface AtomDocxRun { readonly kind: "image" | "text" | "pageBreak"; readonly source: string; readonly alt?: string }
 /**
  * Matches packages/core/src/foundation/formats/docx/export.ts's actual
  * behavior (SS2.1): formulas are written as literal LaTeX text inside an
  * <m:oMath> zone, not translated to real OMML and not rendered as an
  * image. Word will show the raw LaTeX string, not typeset math - this is
  * `kind: "text"`, not `"image"`, to describe that honestly.
+ *
+ * page_break returns `kind: "pageBreak"` (`source` unused, kept empty) -
+ * the real docx/export.ts blockXml dispatcher turns this into a genuine
+ * `<w:br w:type="page"/>` run, matching what Word's own Ctrl+Enter inserts,
+ * not a visual-only text marker.
  */
 export const atomToDocx = (node: SmartElementNode): AtomDocxRun => node.type === "formula" || node.type === "block_formula"
   ? { kind: "text", source: String(node.attrs?.source || "") }
@@ -133,11 +160,29 @@ export const atomToDocx = (node: SmartElementNode): AtomDocxRun => node.type ===
     ? { kind: "image", source: String(node.attrs?.src || ""), alt: String(node.attrs?.alt || "") }
     : node.type === "divider"
       ? { kind: "text", source: "---" }
-      : { kind: "text", source: `[${node.type}: ${String(node.attrs?.src || "")}]` };
+      : node.type === "page_break"
+        ? { kind: "pageBreak", source: "" }
+        : { kind: "text", source: `[${node.type}: ${String(node.attrs?.src || "")}]` };
 
-export const atomToPdf = (node: SmartElementNode): { kind: "image" | "text"; value: string } =>
+/**
+ * IMPORTANT: this function is NOT what actually produces this package's
+ * real "Save as PDF" output today. That feature (react/src/adapters/
+ * pdfPrint.ts's printSmartDocumentAsPdf) opens the browser's native print
+ * dialog against `buildPdfPrintDocument` (formats/pdf/format.ts), which
+ * calls `serializeCanonicalListHtml` - i.e. `atomToHtml` above, not this
+ * function. This function only backs the per-node PDF `FeatureFormatCodec`
+ * fidelity-declaration cell (featureCodecs.ts) and its own unit tests - a
+ * real pagination pipeline built around per-node PDF primitives (a PDF
+ * library call, not a browser print) would consume this `"pageBreak"` kind
+ * to start a new page, but no such pipeline exists in this codebase today.
+ * Real page-break pagination in the actual "Save as PDF" feature comes
+ * entirely from atomToHtml's `break-before: page` marker, verified via
+ * e2e against the real print document, not via this function.
+ */
+export const atomToPdf = (node: SmartElementNode): { kind: "image" | "text" | "pageBreak"; value: string } =>
   node.type === "formula" || node.type === "block_formula" ? { kind: "text", value: String(node.attrs?.source || "") }
     : node.type === "video" ? { kind: "image", value: String(node.attrs?.poster || node.attrs?.src || "") }
       : node.type === "image" || node.type === "block_image" ? { kind: "image", value: String(node.attrs?.src || "") }
         : node.type === "divider" ? { kind: "text", value: "---" }
-          : { kind: "text", value: String(node.attrs?.src || "") };
+          : node.type === "page_break" ? { kind: "pageBreak", value: "" }
+            : { kind: "text", value: String(node.attrs?.src || "") };

@@ -17,8 +17,8 @@ describe("Phase 9 SS3 gate 3: FeatureFormatCodec declarations", () => {
     }
   });
 
-  it("attaches a real serialize function to images-media and formulas, the only features with a genuine single-node implementation", () => {
-    for (const feature of ["images-media", "formulas"] as const) {
+  it("attaches a real serialize function to images-media, formulas, and page-break, the only features with a genuine single-node implementation", () => {
+    for (const feature of ["images-media", "formulas", "page-break"] as const) {
       for (const format of ["html", "markdown", "docx", "pdf"] as const) {
         const codec = builtInFeatureFormatCodecs.find((entry) => entry.feature === feature && entry.format === format)!;
         expect(codec.serialize, `${feature}/${format} should have a real serialize function`).toBeTypeOf("function");
@@ -51,7 +51,7 @@ describe("Phase 9 SS3 gate 3: FeatureFormatCodec declarations", () => {
   it("leaves parse/serialize undefined for the 32 remaining cells backed only by whole-document walkers", () => {
     const wired = new Set(["inline-marks/docx", "colors-fonts-sizes/docx", "headings-alignment/docx", "blockquote-code/docx"]);
     const withoutRealCodec = builtInFeatureFormatCodecs.filter((entry) =>
-      entry.feature !== "images-media" && entry.feature !== "formulas" && !wired.has(`${entry.feature}/${entry.format}`));
+      entry.feature !== "images-media" && entry.feature !== "formulas" && entry.feature !== "page-break" && !wired.has(`${entry.feature}/${entry.format}`));
     expect(withoutRealCodec).toHaveLength(9 * 4 - wired.size);
     for (const codec of withoutRealCodec) {
       expect(codec.serialize).toBeUndefined();
@@ -90,6 +90,21 @@ describe("Phase 9 SS3 gate 3: FeatureFormatCodec declarations", () => {
 
     const pdf = builtInFeatureFormatCodecs.find((entry) => entry.feature === "formulas" && entry.format === "pdf")!;
     expect(pdf.serialize!(formula, { format: "pdf" })).toEqual({ kind: "text", value: "x^2" });
+  });
+
+  it("serializes a real page break atom to HTML, Markdown, DOCX, and PDF projections via the declared codecs", () => {
+    const pageBreak = { type: "page_break", id: "pb1" } as never;
+    const html = builtInFeatureFormatCodecs.find((entry) => entry.feature === "page-break" && entry.format === "html")!;
+    expect(html.serialize!(pageBreak, { format: "html" })).toContain("break-before: page");
+
+    const markdown = builtInFeatureFormatCodecs.find((entry) => entry.feature === "page-break" && entry.format === "markdown")!;
+    expect(markdown.serialize!(pageBreak, { format: "markdown" })).toBe("<!-- page break -->");
+
+    const docx = builtInFeatureFormatCodecs.find((entry) => entry.feature === "page-break" && entry.format === "docx")!;
+    expect(docx.serialize!(pageBreak, { format: "docx" })).toEqual({ kind: "pageBreak", source: "" });
+
+    const pdf = builtInFeatureFormatCodecs.find((entry) => entry.feature === "page-break" && entry.format === "pdf")!;
+    expect(pdf.serialize!(pageBreak, { format: "pdf" })).toEqual({ kind: "pageBreak", value: "" });
   });
 
   it("parses a real HTML image element back to a canonical node via the declared codec", () => {

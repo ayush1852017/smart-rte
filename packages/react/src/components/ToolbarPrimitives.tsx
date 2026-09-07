@@ -3,9 +3,9 @@ import {
   AlignCenter, AlignJustify, AlignLeft, AlignRight, ALargeSmall, Baseline, Bold, CheckSquare, ChevronDown, Code,
   Columns3, Download, Eye, FileJson, History, Image as ImageIcon, IndentDecrease, IndentIncrease, Italic, Link2,
   ListChecks, ListOrdered, ListRestart, List as ListIcon, MessageSquare, MessageSquarePlus, MoreHorizontal, MoveDown,
-  MoveLeft, MoveRight, MoveUp, Music, Omega, PanelTop, PenLine, Pilcrow, Quote, Redo2, Rows3, Square,
-  Sigma, Strikethrough, Subscript, Superscript, Table2, Trash2, Type, Underline, Undo2, Unlink2, Upload, Video,
-  Pencil, ZoomIn, ZoomOut,
+  MoveLeft, MoveRight, MoveUp, Music, Omega, PanelTop, PenLine, Pilcrow, Quote, Redo2, Rows3, ScissorsLineDashed,
+  SeparatorHorizontal, Square, Sigma, Strikethrough, Subscript, Superscript, Table2, Trash2, Type, Underline, Undo2,
+  Unlink2, Upload, Video, Pencil, ZoomIn, ZoomOut,
 } from "lucide-react";
 import { getFixedPositioningOrigin } from "./fixedPositioning.js";
 
@@ -100,6 +100,8 @@ export const toolbarIcons = {
   undo: <Undo2 {...stroke} />,
   redo: <Redo2 {...stroke} />,
   more: <MoreHorizontal {...stroke} />,
+  divider: <SeparatorHorizontal {...stroke} />,
+  pageBreak: <ScissorsLineDashed {...stroke} />,
 } as const;
 
 export type ToolbarIconKey = keyof typeof toolbarIcons;

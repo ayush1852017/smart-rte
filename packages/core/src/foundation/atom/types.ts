@@ -1,7 +1,7 @@
 import type { Attrs, SmartDocument, SmartOperation, SmartSchema } from "../types.js";
 import type { PositionLookup, ResolvedScope } from "../scope/types.js";
 
-export type AtomKind = "image" | "formula" | "video" | "audio";
+export type AtomKind = "image" | "formula" | "video" | "audio" | "divider" | "pageBreak";
 export type AtomStatus = "pending" | "ready" | "error";
 
 export interface AtomDeclaration {

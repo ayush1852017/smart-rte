@@ -8,18 +8,19 @@ import { builtInFormatFidelity, type FidelityFeature } from "./fidelity.js";
 const asAtom = (node: unknown) => node as SmartElementNode;
 
 /**
- * The 44 (feature x format) FeatureFormatCodec declarations Phase 9 SS3
- * gate 3 requires. feature/format/fidelity/note are mechanically derived
- * from builtInFormatFidelity (fidelity.ts) - that table is the single
- * source of truth for fidelity claims; this file must never restate a
- * level or note independently of it.
+ * The (feature x format) FeatureFormatCodec declarations Phase 9 SS3 gate 3
+ * requires (44 at that gate's close; "page-break" added later brings the
+ * total to 48). feature/format/fidelity/note are mechanically derived from
+ * builtInFormatFidelity (fidelity.ts) - that table is the single source of
+ * truth for fidelity claims; this file must never restate a level or note
+ * independently of it.
  *
  * parse/serialize are only attached where a genuine single-node function
  * already exists, never a fabricated per-node wrapper around whole-document
  * logic:
  * - atom/formats.ts's atomTo{Html,Markdown,Docx,Pdf} and atomFromHtmlElement
- *   operate on one SmartElementNode at a time, so images-media and formulas
- *   get real wiring for all four formats (Phase 9).
+ *   operate on one SmartElementNode at a time, so images-media, formulas,
+ *   and page-break get real wiring for all four formats.
  * - marks/formats.ts's docxProperties and block/formats.ts's blockToDocxEntry
  *   (Phase 11 Tier 2, per docs/PHASE_9_CODEC_REFACTOR_SCOPE.md's recommended
  *   marks-then-blocks order) were already genuinely single-node - or, for
@@ -50,7 +51,7 @@ export const builtInFeatureFormatCodecs: readonly FeatureFormatCodec<FidelityFea
       fidelity: capability.level,
       note: capability.note,
     };
-    if (contract.feature === "images-media" || contract.feature === "formulas") {
+    if (contract.feature === "images-media" || contract.feature === "formulas" || contract.feature === "page-break") {
       if (format === "html") {
         return {
           ...base,

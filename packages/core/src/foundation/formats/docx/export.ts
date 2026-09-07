@@ -251,6 +251,18 @@ const blockXml = (block: SmartElementNode, context: DocxSerializationContext, li
   if (block.type === "table") return tableXml(block, context);
   if (block.type === "block_image") return paragraphXml([{ ...block, type: "image" } as SmartElementNode], block, context);
   if (block.type === "block_formula") return paragraphXml([{ ...block, type: "formula" } as SmartElementNode], block, context);
+  // Previously fell through to the generic fallback below (an empty
+  // paragraph, since a divider has neither title nor src) - a horizontal
+  // line silently vanished on DOCX export with no visible trace at all.
+  // A bottom-bordered empty paragraph is exactly what Word's own
+  // Insert > Horizontal Line command produces.
+  if (block.type === "divider") return '<w:p><w:pPr><w:pBdr><w:bottom w:val="single" w:sz="6" w:space="1" w:color="auto"/></w:pBdr></w:pPr></w:p>';
+  // A real Word page break (matches Ctrl+Enter) - not a visual-only text
+  // marker. See atom/formats.ts's atomToDocx doc comment: mammoth's HTML
+  // conversion (this package's own DOCX import path) does not preserve
+  // this on re-import, confirmed via a real export/import round-trip test
+  // (format.test.ts) - export fidelity is real, import fidelity is not.
+  if (block.type === "page_break") return '<w:p><w:r><w:br w:type="page"/></w:r></w:p>';
   return paragraphXml([{ type: "text", text: String(block.attrs?.title || block.attrs?.src || "") }], block, context);
 };
 

@@ -178,6 +178,31 @@ describe("Phase 3 list format fidelity", () => {
     expect(flat).toContain('"source":"y=mx+b"');
   });
 
+  /**
+   * Markdown has no pagination concept - declared `unsupported` in
+   * formats/fidelity.ts. Confirms the honest, narrow claim that
+   * declaration actually makes: the marker's *position* is not silently
+   * deleted (an inert HTML comment survives in the exported text, unlike
+   * this project's own prior images/formulas markdown-export bugs where an
+   * atom vanished with zero trace), but re-importing that Markdown does
+   * NOT reconstruct a page_break node - there is no recovery path, which is
+   * exactly what `unsupported` (as opposed to `lossy` or `semantic`) means.
+   */
+  it("exports a page break as an inert HTML comment marker in Markdown, and does not recover it as a node on import", () => {
+    const doc: SmartDocument = { type: "doc", id: "doc", children: [
+      { type: "paragraph", id: "p1", children: [{ type: "text", text: "Before" }] },
+      { type: "page_break", id: "pb1" },
+      { type: "paragraph", id: "p2", children: [{ type: "text", text: "After" }] },
+    ] };
+    const markdown = serializeCanonicalListMarkdown(doc);
+    expect(markdown).toContain("<!-- page break -->");
+    expect(markdown).toContain("Before");
+    expect(markdown).toContain("After");
+
+    const parsed = parseCanonicalListMarkdown(markdown);
+    expect(JSON.stringify(parsed)).not.toContain("page_break");
+  });
+
   it("maps DOCX semantics to numId/ilvl and documents preset fallback through marker family", () => {
     const entries = canonicalListToDocxNumbering(fixture);
     expect(entries).toEqual([
@@ -362,6 +387,29 @@ describe("Phase 3 list format fidelity", () => {
     expect(exported).toContain("<hr");
     const reparsed = parseCanonicalListHtml(exported);
     expect(reparsed.children.map((node) => node.type)).toEqual(["paragraph", "divider", "paragraph"]);
+  });
+
+  /**
+   * "Horizontal line + page break tools" (2026-09-06). A page break has no
+   * third-party HTML tag of its own (unlike divider/<hr>) - it only ever
+   * round-trips through this app's own data-smart-type marker, same as
+   * block_formula. Also guards the div-transparent-container fix this
+   * feature required: a bare <div data-smart-type="page_break"> used to be
+   * silently unwrapped and lost entirely (see parseMixedBlockContent's own
+   * doc comment) before that fix.
+   */
+  it("round-trips a page break atom through HTML export, both at the document root and interleaved with other blocks", () => {
+    const doc: SmartDocument = { type: "doc", id: "doc", children: [
+      { type: "paragraph", id: "p1", children: [{ type: "text", text: "Before" }] },
+      { type: "page_break", id: "pb1" },
+      { type: "paragraph", id: "p2", children: [{ type: "text", text: "After" }] },
+    ] };
+    const html = serializeCanonicalListHtml(doc);
+    expect(html).toContain('data-smart-type="page_break"');
+    expect(html).toContain("break-before: page");
+    const reparsed = parseCanonicalListHtml(html);
+    expect(reparsed.children.map((node) => node.type)).toEqual(["paragraph", "page_break", "paragraph"]);
+    expect(validate(reparsed, foundationSchema)).toEqual([]);
   });
 
   /**

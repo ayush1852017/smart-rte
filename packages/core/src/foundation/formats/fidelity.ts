@@ -14,7 +14,8 @@ export type FidelityFeature =
   | "links"
   | "images-media"
   | "formulas"
-  | "special-characters";
+  | "special-characters"
+  | "page-break";
 
 export interface FormatFidelityCapability {
   level: FidelityLevel;
@@ -146,6 +147,15 @@ export const builtInFormatFidelity: readonly FeatureFidelityContract[] = [
       markdown: capability("full", "Unicode text round-trips."),
       docx: capability("full", "Unicode text is emitted as Word text (SS2.1, re-verified)."),
       pdf: capability("semantic", "Depends on font embedding and extractor Unicode maps."),
+    },
+  },
+  {
+    feature: "page-break",
+    formats: {
+      html: capability("full", "A marker element with `break-before: page`/`page-break-before: always` round-trips exactly, and genuinely paginates wherever the exported HTML is printed - including this package's own 'Save as PDF' (a real browser print of this HTML, see atom/formats.ts's atomToHtml doc comment)."),
+      markdown: capability("unsupported", "Markdown has no pagination concept. Exported as an inert `<!-- page break -->` HTML comment so the position is not silently dropped (matching this project's own history of atoms disappearing with no trace on markdown export); nothing parses this comment back into a page break on import, so this is genuinely `unsupported`, not merely undeclared."),
+      docx: capability("lossy", "A real native Word page break (`<w:br w:type=\"page\"/>`) is emitted on export - Word paginates correctly when the file is opened. Confirmed empirically (format.test.ts) that mammoth's HTML conversion (this package's own DOCX import path) drops the page break entirely on re-import, with no trace - export fidelity is real, import fidelity is not."),
+      pdf: capability("full", "This package's actual 'Save as PDF' is a real browser print of the same HTML export (react/src/adapters/pdfPrint.ts), so it inherits the html row's real pagination exactly - verified end to end via Playwright's own page.pdf() against the real print document, asserting a real page count increase. The separate atomToPdf per-node function (used only by this fidelity table's own test suite, not the real feature) is not the mechanism that produces this."),
     },
   },
 ] as const;

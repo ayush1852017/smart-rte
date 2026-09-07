@@ -3494,6 +3494,137 @@ test.describe("Phase 8b canonical product authority", () => {
   });
 
   /**
+   * "Horizontal line + page break tools" (2026-09-06). Item 1: the
+   * `divider` atom already existed (schema/render/round-trip, confirmed
+   * above) but had no deliberate insertion command at all - only reachable
+   * by pasting a real <hr>. This is the new "Horizontal line" toolbar tool,
+   * using the same insertAtom command pattern as image/video/audio.
+   */
+  test("inserts a horizontal line via the toolbar, using the same atom-insertion pattern as image/video/audio", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    const editor = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
+    await placeCaretAtEnd(page);
+    await openToolbarDropdown(page, "More to insert");
+    await toolbarMenuItem(page, "Horizontal line").click();
+    await expect(editor.locator("hr")).toHaveCount(1);
+    await expect(editor).not.toContainText("Unsupported");
+  });
+
+  /**
+   * Item 2: "Page break" is genuinely new capability - a distinct atomic
+   * node from `divider`, never reusing or overloading it. Confirms it
+   * inserts via the toolbar, renders visibly distinct from a horizontal
+   * line (a dashed marker with a "Page break" label, not a plain <hr>),
+   * and - like divider - never surfaces media-editing UI when selected.
+   */
+  test("inserts a page break via the toolbar, rendered distinctly from a horizontal line and never surfacing media UI", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    const editor = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
+    await placeCaretAtEnd(page);
+    await openToolbarDropdown(page, "More to insert");
+    await toolbarMenuItem(page, "Page break").click();
+
+    const pageBreak = editor.locator('[data-smart-type="page_break"]');
+    await expect(pageBreak).toHaveCount(1);
+    // A real, distinct node - not a divider, not an "unknown" placeholder.
+    await expect(editor.locator("hr")).toHaveCount(0);
+    await expect(editor).not.toContainText("Unsupported");
+    // Visually distinct from a plain <hr> (dashed vs solid, with a label) -
+    // asserting real computed style, not just presence of the node.
+    await expect(pageBreak).toHaveCSS("border-top-style", "dashed");
+    const label = await pageBreak.evaluate((element) => getComputedStyle(element, "::after").content);
+    expect(label).toContain("Page break");
+
+    const overlay = page.locator('[data-srte-media-overlay="true"]');
+    await pageBreak.click();
+    await expect(overlay).not.toBeVisible();
+    await pageBreak.click({ button: "right" });
+    await expect(page.locator('[data-srte-media-details-popover="true"]')).toHaveCount(0);
+    await expect(overlay).toHaveCount(0);
+  });
+
+  /**
+   * Both tools reuse the exact same atom-insertion command
+   * (insertBlockAtom -> insertAtom) that image/video/audio already use, so
+   * ordinary Backspace/Delete around them (already covered generically by
+   * the atomic-node deletion tests elsewhere) just works - this test
+   * covers the one thing genuinely specific to these two: deleting either
+   * one via the toolbar's own "Delete selected media" action (which,
+   * despite its name, deletes any selected atom - see
+   * insertMoreMenuItems's own comment on that button).
+   */
+  test("deletes a horizontal line and a page break via the toolbar's delete-selected-atom action", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    const editor = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
+    await placeCaretAtEnd(page);
+    await openToolbarDropdown(page, "More to insert");
+    await toolbarMenuItem(page, "Horizontal line").click();
+    await placeCaretAtEnd(page);
+    await openToolbarDropdown(page, "More to insert");
+    await toolbarMenuItem(page, "Page break").click();
+    await expect(editor.locator("hr")).toHaveCount(1);
+    await expect(editor.locator('[data-smart-type="page_break"]')).toHaveCount(1);
+
+    await editor.locator('[data-smart-type="page_break"]').click();
+    await openToolbarDropdown(page, "More to insert");
+    await toolbarMenuItem(page, "Delete selected media").click();
+    await expect(editor.locator('[data-smart-type="page_break"]')).toHaveCount(0);
+    await expect(editor.locator("hr")).toHaveCount(1);
+
+    await editor.locator("hr").click();
+    await openToolbarDropdown(page, "More to insert");
+    await toolbarMenuItem(page, "Delete selected media").click();
+    await expect(editor.locator("hr")).toHaveCount(0);
+  });
+
+  /**
+   * The actual point of building "Page break" at all: this package's real
+   * "Save as PDF" feature (react/src/adapters/pdfPrint.ts) is a genuine
+   * browser print of the same HTML export atomToHtml produces - not a
+   * separate PDF-generation library. This proves the `break-before: page`
+   * marker (atom/formats.ts's atomToHtml) produces REAL PDF pagination,
+   * not just a visual line that happens to persist as text - counted from
+   * a real generated PDF's own internal page objects, not inferred from
+   * anything visual. Chromium-only: `page.pdf()` (used here to capture the
+   * exact same document `window.print()` would have produced, without
+   * depending on an actual OS print dialog) is a Chromium-specific
+   * Playwright capability.
+   */
+  test("a page break produces a real second page in the actual 'Save as PDF' output, not just a visual marker", async ({ page, browserName }) => {
+    test.skip(browserName !== "chromium", "page.pdf() is Chromium-only.");
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+
+    // Chromium's own print-to-PDF output places one page object per
+    // rendered page at the top level (not inside a compressed object
+    // stream) - counting raw `/Type /Page` occurrences (excluding the
+    // plural `/Type /Pages` parent tree node) is a reliable, dependency-
+    // free proxy for real page count for this specific generator,
+    // confirmed directly against known single- and multi-page output
+    // before relying on it here.
+    const countPdfPages = async (): Promise<number> => {
+      const popupPromise = page.waitForEvent("popup");
+      await openToolbarDropdown(page, "Save a copy");
+      await toolbarMenuItem(page, "Save as PDF").click();
+      const popup = await popupPromise;
+      await popup.waitForLoadState();
+      const buffer = await popup.pdf();
+      await popup.close();
+      const matches = buffer.toString("latin1").match(/\/Type\s*\/Page(?!s)/g) || [];
+      return matches.length;
+    };
+
+    const pagesBefore = await countPdfPages();
+    expect(pagesBefore).toBe(1);
+
+    await placeCaretAtEnd(page);
+    await openToolbarDropdown(page, "More to insert");
+    await toolbarMenuItem(page, "Page break").click();
+
+    const pagesAfter = await countPdfPages();
+    expect(pagesAfter).toBe(pagesBefore + 1);
+  });
+
+  /**
    * Post-Phase-11.5 bug batch item 2: the completion report's §A described
    * ContextMenu.tsx as "click-outside-to-close", but that claim had no
    * dedicated regression test - every existing context-menu e2e test

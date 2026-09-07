@@ -639,6 +639,39 @@ export const SRTE_DEFAULT_CSS = `
 .srte-editor [contenteditable] sup {
   line-height: 0;
 }
+/*
+ * A page break has no native visual meaning in a continuously-scrolling
+ * web editor - its entire purpose is what happens at export/print time
+ * (see atom/formats.ts's atomToHtml doc comment). This gives it a clearly
+ * distinct live-editor appearance from the plain solid <hr> a horizontal
+ * line renders as by default, so the two are never confused: a dashed
+ * line with an explicit "Page break" label, per the feature's own design
+ * decision.
+ */
+.srte-editor [contenteditable] [data-smart-type="page_break"] {
+  display: block;
+  position: relative;
+  height: 0;
+  margin: 1.5em 0;
+  border: none;
+  border-top: 2px dashed var(--srte-border);
+  cursor: default;
+}
+.srte-editor [contenteditable] [data-smart-type="page_break"]::after {
+  content: "Page break";
+  position: absolute;
+  top: -0.7em;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--srte-canvas);
+  padding: 0 0.6em;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--srte-text-muted);
+  white-space: nowrap;
+}
 `;
 
 const SRTE_STYLE_ID = 'srte-theme-defaults';

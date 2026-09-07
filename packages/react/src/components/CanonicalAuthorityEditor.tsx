@@ -539,15 +539,16 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
     ? runtime.surface.renderer?.mapping.nodeToDom((currentAtomScope as { nodeId: string }).nodeId) as HTMLElement | undefined
     : undefined;
   const selectedAtomNode = atomSelected ? findNode(runtime.editor.document, (currentAtomScope as { nodeId: string }).nodeId) : null;
-  // A divider (<hr>) is atomic/selectable (so ordinary caret/Backspace/
-  // Delete behavior around it works, and the toolbar's "Delete selected
-  // atom" button applies to it), but it has no src/alt/width/height at
-  // all - MediaOverlay and the media-specific Edit/Resize actions assume
-  // every atom is a real media item, and unconditionally showing them for
-  // a divider surfaced nonsensical empty/undefined values with no
-  // sensible edit or resize target. Media-only UI is gated on this
-  // instead of plain atomSelected; delete stays available for any atom.
-  const mediaAtomSelected = atomSelected && selectedAtomNode?.type !== "divider";
+  // A divider (<hr>) or page break is atomic/selectable (so ordinary caret/
+  // Backspace/Delete behavior around it works, and the toolbar's "Delete
+  // selected atom" button applies to it), but neither has any src/alt/
+  // width/height at all - MediaOverlay and the media-specific Edit/Resize
+  // actions assume every atom is a real media item, and unconditionally
+  // showing them for one of these surfaced nonsensical empty/undefined
+  // values with no sensible edit or resize target. Media-only UI is gated
+  // on this instead of plain atomSelected; delete stays available for any
+  // atom.
+  const mediaAtomSelected = atomSelected && selectedAtomNode?.type !== "divider" && selectedAtomNode?.type !== "page_break";
   // Formula (like divider above) has no width/height concept - KaTeX sizes
   // its own rendering from the source/font-size, not stored dimensions, so
   // "Enlarge/Shrink selected media" and MediaOverlay's resize handle had no
@@ -1147,7 +1148,7 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
     runtime.focus();
   };
 
-  const insertBlockAtom = (type: "block_image" | "video" | "audio", attrs: Record<string, unknown>, nodeId: string): boolean => {
+  const insertBlockAtom = (type: "block_image" | "video" | "audio" | "divider" | "page_break", attrs: Record<string, unknown>, nodeId: string): boolean => {
     const declaration = atomDeclarations.find((entry) => entry.type === type)!;
     const selection = runtime.editor.selection;
     let parentId: string | undefined;
@@ -1696,6 +1697,8 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
       const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
       setSpecialCharPopover({ x: rect.left, y: rect.bottom + 4 });
     }} />}
+    {t.horizontalLine && <ToolbarMenuItem icon="divider" label="Horizontal line" disabled={readOnly} widePromote onClick={() => { insertBlockAtom("divider", {}, createNodeId()); runtime.focus(); }} />}
+    {t.pageBreak && <ToolbarMenuItem icon="pageBreak" label="Page break" disabled={readOnly} widePromote onClick={() => { insertBlockAtom("page_break", {}, createNodeId()); runtime.focus(); }} />}
     <ToolbarMenuItem icon="edit" label="Edit selected media" disabled={readOnly || !mediaAtomSelected} onClick={() => editSelectedAtom()} />
     <ToolbarMenuItem icon="zoomIn" label="Enlarge selected media" disabled={readOnly || !resizableAtomSelected} onClick={() => editSelectedAtom(20)} />
     <ToolbarMenuItem icon="zoomOut" label="Shrink selected media" disabled={readOnly || !resizableAtomSelected} onClick={() => editSelectedAtom(-20)} />
@@ -1846,6 +1849,8 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
           const rect = event.currentTarget.getBoundingClientRect();
           setSpecialCharPopover({ x: rect.left, y: rect.bottom + 4 });
         }} />}
+        {t.horizontalLine && <ToolbarButton icon="divider" label="Horizontal line" disabled={readOnly} widePromote onClick={() => { insertBlockAtom("divider", {}, createNodeId()); runtime.focus(); }} />}
+        {t.pageBreak && <ToolbarButton icon="pageBreak" label="Page break" disabled={readOnly} widePromote onClick={() => { insertBlockAtom("page_break", {}, createNodeId()); runtime.focus(); }} />}
         <ToolbarDropdown icon="video" label="More to insert" priority={2}>{insertMoreMenuItems}</ToolbarDropdown>
       </ToolbarGroup>
 
@@ -2128,7 +2133,7 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
             runtime.editor.setSelection({ type: "node", anchor: range.from, head: range.to }, { source: "api" });
             runtime.surface.renderer?.render(runtime.editor.document, runtime.editor.selection);
           }
-          if (mapped.node.type !== "divider" && mapped.node.type !== "unknown") {
+          if (mapped.node.type !== "divider" && mapped.node.type !== "page_break" && mapped.node.type !== "unknown") {
             setContextMenu(null);
             const isImage = mapped.node.type === "image" || mapped.node.type === "block_image";
             if (isImage) {

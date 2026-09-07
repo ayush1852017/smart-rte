@@ -179,7 +179,10 @@ interface ToolbarTools {
   listPreset,  // the numbered-list style picker (1,2,3 / a,b,c / i,ii,iii / A,B,C / I,II,III)
 
   // Insert
-  link, removeLink, image, video, audio, insertFormula, specialCharacters, insertTable,
+  link, removeLink, image, video, audio, insertFormula, specialCharacters,
+  horizontalLine,  // inserts a divider (<hr>)
+  pageBreak,       // inserts a print/export pagination marker - distinct from horizontalLine
+  insertTable,
 
   // Document
   import,

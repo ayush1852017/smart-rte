@@ -366,6 +366,39 @@ describe("canonical DOCX format codec", () => {
     expect(JSON.stringify(imported)).toContain("Done task");
   });
 
+  it("exports a real page break run and a bordered divider paragraph, neither of which survives DOCX import - matching the declared lossy fidelity", async () => {
+    const doc: SmartDocument = {
+      type: "doc", id: "doc",
+      children: [
+        { type: "paragraph", id: "p1", children: [{ type: "text", text: "Before break" }] },
+        { type: "page_break", id: "pb1" },
+        { type: "paragraph", id: "p2", children: [{ type: "text", text: "After break" }] },
+        { type: "divider", id: "d1" },
+        { type: "paragraph", id: "p3", children: [{ type: "text", text: "After line" }] },
+      ],
+    };
+    const xml = smartDocumentToDocxXml(doc);
+    // Real Word constructs, not text markers - matches Ctrl+Enter and
+    // Insert > Horizontal Line respectively.
+    expect(xml).toContain('<w:br w:type="page"/>');
+    expect(xml).toContain("<w:pBdr>");
+
+    const buffer = await blobArrayBuffer(await exportDocxDocument(doc));
+    const imported = await importDocxDocumentWithMammoth(buffer);
+    // Confirmed empirically: mammoth's HTML conversion (this package's own
+    // DOCX import path) drops both constructs entirely on import - the
+    // text on either side survives, but there's no trace of either the
+    // page break or the divider's border. Genuinely `lossy` for DOCX
+    // import, not merely undeclared - export fidelity is real (verified by
+    // the XML assertions above), import fidelity is not.
+    const serialized = JSON.stringify(imported);
+    expect(serialized).not.toContain("page_break");
+    expect(serialized).not.toContain('"type":"divider"');
+    expect(serialized).toContain("Before break");
+    expect(serialized).toContain("After break");
+    expect(serialized).toContain("After line");
+  });
+
   it("round-trips Unicode special characters through DOCX export and import, matching the declared full fidelity", async () => {
     const unicode: SmartDocument = {
       type: "doc", id: "doc",

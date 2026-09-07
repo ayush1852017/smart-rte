@@ -67,6 +67,10 @@ export interface ToolbarTools {
   audio: boolean;
   insertFormula: boolean;
   specialCharacters: boolean;
+  /** Inserts a `divider` atom (a horizontal rule) - see docs/bugs/ for the toolbar-tools feature this was added alongside. */
+  horizontalLine: boolean;
+  /** Inserts a `page_break` atom - a print/export pagination marker, distinct from `horizontalLine`. */
+  pageBreak: boolean;
   /** Requires the schema to actually have the table plugin (EditorCapabilityPreset) - see resolveToolbarTools. */
   insertTable: boolean;
   // Document
@@ -93,7 +97,8 @@ export const DEFAULT_TOOLBAR_TOOLS: ToolbarTools = {
   superscript: true, subscript: true, textColor: true, backgroundColor: true, fontSize: true, fontFamily: true,
   blockType: true, alignLeft: true, alignCenter: true, alignRight: true, alignJustify: true, quote: true,
   bulletedList: true, numberedList: true, checklist: true, listPreset: true,
-  link: true, removeLink: true, image: true, video: true, audio: true, insertFormula: true, specialCharacters: true, insertTable: true,
+  link: true, removeLink: true, image: true, video: true, audio: true, insertFormula: true, specialCharacters: true,
+  horizontalLine: true, pageBreak: true, insertTable: true,
   import: true, saveAsHtml: true, saveAsMarkdown: true, saveAsWord: true, saveAsPdf: true, saveAsSmartRte: true,
   versionHistory: true, comments: true, suggestions: true,
   undo: true, redo: true,

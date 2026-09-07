@@ -106,7 +106,7 @@ const serializeBlock = (node: SmartElementNode, includeIds: boolean, listDepth =
     if (typeof raw?.html === "string") return raw.html;
   }
   const id = includeIds ? ` data-smart-id="${escapeHtml(node.id)}"` : "";
-  if (["block_image", "block_formula", "video", "audio", "divider"].includes(node.type)) return atomToHtml(node, { renderFormulaHtml: renderFormulaHtmlMode });
+  if (["block_image", "block_formula", "video", "audio", "divider", "page_break"].includes(node.type)) return atomToHtml(node, { renderFormulaHtml: renderFormulaHtmlMode });
   if (node.type === "paragraph" || node.type === "heading") {
     const tag = node.type === "heading" ? `h${String(node.attrs?.level || 1)}` : "p";
     return `<${tag}${id}${blockAttributes(node)}>${(node.children || []).map(serializeInline).join("")}</${tag}>`;
@@ -400,6 +400,11 @@ const parseBlock = (node: HtmlNode): SmartElementNode | null => {
   }
   if (declaredAtom === "block_formula") return { type: "block_formula", id: generatedId(node, "formula"), attrs: { source: attr(node, "data-smart-formula") || rawText(node), notation: attr(node, "data-smart-notation") === "mathml" ? "mathml" : "latex" } };
   if (tag === "hr") return { type: "divider", id: generatedId(node, "divider") };
+  // No third-party HTML tag means "page break" the way <hr> means
+  // "horizontal rule" - only this app's own round-tripped export (the
+  // data-smart-type marker) is recognized, same as block_image/
+  // block_formula above.
+  if (declaredAtom === "page_break") return { type: "page_break", id: generatedId(node, "pagebreak") };
   // A third-party <img> sitting directly at block level (not wrapped in a
   // <p>) - the ordinary shape for a standalone content photo on most real
   // websites, e.g. a bare <img> between paragraphs or inside a <figure>
@@ -664,7 +669,18 @@ const parseMixedBlockContent = (nodes: readonly HtmlNode[], blockTags: readonly 
     if (isEditorUiNode(node)) return;
     const tag = node.tagName;
     if (!tag) { inlineRun.push(node); return; }
-    if (TRANSPARENT_CONTAINER_TAGS.includes(tag)) {
+    // A bare third-party <div> (no data-smart-type) is genuinely
+    // meaningless wrapping and should be unwrapped - but this app's own
+    // round-tripped div-tagged atoms (block_formula, page_break; see
+    // atomToHtml) carry that marker precisely so they're recognized as
+    // opaque nodes, not content to flatten. Without this check, exporting
+    // and reimporting a block_formula (or page_break) silently deleted it
+    // outright: parseBlock never even saw the node, since this recursion
+    // handed off its (empty) childNodes instead - confirmed directly via
+    // `serializeCanonicalListHtml` -> `parseCanonicalListHtml` on a
+    // document containing nothing but a block_formula, which returned zero
+    // children back.
+    if (TRANSPARENT_CONTAINER_TAGS.includes(tag) && !attr(node, "data-smart-type")) {
       flushInlineRun();
       result.push(...parseMixedBlockContent(node.childNodes || [], blockTags));
       return;
@@ -724,7 +740,7 @@ const markdownList = (list: SmartElementNode, depth: number): string[] => (list.
 });
 
 const markdownBlock = (node: SmartElementNode): string[] => {
-  if (["block_image", "block_formula", "video", "audio", "divider"].includes(node.type)) return [atomToMarkdown(node)];
+  if (["block_image", "block_formula", "video", "audio", "divider", "page_break"].includes(node.type)) return [atomToMarkdown(node)];
   if (node.type === "list") return markdownList(node, 0);
   if (node.type === "heading") return [`${"#".repeat(Math.max(1, Math.min(6, Number(node.attrs?.level) || 1)))} ${markdownInlineText(node)}`];
   if (node.type === "code_block") {

@@ -59,4 +59,13 @@ export const atomNodeSpecs: readonly NodeSpec[] = [
   // case for "hr"), so every pasted <hr> fell to the generic
   // "unrecognized tag" fallback and rendered as "[Unsupported: hr]".
   { type: "divider", group: "block", atomic: true, selectable: true, marks: "" },
+  // A print/export pagination marker - deliberately its own node type, not
+  // a `divider` variant: a horizontal line is decorative content with no
+  // export-time meaning beyond "draw a line," while a page break's entire
+  // purpose is what happens at export/print time (real PDF pagination, a
+  // DOCX page-break run, `break-before: page` in printed HTML) - see
+  // atom/formats.ts's atomToPdf/atomToDocx and formats/docx/export.ts for
+  // where that distinction actually matters. No content, no attrs, same as
+  // divider.
+  { type: "page_break", group: "block", atomic: true, selectable: true, marks: "" },
 ];

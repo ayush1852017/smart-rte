@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.0-beta.10
+
+- Add "Horizontal line" and "Page break" toolbar tools (in the "More to insert" group, plus wide-viewport-promoted standalone copies), and matching `tools.horizontalLine`/`tools.pageBreak` visibility flags. A page break renders as a dashed, labeled marker in the live editor — distinct from a horizontal line — and produces real pagination in both the exported HTML and this package's "Save as PDF" (a real browser print of that same HTML). Depends on `smartrte-core@1.0.0-beta.5`.
+
 ## 1.0.0-beta.9
 
 - Fix toolbar dropdowns, the mobile "More tools" kebab menu, and the text/background colour and table-border popovers rendering far from their own trigger when the editor is embedded inside a host container that has its own CSS `transform` on an ancestor - e.g. a Radix/shadcn `Dialog`'s own centering transform. These overlays now correctly account for the resulting change of containing block instead of assuming it's always the viewport.

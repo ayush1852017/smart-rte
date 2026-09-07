@@ -37,7 +37,7 @@ const renderFormulaInto = (element: HTMLElement, source: string): void => {
   }
 };
 
-const atomTypes = new Set(["image", "block_image", "formula", "block_formula", "video", "audio", "divider"]);
+const atomTypes = new Set(["image", "block_image", "formula", "block_formula", "video", "audio", "divider", "page_break"]);
 
 /**
  * atom/lifecycle.ts writes a specific upload-failure reason to
@@ -407,7 +407,7 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
    * the state through the normal diff path.
    */
   private installMediaDiagnostics(element: HTMLElement, node: SmartElementNode): void {
-    if (!atomTypes.has(node.type) || node.type === "formula" || node.type === "block_formula" || node.type === "divider") return;
+    if (!atomTypes.has(node.type) || node.type === "formula" || node.type === "block_formula" || node.type === "divider" || node.type === "page_break") return;
     if (element.hasAttribute("data-smart-media-events")) return;
     element.setAttribute("data-smart-media-events", "true");
     const clear = () => {

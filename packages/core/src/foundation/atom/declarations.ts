@@ -19,4 +19,8 @@ export const atomDeclarations: readonly AtomDeclaration[] = [
   { type: "block_formula", kind: "formula", group: "block", validate: formulaValid },
   { type: "video", kind: "video", group: "block", validate: mediaValid("video") },
   { type: "audio", kind: "audio", group: "block", validate: mediaValid("audio") },
+  // No attrs to validate - a divider/page break carries none (see
+  // atom/schema.ts's own comments on both node types).
+  { type: "divider", kind: "divider", group: "block", validate: () => true },
+  { type: "page_break", kind: "pageBreak", group: "block", validate: () => true },
 ];

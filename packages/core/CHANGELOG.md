@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.0-beta.5
+
+- Add a `page_break` atom node — a print/export pagination marker, distinct from the existing `divider` (horizontal rule) node. Exports to a real paginating marker in HTML (and this package's own "Save as PDF", which prints that same HTML) and a real native Word page break in DOCX; declared `unsupported` in Markdown (no pagination concept there), preserved as an inert comment rather than silently dropped. Add an `AtomDeclaration` for `divider` so it can be inserted via the standard atom-insertion command, not just recovered from pasted `<hr>`. Fix `divider` silently exporting as an empty paragraph in DOCX (no visible line at all).
+- Fix a real HTML round-trip bug found while building the above: a div-tagged atom's own round-trip marker (`block_formula`, and the new `page_break`) was silently deleted on reimport — treated as a meaningless transparent wrapper div and recursed into (destroying it) before ever reaching the atom-parsing logic. See `docs/bugs/html-import-div-atom-markers-treated-as-transparent-wrapper.md`.
+
 ## 1.0.0-beta.4
 
 - Fix HTML import (paste and loading a document's initial value) rendering real content as unreadable `[Unsupported: ...]` placeholders when a bare `<span>`/`<b>`/other inline-formatting element sits directly at the document root, or is interleaved between real blocks (a `<blockquote>`, `<div>`-wrapped lines, images) with no wrapping `<p>` — a common shape from legacy, pre-migration editor exports. Also fixes the same gap in `<blockquote>`/table cells/list items for content interleaved between blocks (previously only content entirely before any block content was recovered correctly).
