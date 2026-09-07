@@ -193,6 +193,15 @@ test.describe("Media details panel", () => {
   });
 
   test("a library-sourced image (picked via search from an existing item) has its license metadata persisted, not discarded at insert time", async ({ page }) => {
+    // Same fix as "sets link, radius, and align..." above - this test
+    // right-clicks an inserted image twice, and the reference media
+    // provider's URLs never resolve, racing WebKit's genuine-0x0-until-
+    // load-fails image sizing (docs/bugs/webkit-broken-image-zero-size-
+    // race.md). Neither right-click here depends on the image's natural
+    // rendered size (only on its license/id data attributes), so mocking
+    // is safe.
+    const onePixelPng = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
+    await page.route("https://media.playground.test/**", (route) => route.fulfill({ status: 200, contentType: "image/png", body: onePixelPng }));
     await page.goto("/?canonicalAuthority=1&blocks=1");
     const surface = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
 

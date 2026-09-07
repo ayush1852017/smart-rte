@@ -158,6 +158,27 @@ export function TableResizeHandles({ tableElement, onResizeColumn, onResizeRow }
         const target = Math.max(MIN_SIZE, Math.round(drag.startSize + rawDelta));
         if (rowElement) rowElement.style.height = `${target}px`;
         const actualSize = rowElement ? Math.round(rowElement.getBoundingClientRect().height) : target;
+        // If the row below is already sitting at its own natural content
+        // floor right now, it never actually had this space to begin with
+        // - a *previous* down-drag on this same boundary that hit this
+        // row's floor grew the table's total instead of taking space from
+        // it (see docs/bugs/row-resize-blocked-when-every-row-is-at-its-
+        // floor.md), and that growth is real table height, not this row's
+        // slack. Handing it back to the row here would inflate a row that
+        // never gave anything up, and a user dragging the border back to
+        // where it started would find the table permanently bloated with
+        // no way back except Undo (docs/bugs/row-resize-round-trip-
+        // inflates-neighbor.md). Measure the row's own floor by
+        // temporarily clearing its inline height override; only
+        // redistribute into it when it's currently holding real slack
+        // above that floor.
+        if (nextRowElement) {
+          const previousNextHeight = nextRowElement.style.height;
+          nextRowElement.style.height = "";
+          const nextFloor = Math.round(nextRowElement.getBoundingClientRect().height);
+          nextRowElement.style.height = previousNextHeight;
+          if (drag.nextStartSize <= nextFloor + 1) return { size: actualSize, nextSize: drag.nextStartSize };
+        }
         return { size: actualSize, nextSize: Math.round(drag.nextStartSize - (actualSize - drag.startSize)) };
       }
       // Dragging down: the row below is asked to shrink to pay for the

@@ -2,6 +2,8 @@
 
 ## 1.0.0-beta.10
 
+- Fix a table row resize regression: dragging a row boundary back to where it started (after an earlier drag hit a row's natural content floor) inflated the neighboring row instead of restoring the original layout — the only way back was Undo. Reversing a boundary drag now correctly shrinks the table's total height instead of growing a neighbor that never actually had slack to give.
+
 - Fix a horizontal line/page break appearing to be "not selectable": clicking one already set real node selection, but right-clicking showed no UI at all, unlike every other atom (image/video/audio/formula). Right-click now shows the same Delete-only action menu formula already gets (never Edit — neither atom has an editable field, and neither ever gets resize handles).
 - Add a "Line spacing" toolbar dropdown (Paragraph group) with presets (1, 1.15, 1.5, 2, 2.5), a "Default" entry that clears the override, and a custom numeric value entry, matching Google Docs' own line-spacing picker shape. Shows a checkmark on the current value, or no checkmark at all when the selection spans blocks with differing values. New `tools.lineHeight` visibility flag (default visible). Depends on `smartrte-core@1.0.0-beta.5`.
 - Add "Horizontal line" and "Page break" toolbar tools (in the "More to insert" group, plus wide-viewport-promoted standalone copies), and matching `tools.horizontalLine`/`tools.pageBreak` visibility flags. A page break renders as a dashed, labeled marker in the live editor — distinct from a horizontal line — and produces real pagination in both the exported HTML and this package's "Save as PDF" (a real browser print of that same HTML). Depends on `smartrte-core@1.0.0-beta.5`.

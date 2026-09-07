@@ -1,0 +1,37 @@
+# Dragging a row boundary back to where it started inflates the neighbor instead of restoring it - "can't undo without the Undo button"
+
+**Status:** Fixed (for the common case: a row with no real slack above its own content floor); a narrower partial-slack edge case is documented, not fully solved - see Limitations below.
+**Area:** react (`components/TableResizeHandles.tsx`)
+**First reported:** 2026-09-07, "In table when I resize row or columns then while dragging it's adjacent one's [not] doing effected (meaning no change in size) but as soon as user stop dragging and drop the cursor then if user again try to make it back as normal dragging same border line but it make space as edited by resize to adjacent one below to the row as well. Meaning, user can't undo in 1 step without using the undo button."
+**Related files:** [row-resize-drag-up-only-grows-the-row-below](row-resize-drag-up-only-grows-the-row-below.md), [row-resize-blocked-when-every-row-is-at-its-floor](row-resize-blocked-when-every-row-is-at-its-floor.md) - this is a real, distinct downstream consequence of the second fix's own deliberate tradeoff, not a re-litigation of either.
+
+## Investigation
+
+Checked `docs/bugs/` first per project convention - found two related, already-fixed row-resize bugs in the exact same file/function, both explicitly about a `<tr>`'s height behaving as a floor (not a cap) in table layout. Neither matched this report exactly (both are about a *single* drag misbehaving; this report is about a *second* drag on the *same* boundary, after the first already committed). Reproduced directly with a live debug script rather than guessing from the report's wording alone.
+
+On a freshly-inserted 2-row table (every row at its natural content floor, ~55px, no explicit `height` - the common case for any new or pasted table): dragging the row-0/row-1 boundary **down** by 40px correctly grew row 0 to 95px while row 1 stayed at its floor (55px) - this is the *already-fixed*, correct behavior from `row-resize-blocked-when-every-row-is-at-its-floor.md`: since row 1 couldn't give up any space, the table's total height simply grew by the full 40px instead of the drag doing nothing.
+
+Then dragging the **same boundary back up** by 40px, intending to restore the original layout, produced `[55, 95]` instead of `[55, 55]` - row 0 correctly shrank back to its floor, but row 1 **grew to 95px** instead of returning to 55px. The table's total height (150px) never came back down; the earlier "let the table grow" compensation is now stuck, and the visible effect is that the *neighbor* row balloons on the very drag the user expected to undo the previous one.
+
+## Root cause
+
+The "shrink" branch of `resolveSizes` (`rawDelta <= 0`, dragging up) always redistributes 100% of whatever the dragged row gives up into the neighbor, computed as `nextStartSize - (actualSize - startSize)` - correct *only* when the neighbor's current height already reflects genuine, reclaimable slack (i.e., it previously gave that exact amount of space away and should get it back). It has no way to tell that apart from the case actually reported: the neighbor's current height is sitting exactly at its own content floor, because a *prior* down-drag on this boundary hit that floor and, per the deliberate fix in `row-resize-blocked-when-every-row-is-at-its-floor.md`, grew the *table's total* instead of the neighbor. That growth was never the neighbor's to give back - it was pure "the table got taller" - but the reverse drag's arithmetic doesn't distinguish "current height = real slack" from "current height = floor, never had slack," and unconditionally treats both as reclaimable, permanently baking the earlier inflation into whichever row happens to be the neighbor during the next drag.
+
+## Fix
+
+Before growing the neighbor on a shrink (up) drag, measure the neighbor's own natural content floor (temporarily clear its inline `height` override, read `getBoundingClientRect().height`, restore the override) - the same DOM-measurement technique already used elsewhere in this function to find a row's real floor. If the neighbor's current height is already at (or within a rounding epsilon of) that floor, it has no genuine slack to give back: skip growing it, and let the dragged row's shrink reduce the table's total height instead - the mirror of how the down-drag already lets the table's total *grow* when the neighbor can't shrink. When the neighbor genuinely does have slack above its floor (the common, healthy case - e.g. an explicitly-set taller row), behavior is unchanged: full redistribution, as before.
+
+Column resize is unaffected - `table-layout: fixed` columns don't have this floor concept (confirmed already, in the earlier related fixes).
+
+## Limitations
+
+This fix correctly handles the reported and overwhelmingly common case: a row that has **never** had any slack (freshly created/pasted table, or any row currently sitting exactly at its floor). It does not perfectly restore a **partial**-slack scenario - e.g. a row explicitly set to 70px (15px of real slack above a 55px floor) that a down-drag fully consumes down to its floor: reversing that drag will (correctly) not inflate the row past its floor, but it also won't recover the original 70px, since nothing records "this row's floor-limited state on this drag used up X px of what was once real, settable slack" - only "is it at its floor *right now*" is checked, not "how much slack did it have before the most recent drag." This is a real, narrower imperfection, judged an acceptable and much smaller cost than the reported bug (permanent neighbor inflation on the ordinary case) - tracking full per-drag slack history would require materially more state than this component currently carries, and was out of scope for this fix.
+
+## Regression coverage
+
+New e2e test in `canonical-authority.spec.ts`, "dragging a row boundary down then back up on a floor-height table round-trips cleanly, without inflating the neighbor": on a freshly-inserted table, drags a row boundary down (confirms the existing, correct floor-driven table growth still happens), then drags the same boundary back up by the same amount, and asserts both rows' *rendered* heights return within 5px of their pre-drag values - confirmed failing before this fix (row 1 landed ~40px above its original height) and passing after, across all three browsers. Re-ran every existing row-resize test (`resizing an internal row boundary redistributes...`, `row resize handle tracks the live row border...`, `dragging a row boundary up does not grow the row below...`, `dragging a row boundary down grows the dragged row...`) across all three browsers - 12/12 passed, confirming the healthy-slack and floor-limited-single-drag cases these already covered are unaffected by the new floor check.
+
+## Related/similar issues
+
+[row-resize-blocked-when-every-row-is-at-its-floor](row-resize-blocked-when-every-row-is-at-its-floor.md) - the fix whose own deliberate tradeoff (let the table grow rather than block the drag) is the direct cause of this bug's reproducibility; this fix doesn't reverse that tradeoff, it makes the *reverse* drag aware of it.
+[row-resize-drag-up-only-grows-the-row-below](row-resize-drag-up-only-grows-the-row-below.md) - the original floor-measurement technique (temporarily apply a style, measure the real rendered result) this fix reuses for the neighbor's floor instead of the dragged row's own.

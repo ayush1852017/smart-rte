@@ -4529,6 +4529,66 @@ test.describe("Phase 8b canonical product authority", () => {
   });
 
   /**
+   * "if I resize row or column then while dragging it's adjacent one's
+   * doing effected... but as soon as user stop dragging and drop the
+   * cursor then if user again try to make it back as normal dragging same
+   * border line but it make space as edited by resize to adjacent one
+   * below to the row as well. User can't undo in 1 step without using
+   * undo button." - on a freshly-inserted table (every row at its own
+   * natural content floor, no real slack), the previous fix's "let the
+   * table grow instead of blocking the drag" (row-resize-blocked-when-
+   * every-row-is-at-its-floor.md) means the row below never actually gave
+   * up any space to the dragged row above - it just held still while the
+   * table grew around it. Dragging the same border back up should
+   * therefore shrink the table back down to its original total, not
+   * balloon that same row further, which is what happened before this
+   * fix (docs/bugs/row-resize-round-trip-inflates-neighbor.md).
+   */
+  test("dragging a row boundary down then back up on a floor-height table round-trips cleanly, without inflating the neighbor", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    const editor = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
+    await placeCaretAtEnd(page);
+    await insertDefaultTable(page);
+    const table = editor.locator('[data-smart-type="table"]');
+    await expect(table).toBeVisible();
+    await table.locator("td").first().click();
+
+    const rows = table.locator("tr");
+    const readRenderedHeights = () => rows.evaluateAll((elements) => elements.map((element) => element.getBoundingClientRect().height));
+    const readModelHeights = () => page.evaluate(() => {
+      const runtime = (window as typeof window & { __smartProductCanonical?: {
+        editor: { document: { children: Array<{ type: string; children?: Array<{ attrs?: { height?: number } }> }> } };
+      } }).__smartProductCanonical!;
+      const tableNode = runtime.editor.document.children.find((child) => child.type === "table");
+      return tableNode?.children?.map((row) => row.attrs?.height);
+    });
+    const originalHeights = await readRenderedHeights();
+
+    const dragBoundary = async (deltaY: number) => {
+      const handle = page.locator('[data-srte-row-resize-handle="0"]');
+      await expect(handle).toBeVisible();
+      const box = (await handle.boundingBox())!;
+      await page.mouse.move(box.x + 15, box.y + box.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(box.x + 15, box.y + box.height / 2 + deltaY, { steps: 5 });
+      await page.mouse.up();
+      await page.waitForTimeout(100);
+    };
+
+    await dragBoundary(40);
+    const modelAfterDown = await readModelHeights();
+    expect(modelAfterDown?.[0]).toBeGreaterThan(originalHeights[0] + 20);
+
+    await dragBoundary(-40);
+    const afterUp = await readRenderedHeights();
+    // Row 0 (dragged) is back near its original size, and row 1 (the
+    // neighbor that never actually gave up anything) is NOT left inflated
+    // above where it started - the whole point of this regression.
+    expect(Math.abs(afterUp[0] - originalHeights[0])).toBeLessThan(5);
+    expect(Math.abs(afterUp[1] - originalHeights[1])).toBeLessThan(5);
+  });
+
+  /**
    * Post-batch follow-up (user screenshot): every row/column resize
    * handle highlighted blue during a single drag, not just the one being
    * dragged - TableResizeHandles.tsx's highlight condition checked only

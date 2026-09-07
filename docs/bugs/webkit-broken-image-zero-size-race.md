@@ -31,6 +31,10 @@ Neither test's own logic was ever wrong to assert visibility/clickability on a f
 - `media-details.spec.ts` › "sets link, radius, and align...": same, 3/3 passed.
 - Full `canonical-toolbar-routing.spec.ts` + `media-details.spec.ts` run, all three browsers, 4 workers: 108/108 passed (including "shows resize handles on left-click...", confirming the narrow scoping didn't regress it).
 
+## Third instance (found in a later full-suite run, unrelated change)
+
+A subsequent, unrelated fix's full-suite verification run surfaced the same flake a third time, in `media-details.spec.ts`'s "a library-sourced image (picked via search from an existing item) has its license metadata persisted, not discarded at insert time" (WebKit only) - this test right-clicks an inserted image twice and was not among the two fixed above. Same root cause, same fix (mocked `https://media.playground.test/**` with a real 1x1 PNG at the top of just this test) - safe here too since both right-clicks only assert on license/id data attributes, never the image's natural rendered size. Confirmed 3/3 across all three browsers after the fix. This file's remaining unmocked image-interaction tests are left as-is deliberately (see the "shows resize handles..." exception above) unless a future run surfaces them too.
+
 ## Related/similar issues
 
 [webkit-full-suite-timeout-flake](webkit-full-suite-timeout-flake.md) - same general shape (a WebKit test racing implicit timing instead of an explicit signal), different specific cause; both point at the same underlying lesson for this codebase's WebKit e2e coverage: any test that depends on real network behavior (even a deliberately-fake, always-failing URL) needs to either mock the response or explicitly wait for the failure state, never assume a fixed assertion timeout is enough headroom.
