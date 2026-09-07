@@ -3604,7 +3604,7 @@ test.describe("Phase 8b canonical product authority", () => {
     const countPdfPages = async (): Promise<number> => {
       const popupPromise = page.waitForEvent("popup");
       await openToolbarDropdown(page, "Save a copy");
-      await toolbarMenuItem(page, "Save as PDF").click();
+      await toolbarMenuItem(page, "Print / Save as PDF").click();
       const popup = await popupPromise;
       await popup.waitForLoadState();
       const buffer = await popup.pdf();
@@ -3622,6 +3622,63 @@ test.describe("Phase 8b canonical product authority", () => {
 
     const pagesAfter = await countPdfPages();
     expect(pagesAfter).toBe(pagesBefore + 1);
+  });
+
+  /**
+   * Reported live: "In PDF formula not rendering." Root cause: `buildPdfPrintDocument`
+   * (formats/pdf/format.ts) called `serializeCanonicalListHtml` without
+   * `renderFormulaHtml: true` - the same static-HTML-consumer gap already
+   * fixed once for Sootr's Web Preview (docs/bugs/
+   * formula-not-rendered-in-static-html-consumers.md), just never applied
+   * to this second static consumer. Without it, every formula serializes
+   * as an empty, invisible <span> - present in the DOM, blank on the page.
+   * Also required adding KaTeX's own CSS to the print document (a brand
+   * new, isolated window sharing none of the host page's stylesheets) -
+   * without it, KaTeX's HTML renders as unstyled character soup, not real
+   * typeset math. Asserts real rendered geometry inside the actual popup
+   * window, not just that KaTeX markup is present in the HTML string.
+   */
+  test("a formula renders as real, visually laid-out math in the actual 'Save as PDF' output, not an empty or unstyled placeholder", async ({ page, browserName }) => {
+    test.skip(browserName !== "chromium", "Asserting on the exact popup's rendered layout is only exercised on one engine, matching the other PDF-output test in this file.");
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    await placeCaretAtEnd(page);
+    await openToolbarDropdown(page, "More to insert");
+    await toolbarMenuItem(page, "Insert formula").click();
+    await page.locator('[data-srte-formula-entry="algebra-quadratic"]').click();
+
+    const popupPromise = page.waitForEvent("popup");
+    await openToolbarDropdown(page, "Save a copy");
+    await toolbarMenuItem(page, "Print / Save as PDF").click();
+    const popup = await popupPromise;
+    // The "load" event alone is not sufficient here: this print window's
+    // KaTeX CSS is a separate CDN <link> (see buildPdfPrintDocument's own
+    // comment - it shares none of the host page's stylesheets), and a
+    // document.write()'d popup's "load" event does not reliably block on
+    // that external stylesheet actually finishing and being applied before
+    // resolving - confirmed directly (an identical assertion immediately
+    // after waitForLoadState() alone was flaky/failed; polling briefly for
+    // the real applied font, which the CDN fetch and font-face swap
+    // genuinely need a moment for, is what this is waiting on).
+    await popup.waitForLoadState();
+    const katexRoot = popup.locator(".katex").first();
+    await expect(katexRoot).toBeVisible();
+    // katex.css's own top-level `.katex` rule sets `font: ... KaTeX_Main`
+    // - a computed font-family that can only be present if this specific
+    // stylesheet actually loaded and applied (unstyled, it would resolve
+    // to the page's plain body font instead). This is the one property in
+    // KaTeX's CSS most directly diagnostic of "did the CSS load", as
+    // opposed to incidentally true even for unstyled spans.
+    await expect(async () => {
+      const fontFamily = await katexRoot.evaluate((element) => getComputedStyle(element).fontFamily);
+      expect(fontFamily).toContain("KaTeX_Main");
+    }).toPass({ timeout: 10_000 });
+    // `.katex-mathml` (the accessibility-only MathML twin KaTeX always
+    // emits alongside its visual HTML) is hidden via clip-path in
+    // katex.css - without the stylesheet it would render fully visible,
+    // duplicating the equation right next to its own unstyled HTML form.
+    const mathmlClip = await popup.locator(".katex-mathml").first().evaluate((element) => getComputedStyle(element).clipPath);
+    expect(mathmlClip).not.toBe("none");
+    await popup.close();
   });
 
   /**

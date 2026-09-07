@@ -1748,7 +1748,17 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
     {t.saveAsHtml && <ToolbarMenuItem label="Save as HTML" onClick={() => runExport("html")} />}
     {t.saveAsMarkdown && <ToolbarMenuItem label="Save as Markdown" onClick={() => runExport("markdown")} />}
     {t.saveAsWord && <ToolbarMenuItem label="Save as Word document" onClick={() => void runDocxExport()} />}
-    {t.saveAsPdf && <ToolbarMenuItem label="Save as PDF" onClick={runPdfExport} />}
+    {/*
+      Not a direct file download like its "Save as ..." siblings - it opens
+      a print window and triggers the browser's own print dialog, where
+      the user picks "Save as PDF" as the destination. A real one-click
+      PDF download would require bundling a client-side PDF-generation
+      library (browsers have no built-in API for a page to generate a PDF
+      itself) - out of scope; this label instead sets the right
+      expectation for the mechanism that actually exists, reported live as
+      "Save as PDF should download as PDF but it opens in new page."
+    */}
+    {t.saveAsPdf && <ToolbarMenuItem label="Print / Save as PDF" onClick={runPdfExport} />}
     {t.saveAsSmartRte && <ToolbarMenuItem icon="json" label="Save as Smart RTE file" onClick={() => runExport("native")} />}
   </>;
   const showSaveCopy = t.saveAsHtml || t.saveAsMarkdown || t.saveAsWord || t.saveAsPdf || t.saveAsSmartRte;

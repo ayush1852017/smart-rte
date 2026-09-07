@@ -186,12 +186,35 @@ export const importPdfDocument = async (arrayBuffer: ArrayBuffer): Promise<PdfIm
 };
 
 export const buildPdfPrintDocument = (document: SmartDocument) => {
-  const html = serializeCanonicalListHtml(document, { clean: true });
+  // Same static-HTML-consumer gap as Sootr's Web Preview (see docs/bugs/
+  // formula-not-rendered-in-static-html-consumers.md): this print window
+  // never runs the live editor's own KaTeX rendering against its DOM, so
+  // without renderFormulaHtml every formula/block_formula serializes as an
+  // empty <span>/<div> - present in the markup, invisible on the printed
+  // page and in the resulting PDF. Bakes real KaTeX HTML+MathML in instead,
+  // exactly like the Web Preview fix.
+  const html = serializeCanonicalListHtml(document, { clean: true, renderFormulaHtml: true });
   return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <title>Smart RTE PDF Export</title>
+  <!--
+    KaTeX's rendered HTML (baked in above) is a set of unstyled <span>s
+    without this - it is a CSS framework, not self-describing markup. This
+    print window is a brand-new, isolated document (opened via
+    window.open + document.write - see react/src/adapters/pdfPrint.ts) that
+    shares none of the host page's own stylesheets, so it needs its own
+    copy regardless of whether the host has already loaded KaTeX's CSS for
+    the live editor. Matches this package's own documented setup
+    convention (README.md's KaTeX CDN <link>) rather than inventing a
+    second one - pinned to the exact version this package bundles
+    (package.json's "katex" dependency) so the JS that generated the
+    markup and the CSS that styles it never drift apart. Requires network
+    access at export time, the same as the live editor already requires
+    for its own KaTeX CSS.
+  -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.18.4/dist/katex.min.css">
   <style>
     @page { margin: 18mm; }
     html, body { background: #fff; }

@@ -212,7 +212,7 @@ test.describe("canonical toolbar routing", () => {
 
     const pdfPopup = page.waitForEvent("popup");
     await openToolbarDropdown(page, "Save a copy");
-    await toolbarMenuItem(page, "Save as PDF").click();
+    await toolbarMenuItem(page, "Print / Save as PDF").click();
     await (await pdfPopup).close();
   });
 
