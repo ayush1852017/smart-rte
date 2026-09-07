@@ -589,10 +589,17 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
   // node.type.includes("formula") for its own correct "Formula source"
   // prompt.
   const resizableAtomSelected = mediaAtomSelected && selectedAtomNode?.type !== "formula" && selectedAtomNode?.type !== "block_formula";
+  // A divider/page break has no editable field and no width/height, but it
+  // is still a real, selectable, deletable atom - right-clicking one should
+  // surface the same kind of Delete-only action menu formula already gets
+  // (docs/bugs/horizontal-line-not-visibly-selectable.md), not the silence
+  // `mediaAtomSelected` alone produces (that flag exists to hide fields
+  // that don't apply, not to hide a delete affordance entirely).
+  const actionOnlyAtomSelected = atomSelected && (selectedAtomNode?.type === "divider" || selectedAtomNode?.type === "page_break");
   const selectedAtomId = atomSelected && "nodeId" in currentAtomScope ? currentAtomScope.nodeId : null;
   useEffect(() => {
-    if (mediaContextMenu && (!mediaAtomSelected || mediaContextMenu.nodeId !== selectedAtomId)) setMediaContextMenu(null);
-  }, [mediaContextMenu, mediaAtomSelected, selectedAtomId]);
+    if (mediaContextMenu && (!(mediaAtomSelected || actionOnlyAtomSelected) || mediaContextMenu.nodeId !== selectedAtomId)) setMediaContextMenu(null);
+  }, [mediaContextMenu, mediaAtomSelected, actionOnlyAtomSelected, selectedAtomId]);
   useEffect(() => {
     if (mediaResizeTarget && (!mediaAtomSelected || mediaResizeTarget.nodeId !== selectedAtomId)) setMediaResizeTarget(null);
   }, [mediaResizeTarget, mediaAtomSelected, selectedAtomId]);
@@ -2077,7 +2084,7 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
       onDelete={() => undefined}
       onDismiss={() => setMediaResizeTarget(null)}
     />}
-    {!readOnly && mediaContextMenu && mediaAtomSelected && selectedAtomElement && <MediaOverlay
+    {!readOnly && mediaContextMenu && (mediaAtomSelected || actionOnlyAtomSelected) && selectedAtomElement && <MediaOverlay
       atomElement={selectedAtomElement}
       alt={typeof selectedAtomNode?.attrs?.alt === "string" ? selectedAtomNode.attrs.alt : ""}
       width={typeof selectedAtomNode?.attrs?.width === "number" ? selectedAtomNode.attrs.width : undefined}
@@ -2086,6 +2093,7 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
       x={mediaContextMenu.x}
       y={mediaContextMenu.y}
       resizable={resizableAtomSelected}
+      editable={mediaAtomSelected}
       onEdit={() => { setMediaContextMenu(null); editSelectedAtom(); }}
       onResize={(by) => { setMediaContextMenu(null); editSelectedAtom(by); }}
       onResizeTo={resizeSelectedAtomTo}
@@ -2227,7 +2235,7 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
             runtime.editor.setSelection({ type: "node", anchor: range.from, head: range.to }, { source: "api" });
             runtime.surface.renderer?.render(runtime.editor.document, runtime.editor.selection);
           }
-          if (mapped.node.type !== "divider" && mapped.node.type !== "page_break" && mapped.node.type !== "unknown") {
+          if (mapped.node.type !== "unknown") {
             setContextMenu(null);
             const isImage = mapped.node.type === "image" || mapped.node.type === "block_image";
             if (isImage) {

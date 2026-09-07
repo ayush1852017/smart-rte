@@ -12,6 +12,8 @@ export interface MediaOverlayProps {
   showMenu?: boolean;
   /** False for atoms with no width/height concept (e.g. formula, sized by KaTeX from source/font-size) - hides resize controls and handles, keeping Edit/Delete. */
   resizable?: boolean;
+  /** False for atoms with no editable fields at all (divider, page break) - hides the Alt/Size/Source info block and the Edit button, keeping only Delete. */
+  editable?: boolean;
   onEdit: () => void;
   onResize: (by: number) => void;
   onResizeTo: (width: number, height: number) => void;
@@ -124,7 +126,7 @@ const boundsForDirection = (bounds: ResizeBounds, direction: ResizeDirection): R
  * the pointer is released. The quick-action menu is optional because image
  * right-clicks use MediaDetailsPopover directly.
  */
-export function MediaOverlay({ atomElement, alt, width, height, src, x, y, showMenu = true, resizable = true, onEdit, onResize, onResizeTo, onDelete, onDismiss }: MediaOverlayProps) {
+export function MediaOverlay({ atomElement, alt, width, height, src, x, y, showMenu = true, resizable = true, editable = true, onEdit, onResize, onResizeTo, onDelete, onDismiss }: MediaOverlayProps) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<DragState | null>(null);
   const [placement, setPlacement] = useState<{ left: number; top: number } | null>(null);
@@ -290,13 +292,13 @@ export function MediaOverlay({ atomElement, alt, width, height, src, x, y, showM
           }
         }}
       >
-        <div style={{ fontSize: 12, marginBottom: 8, display: "grid", gap: 2, opacity: 0.85 }}>
+        {editable && <div style={{ fontSize: 12, marginBottom: 8, display: "grid", gap: 2, opacity: 0.85 }}>
           <div><strong>Alt text:</strong> {alt || "(none)"}</div>
           {width && height && <div><strong>Size:</strong> {Math.round(width)}×{Math.round(height)}</div>}
           {src && <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}><strong>Source:</strong> {src}</div>}
-        </div>
+        </div>}
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          <button type="button" style={buttonStyle} onClick={onEdit}>Edit</button>
+          {editable && <button type="button" style={buttonStyle} onClick={onEdit}>Edit</button>}
           {resizable && <button type="button" style={buttonStyle} onClick={() => onResize(20)}>Resize +</button>}
           {resizable && <button type="button" style={buttonStyle} onClick={() => onResize(-20)}>Resize βˆ’</button>}
           <button type="button" style={{ ...buttonStyle, color: "var(--srte-danger)", marginLeft: "auto" }} onClick={onDelete}>Delete</button>

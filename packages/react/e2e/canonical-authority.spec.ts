@@ -3624,6 +3624,38 @@ test.describe("Phase 8b canonical product authority", () => {
   });
 
   /**
+   * docs/bugs/horizontal-line-not-visibly-selectable.md - a left-click on a
+   * divider/page break already set real node selection ("Delete selected
+   * media" was enabled in the toolbar), but produced zero visible UI, which
+   * read as "not selectable" from the outside. Right-click now surfaces the
+   * same Delete-only action menu formula already gets (never Edit/Resize -
+   * neither atom has an editable field or a width/height concept).
+   */
+  test("right-clicking a horizontal line or page break shows a Delete-only action menu, never Edit/Resize", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    const editor = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
+    await placeCaretAtEnd(page);
+    await openToolbarDropdown(page, "More to insert");
+    await toolbarMenuItem(page, "Horizontal line").click();
+    await placeCaretAtEnd(page);
+    await openToolbarDropdown(page, "More to insert");
+    await toolbarMenuItem(page, "Page break").click();
+
+    const overlay = page.locator('[data-srte-media-overlay="true"]');
+    for (const selector of ["hr", '[data-smart-type="page_break"]']) {
+      await editor.locator(selector).click({ button: "right" });
+      await expect(overlay).toBeVisible();
+      await expect(overlay.getByRole("button", { name: "Edit" })).toHaveCount(0);
+      await expect(page.locator('[data-srte-media-resize-handle-direction]')).toHaveCount(0);
+      const deleteButton = overlay.getByRole("button", { name: "Delete" });
+      await expect(deleteButton).toBeVisible();
+      const countBefore = await editor.locator(selector).count();
+      await deleteButton.click();
+      await expect(editor.locator(selector)).toHaveCount(countBefore - 1);
+    }
+  });
+
+  /**
    * "Horizontal line + page break tools" (2026-09-06). Item 1: the
    * `divider` atom already existed (schema/render/round-trip, confirmed
    * above) but had no deliberate insertion command at all - only reachable
@@ -3665,12 +3697,20 @@ test.describe("Phase 8b canonical product authority", () => {
     const label = await pageBreak.evaluate((element) => getComputedStyle(element, "::after").content);
     expect(label).toContain("Page break");
 
+    // Left-click alone (like formula) shows no UI at all - only real node
+    // selection. Right-click gets the same Delete-only action menu formula
+    // and divider get (docs/bugs/horizontal-line-not-visibly-selectable.md)
+    // - "never surfacing media UI" means never the full Media details
+    // popover and never Edit/Resize, not "never any menu at all".
     const overlay = page.locator('[data-srte-media-overlay="true"]');
     await pageBreak.click();
     await expect(overlay).not.toBeVisible();
     await pageBreak.click({ button: "right" });
     await expect(page.locator('[data-srte-media-details-popover="true"]')).toHaveCount(0);
-    await expect(overlay).toHaveCount(0);
+    await expect(overlay).toBeVisible();
+    await expect(overlay.getByRole("button", { name: "Edit" })).toHaveCount(0);
+    await expect(page.locator('[data-srte-media-resize-handle-direction]')).toHaveCount(0);
+    await expect(overlay.getByRole("button", { name: "Delete" })).toBeVisible();
   });
 
   /**
