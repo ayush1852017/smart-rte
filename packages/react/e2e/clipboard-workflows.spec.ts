@@ -68,6 +68,62 @@ test.describe("Phase 8a canonical clipboard", () => {
   });
 
   /**
+   * Regression: a selection spanning into a different structural ancestor at a
+   * different nesting depth than its other endpoint (e.g. from a shallow list
+   * item into a paragraph nested two levels deeper inside a sub-list) used to
+   * throw "Clipboard copy is clamped to one structural parent." as an uncaught
+   * error, silently breaking copy/cut for any everyday selection shaped like
+   * this - not just an exotic edge case. See docs/bugs for the write-up.
+   */
+  test("copies and cuts a selection crossing into a differently-nested list item without throwing", async ({ page }) => {
+    await page.goto("/?canonical=1&lists=1");
+    const result = await page.evaluate(() => {
+      const runtime = window.__smartCanonical!;
+      const selection = {
+        type: "text" as const,
+        anchor: { path: [0, 0, 0], offset: 2 },
+        head: { path: [0, 1, 1, 0, 0], offset: 3 },
+      };
+      runtime.editor.setSelection(selection, { source: "api" });
+      runtime.renderer.render(runtime.editor.document, runtime.editor.selection);
+
+      let copyThrew = false;
+      const copyData = new DataTransfer();
+      try {
+        runtime.pipeline.handleCopy({ clipboardData: copyData, preventDefault: () => undefined } as ClipboardEvent);
+      } catch {
+        copyThrew = true;
+      }
+      const copiedText = copyData.getData("text/plain");
+
+      runtime.editor.setSelection(selection, { source: "api" });
+      let cutThrew = false;
+      const cutData = new DataTransfer();
+      try {
+        runtime.pipeline.handleCut({ clipboardData: cutData, preventDefault: () => undefined } as ClipboardEvent);
+      } catch {
+        cutThrew = true;
+      }
+      const afterCutText = JSON.stringify(runtime.editor.document);
+      return { copyThrew, copiedText, cutThrew, afterCutText };
+    });
+    expect(result.copyThrew).toBe(false);
+    expect(result.copiedText).toContain("pha");
+    expect(result.copiedText).toContain("beta");
+    expect(result.copiedText).toContain("nes");
+    expect(result.copiedText).not.toContain("alpha");
+    expect(result.copiedText).not.toContain("gamma");
+
+    expect(result.cutThrew).toBe(false);
+    expect(result.afterCutText).toContain("\"text\":\"al\"");
+    expect(result.afterCutText).toContain("\"text\":\"ted\"");
+    expect(result.afterCutText).toContain("gamma");
+    expect(result.afterCutText).not.toContain("alpha");
+    expect(result.afterCutText).not.toContain("beta");
+    expect(result.afterCutText).not.toContain("\"text\":\"nested\"");
+  });
+
+  /**
    * Phase 11 Tier 3: axe-core coverage expansion - clipboard-workflows.spec.ts
    * had zero axe scans before this pass. Pastes real HTML (headings, a
    * list, marks) through the canonical paste path and scans the result.

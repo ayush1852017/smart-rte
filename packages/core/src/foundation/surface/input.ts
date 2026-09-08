@@ -665,15 +665,23 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
   handleCopy(event: ClipboardEvent): void {
     if (!event.clipboardData || collapsed(this.editor.selection)) return;
     event.preventDefault();
-    this.writeTransfer(event.clipboardData, sliceClipboardSelection(this.editor.document, this.editor.selection));
+    try {
+      this.writeTransfer(event.clipboardData, sliceClipboardSelection(this.editor.document, this.editor.selection));
+    } catch {
+      this.unhandled.push("copy-rejected");
+    }
   }
 
   handleCut(event: ClipboardEvent): void {
     if (!event.clipboardData || collapsed(this.editor.selection)) return;
     event.preventDefault();
-    this.writeTransfer(event.clipboardData, sliceClipboardSelection(this.editor.document, this.editor.selection));
-    const deletion = deleteClipboardSelection(this.editor.document, this.editor.selection, this.editor.positions);
-    this.commitClipboard({ ...deletion, definingAncestorId: null }, "cut");
+    try {
+      this.writeTransfer(event.clipboardData, sliceClipboardSelection(this.editor.document, this.editor.selection));
+      const deletion = deleteClipboardSelection(this.editor.document, this.editor.selection, this.editor.positions);
+      this.commitClipboard({ ...deletion, definingAncestorId: null }, "cut");
+    } catch {
+      this.unhandled.push("cut-rejected");
+    }
   }
 
   handlePaste(event: ClipboardEvent): void {
@@ -699,10 +707,14 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
 
   private handleDragStart(event: DragEvent): void {
     if (!event.dataTransfer || collapsed(this.editor.selection)) return;
-    const fragment = sliceClipboardSelection(this.editor.document, this.editor.selection);
-    this.internalDrag = { selection: this.editor.selection, fragment };
-    this.writeTransfer(event.dataTransfer, fragment);
-    event.dataTransfer.effectAllowed = "move";
+    try {
+      const fragment = sliceClipboardSelection(this.editor.document, this.editor.selection);
+      this.internalDrag = { selection: this.editor.selection, fragment };
+      this.writeTransfer(event.dataTransfer, fragment);
+      event.dataTransfer.effectAllowed = "move";
+    } catch {
+      this.unhandled.push("dragstart-rejected");
+    }
   }
 
   handleDrop(event: DragEvent): void {

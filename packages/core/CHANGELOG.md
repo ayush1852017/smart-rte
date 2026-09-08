@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.0-beta.7
+
+- Fix copy, cut, and native drag throwing an uncaught error ("Clipboard copy is clamped to one structural parent.") for any selection whose two endpoints weren't immediate siblings — e.g. starting in a plain paragraph and dragging into a nested list item, or spanning two list items at different nesting depths. This was not an exotic shape: any selection reaching into a list, table, or blockquote from outside it hit this, and the failure was a silent no-op (nothing copied) with a console error, not a graceful fallback. See `docs/bugs/clipboard-copy-cut-throws-across-differently-nested-endpoints.md`.
+
 ## 1.0.0-beta.6
 
 - Fix pasting a long, list-free document (many short paragraphs, no images) being slow enough to look broken — the Office/Google Docs list normalizers recursed into every paragraph hunting for nested lists a `<p>` can never structurally contain. Pasting a few thousand blocks now completes in well under a second instead of multiple seconds to tens of seconds. See `docs/bugs/clipboard-paste-slow-on-large-list-free-documents.md` for the full investigation, including a known remaining limitation for very large (10,000+ block) pastes.
