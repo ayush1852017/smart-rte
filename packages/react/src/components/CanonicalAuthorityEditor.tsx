@@ -691,6 +691,13 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
   const currentListPreset = currentListParts.length === 1 && typeof rootList?.attrs?.preset === "string"
     ? rootList.attrs.preset
     : "";
+  // The Bulleted/Numbered list buttons' own split-control style pickers -
+  // scoped to one kind each, so unlike the shared "List preset" select above
+  // (which lists both kinds together) each only shows/reflects presets of
+  // its own kind, and reads as unset (native placeholder) when the active
+  // preset (if any) belongs to the other kind.
+  const currentBulletPreset = SMART_LIST_PRESETS.find((preset) => preset.id === currentListPreset)?.kind === "bullet" ? currentListPreset : "";
+  const currentOrderedPreset = SMART_LIST_PRESETS.find((preset) => preset.id === currentListPreset)?.kind === "ordered" ? currentListPreset : "";
 
   const toggleCheckedItems = () => {
     if (currentListScope.kind !== "list-selection" || currentList?.attrs?.checkable !== true) return;
@@ -775,6 +782,39 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
       listIds: ids(Math.max(1, count * 2)), itemIds: ids(Math.max(1, count)), checkable,
       ...(rememberedPreset ? { preset: rememberedPreset } : { style }),
     }, context), { preserveSelectionById: true });
+  };
+
+  /**
+   * The Bulleted/Numbered list buttons' own split-control style picker
+   * (a native `<select>`, not a custom-positioned dropdown - see the
+   * `.srte-split-control` styling) - lets the user choose a specific preset
+   * directly from the button itself, instead of only ever getting the
+   * plain/remembered default from a click and having to visit the separate
+   * "More list tools" menu to pick a named style. Applies to an existing
+   * list (whole-list, like the shared "List preset" select) or creates a
+   * brand-new list with that preset when nothing is selected yet - unlike
+   * that shared select, which only ever edits an already-existing list.
+   * Scope is resolved fresh here (not from the outer currentListScope/
+   * currentListParts consts) to match toggleList's own convention of
+   * re-resolving at click time rather than trusting a render-time snapshot.
+   */
+  const applyListPreset = (preset: string) => {
+    const pickedKind = SMART_LIST_PRESETS.find((candidate) => candidate.id === preset)?.kind;
+    const selectedList = listScope();
+    const context = blockContext();
+    if (selectedList.kind === "list-selection") {
+      const parts = listSelectionParts(selectedList);
+      if (parts.length !== 1) return;
+      const rootId = outermostListId(parts[0].listId);
+      runtime.executeOperations(setListPreset(runtime.editor.document, { ...parts[0], listId: rootId }, { preset }, context), { preserveSelectionById: true });
+    } else {
+      const selectedBlocks = blockScope();
+      const count = selectedBlocks.kind === "block-range" ? selectedBlocks.blockIds.length : 1;
+      runtime.executeOperations(createList(runtime.editor.document, selectedBlocks, {
+        listIds: ids(Math.max(1, count * 2)), itemIds: ids(Math.max(1, count)), checkable: false, preset,
+      }, context), { preserveSelectionById: true });
+    }
+    if (pickedKind) setLastListPreset((previous) => ({ ...previous, [pickedKind]: preset }));
   };
 
   const runList = (action: "indent" | "outdent" | "up" | "down") => {
@@ -1952,8 +1992,43 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
       </ToolbarGroup>
 
       <ToolbarGroup>
-        {t.bulletedList && <ToolbarButton icon="bulletedList" label="Bulleted list" ariaLabel="Bulleted list" pressed={listStyleActive("disc")} disabled={readOnly} onClick={() => toggleList("disc")} />}
-        {t.numberedList && <ToolbarButton icon="numberedList" label="Numbered list" ariaLabel="Numbered list" pressed={listStyleActive("decimal")} disabled={readOnly} onClick={() => toggleList("decimal")} />}
+        {/*
+          A split control: the button itself keeps its existing one-click
+          toggle behavior unchanged (create/remove, reapplying whichever
+          preset was last picked) - dozens of existing flows and tests
+          depend on that single click. The attached native <select> (styled
+          via .srte-split-control into a plain chevron - see theme.ts) is
+          the new, additional way to jump straight to a specific preset from
+          the button itself, without a custom-positioned dropdown panel (and
+          therefore none of that pattern's own containing-block/clamping bug
+          class - see docs/bugs/toolbar-overlay-*.md). Gated behind
+          t.listPreset like the shared "List preset" select elsewhere - a
+          consumer that disabled that feature gets the plain button only.
+        */}
+        {t.bulletedList && (t.listPreset ? <span className="srte-split-control">
+          <ToolbarButton icon="bulletedList" label="Bulleted list" ariaLabel="Bulleted list" pressed={listStyleActive("disc")} disabled={readOnly} onClick={() => toggleList("disc")} />
+          <select
+            aria-label="Bulleted list style" title="Bulleted list style"
+            disabled={readOnly || (currentListScope.kind === "list-selection" && currentListParts.length !== 1)}
+            value={currentBulletPreset}
+            onChange={(event) => { const preset = event.target.value; if (preset) applyListPreset(preset); }}
+          >
+            <option value="">Bulleted list style</option>
+            {SMART_LIST_PRESETS.filter((preset) => preset.kind === "bullet").map((preset) => <option key={preset.id} value={preset.id}>{preset.label}</option>)}
+          </select>
+        </span> : <ToolbarButton icon="bulletedList" label="Bulleted list" ariaLabel="Bulleted list" pressed={listStyleActive("disc")} disabled={readOnly} onClick={() => toggleList("disc")} />)}
+        {t.numberedList && (t.listPreset ? <span className="srte-split-control">
+          <ToolbarButton icon="numberedList" label="Numbered list" ariaLabel="Numbered list" pressed={listStyleActive("decimal")} disabled={readOnly} onClick={() => toggleList("decimal")} />
+          <select
+            aria-label="Numbered list style" title="Numbered list style"
+            disabled={readOnly || (currentListScope.kind === "list-selection" && currentListParts.length !== 1)}
+            value={currentOrderedPreset}
+            onChange={(event) => { const preset = event.target.value; if (preset) applyListPreset(preset); }}
+          >
+            <option value="">Numbered list style</option>
+            {SMART_LIST_PRESETS.filter((preset) => preset.kind === "ordered").map((preset) => <option key={preset.id} value={preset.id}>{preset.label}</option>)}
+          </select>
+        </span> : <ToolbarButton icon="numberedList" label="Numbered list" ariaLabel="Numbered list" pressed={listStyleActive("decimal")} disabled={readOnly} onClick={() => toggleList("decimal")} />)}
         {t.checklist && <ToolbarButton icon="checklist" label="Checklist" ariaLabel="Checklist" pressed={listStyleActive("disc", true)} disabled={readOnly} onClick={() => toggleList("disc", true)} />}
         <ToolbarDropdown icon="restart" label="More list tools" priority={2}>
           {listPresetSelect}

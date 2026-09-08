@@ -628,6 +628,45 @@ test.describe("canonical toolbar routing", () => {
   });
 
   /**
+   * "Have you implemented opening dropdown of preset list by clicking on
+   * Bulleted List and Numbered list?" - the plain-toggle behavior above
+   * (reapplying the last picked preset) wasn't what was actually wanted: a
+   * way to jump straight to a specific named preset from the button itself,
+   * not just from the separate "More list tools" menu. A genuine dropdown
+   * panel was ruled out - the button's own one-click toggle is depended on
+   * by dozens of existing flows/tests and real usage, and a whole-button
+   * dropdown would have removed that entirely. This is a split control
+   * instead: the button keeps its exact existing click behavior (tested
+   * above), and an attached native <select> (a plain chevron, via
+   * .srte-split-control - no custom-positioned panel, sidestepping that
+   * whole bug class) lets a preset be picked directly.
+   */
+  test("the Bulleted/Numbered list split-control select applies a specific preset directly from the button itself", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    const surface = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
+
+    // No list yet - picking a preset creates one directly (not just editing
+    // an existing list, unlike the shared "List preset" select).
+    await selectFirstText(page);
+    await page.getByRole("combobox", { name: "Bulleted list style" }).selectOption("bullet-star");
+    await expect(surface.locator("ul")).toHaveAttribute("data-smart-list-preset", "bullet-star");
+
+    // Switching kind via the Numbered list select converts the whole list
+    // and remembers this preset independently of the bullet one.
+    await page.getByRole("combobox", { name: "Numbered list style" }).selectOption("ordered-upper-roman");
+    await expect(surface.locator("ol")).toHaveAttribute("data-smart-list-preset", "ordered-upper-roman");
+    await expect(surface.locator("ul")).toHaveCount(0);
+
+    // The plain toggle button still works exactly as before, and now
+    // reapplies the preset just picked via the select (same remembered-
+    // preset mechanism the toggle test above already covers).
+    await page.getByRole("button", { name: "Numbered list", exact: true }).click();
+    await expect(surface.locator("ol")).toHaveCount(0);
+    await page.getByRole("button", { name: "Numbered list", exact: true }).click();
+    await expect(surface.locator("ol")).toHaveAttribute("data-smart-list-preset", "ordered-upper-roman");
+  });
+
+  /**
    * A Direction B toolbar dropdown left open, then clicking straight into
    * the editor, previously left it open - the component's own doc comment
    * claimed native `<details>` "already closes on an outside click by

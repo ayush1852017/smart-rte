@@ -427,6 +427,17 @@ export const SRTE_DEFAULT_CSS = `
   .srte-tool-button, .srte-toolbar select { height: 40px; min-width: 40px; }
   .srte-toolbar-group[data-srte-priority="3"],
   .srte-toolbar-menu[data-srte-priority="2"] { display: none; }
+  /*
+   * The Bulleted/Numbered list buttons' split-control style picker is an
+   * additional desktop convenience on top of the always-reachable "List
+   * preset" control inside the mobile more-menu below - not a second,
+   * narrower-only path, so hiding it here loses no functionality. Without
+   * this, the extra ~54px it adds to a non-wrapping .srte-toolbar-group
+   * squeezed the Checklist button below its own content width at the
+   * narrowest tested widths instead of the group wrapping cleanly.
+   */
+  .srte-split-control > select { display: none; }
+  .srte-split-control > .srte-tool-button:first-child { border-radius: 8px; }
   .srte-mobile-more { display: block; }
   /* left/top are no longer set here - ToolbarPrimitives.tsx now computes
      them via inline style (JS-measured, position:fixed, viewport-clamped;
