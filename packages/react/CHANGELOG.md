@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.0-beta.12
+
+- Fix toolbar dropdowns/popovers inside a `contain: paint | strict | content` ancestor rendering off-screen or clipped to invisible near that ancestor's own edge — `1.0.0-beta.11`'s `contain` fix corrected the coordinate origin but still clamped against the full viewport instead of the actual clipping box, so a menu near the host's own right/bottom edge could compute a position outside what the ancestor actually lets paint, making it invisible even though its coordinates looked reasonable. Affects `ToolbarDropdown`, `MobileMoreMenu`, the color picker popover, and the table border popover — all four shared the same viewport-only clamping logic. See `docs/bugs/toolbar-overlay-clamped-to-wrong-viewport-inside-contain-paint.md`.
+- The Bulleted list/Numbered list toolbar buttons now act as a toggle that reapplies the last preset you picked for that list kind (via "More list tools") instead of always resetting to the plain default marker. Picking "Diamond bullets" once, turning the list off, then clicking Bulleted list again reapplies diamond bullets directly. Session-only (not persisted), and does not apply to the checklist toggle.
+
 ## 1.0.0-beta.11
 
 - Fix toolbar dropdowns/popovers still landing far from their trigger inside a host container that uses CSS `contain: paint | strict | content` on an ancestor (a real gap in `1.0.0-beta.9`'s transform-only fix — `contain` also creates a `position: fixed` containing block, independent of `transform`). See `docs/bugs/toolbar-overlay-misplaced-inside-contain-ancestor.md`.

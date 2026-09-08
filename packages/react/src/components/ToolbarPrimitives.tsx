@@ -7,7 +7,7 @@ import {
   ScissorsLineDashed, SeparatorHorizontal, Square, Sigma, Strikethrough, Subscript, Superscript, Table2, Trash2, Type,
   Underline, Undo2, Unlink2, Upload, Video, Pencil, ZoomIn, ZoomOut,
 } from "lucide-react";
-import { getFixedPositioningOrigin } from "./fixedPositioning.js";
+import { getFixedPositioningOrigin, getPositioningBounds } from "./fixedPositioning.js";
 
 /**
  * The toolbar's icon set (Phase: Direction B toolbar redesign, 2026-08-29).
@@ -247,11 +247,10 @@ export function ToolbarDropdown({ icon, label, priority, children }: {
       const menu = details.querySelector<HTMLElement>(":scope > .srte-menu");
       const menuWidth = menu?.offsetWidth ?? 210;
       const menuHeight = menu?.offsetHeight ?? 0;
-      const viewportWidth = window.innerWidth;
-      const viewportHeight = window.innerHeight;
-      const left = Math.min(Math.max(margin, triggerRect.left), Math.max(margin, viewportWidth - menuWidth - margin));
-      const overflowsBottom = triggerRect.bottom + 6 + menuHeight > viewportHeight - margin;
-      const top = overflowsBottom ? Math.max(margin, triggerRect.top - menuHeight - 6) : triggerRect.bottom + 6;
+      const bounds = getPositioningBounds(details);
+      const left = Math.min(Math.max(bounds.left + margin, triggerRect.left), Math.max(bounds.left + margin, bounds.right - menuWidth - margin));
+      const overflowsBottom = triggerRect.bottom + 6 + menuHeight > bounds.bottom - margin;
+      const top = overflowsBottom ? Math.max(bounds.top + margin, triggerRect.top - menuHeight - 6) : triggerRect.bottom + 6;
       const origin = getFixedPositioningOrigin(details);
       setPlacement({ left: left - origin.left, top: top - origin.top });
     };
@@ -323,17 +322,17 @@ export function MobileMoreMenu({ children }: { children: React.ReactNode }) {
       const margin = 8;
       const triggerRect = details.getBoundingClientRect();
       const menu = details.querySelector<HTMLElement>(":scope > .srte-menu");
-      const menuWidth = menu?.offsetWidth ?? Math.min(280, window.innerWidth - 16);
+      const bounds = getPositioningBounds(details);
+      const menuWidth = menu?.offsetWidth ?? Math.min(280, bounds.right - bounds.left - 16);
       const menuHeight = menu?.offsetHeight ?? 0;
-      const viewportWidth = window.innerWidth;
-      const viewportHeight = window.innerHeight;
       // Right-aligned to the trigger, matching this menu's original
-      // CSS-only `right: 0` intent - clamped into the viewport instead of
-      // being allowed to run off it or get clipped by an ancestor.
+      // CSS-only `right: 0` intent - clamped into the effective bounds
+      // instead of being allowed to run off them or get clipped by an
+      // ancestor.
       const preferredLeft = triggerRect.right - menuWidth;
-      const left = Math.min(Math.max(margin, preferredLeft), Math.max(margin, viewportWidth - menuWidth - margin));
-      const overflowsBottom = triggerRect.bottom + 6 + menuHeight > viewportHeight - margin;
-      const top = overflowsBottom ? Math.max(margin, triggerRect.top - menuHeight - 6) : triggerRect.bottom + 6;
+      const left = Math.min(Math.max(bounds.left + margin, preferredLeft), Math.max(bounds.left + margin, bounds.right - menuWidth - margin));
+      const overflowsBottom = triggerRect.bottom + 6 + menuHeight > bounds.bottom - margin;
+      const top = overflowsBottom ? Math.max(bounds.top + margin, triggerRect.top - menuHeight - 6) : triggerRect.bottom + 6;
       const origin = getFixedPositioningOrigin(details);
       setPlacement({ left: left - origin.left, top: top - origin.top });
     };

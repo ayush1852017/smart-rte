@@ -1094,4 +1094,48 @@ test.describe("toolbar overlays: correctly positioned inside a contain:paint anc
     expect(Math.abs(menuBox.x - triggerBox.x)).toBeLessThan(250);
     expectAdjacentVertically(menuBox, triggerBox);
   });
+
+  /**
+   * "see here more paragrah tools overlay showing at the right edge of
+   * editor. When I try opening More to insert overlay it doesn't even show
+   * overlay ... rendering beyound the dialog edge. Not visible" - fixing
+   * the coordinate origin (above) wasn't sufficient on its own: a trigger
+   * positioned close to a narrow `contain: paint` host's own right edge
+   * still computed a menu position that extended past that edge, which
+   * CSS containment then refuses to paint at all - invisible, not just
+   * misplaced. `getPositioningBounds` clamps the menu to the actual
+   * clipping ancestor's box, not the far-wider browser viewport.
+   */
+  test("a dropdown near the host's own right edge stays visible and inside the host, not clipped to invisible", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    await page.waitForSelector(".srte-toolbar");
+    // Narrow enough that "More to insert" (further right in the toolbar
+    // than "More text styles") sits right at the host's own edge - wide
+    // enough that the toolbar itself doesn't collapse into the mobile
+    // overflow menu instead (this is about the desktop dropdown's own
+    // clamping, not the separate mobile-menu code path).
+    await page.evaluate(() => {
+      const root = document.querySelector<HTMLElement>(".srte-root.srte-editor")!;
+      const host = document.createElement("div");
+      host.setAttribute("data-test-contain-host", "true");
+      host.style.contain = "paint";
+      host.style.width = "792px";
+      root.parentNode!.insertBefore(host, root);
+      host.appendChild(root);
+    });
+
+    const hostBox = (await page.locator("[data-test-contain-host]").boundingBox())!;
+    const dropdown = page.locator("details.srte-toolbar-menu", { has: page.locator("summary", { hasText: "More to insert" }) });
+    await dropdown.locator("summary").click();
+    const menu = page.locator("details.srte-toolbar-menu[open] > .srte-menu[data-srte-menu-fixed=\"true\"]");
+    await expect(menu).toBeVisible();
+    const menuBox = (await menu.boundingBox())!;
+
+    // Genuinely visible (non-zero, on-screen), matching what `toBeVisible`
+    // above already implies, plus the actual containment invariant: never
+    // extends past the clipping host's own right edge, which is what made
+    // it paint as nothing at all before this fix.
+    expect(menuBox.width).toBeGreaterThan(0);
+    expect(menuBox.x + menuBox.width).toBeLessThanOrEqual(hostBox.x + hostBox.width + 1);
+  });
 });

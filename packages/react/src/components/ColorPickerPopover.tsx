@@ -1,5 +1,5 @@
 import React, { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
-import { getFixedPositioningOrigin } from "./fixedPositioning.js";
+import { getFixedPositioningOrigin, getPositioningBounds } from "./fixedPositioning.js";
 
 export interface ColorPickerPopoverProps {
   x: number;
@@ -155,14 +155,13 @@ export function ColorPickerPopover({ x, y, label, initialValue = "#000000", rece
     if (!el) return;
     const margin = 8;
     const { width, height } = el.getBoundingClientRect();
-    const viewportWidth = window.innerWidth;
-    const viewportHeight = window.innerHeight;
-    const overflowsRight = x + width > viewportWidth - margin;
+    const bounds = getPositioningBounds(el);
+    const overflowsRight = x + width > bounds.right - margin;
     const left = overflowsRight ? x - width : x;
-    const clampedLeft = Math.min(Math.max(margin, left), Math.max(margin, viewportWidth - width - margin));
-    const overflowsBottom = y + height > viewportHeight - margin;
+    const clampedLeft = Math.min(Math.max(bounds.left + margin, left), Math.max(bounds.left + margin, bounds.right - width - margin));
+    const overflowsBottom = y + height > bounds.bottom - margin;
     const top = overflowsBottom ? y - height : y;
-    const clampedTop = Math.min(Math.max(margin, top), Math.max(margin, viewportHeight - margin));
+    const clampedTop = Math.min(Math.max(bounds.top + margin, top), Math.max(bounds.top + margin, bounds.bottom - margin));
     const origin = getFixedPositioningOrigin(el);
     setPlacement({ left: clampedLeft - origin.left, top: clampedTop - origin.top });
   }, [x, y]);

@@ -60,3 +60,45 @@ export function getFixedPositioningOrigin(el: HTMLElement): { left: number; top:
   const rect = container.getBoundingClientRect();
   return { left: rect.left, top: rect.top };
 }
+
+/**
+ * Correcting the coordinate origin (above) is only half the fix - every
+ * overlay in this codebase also clamps its own placement so a menu never
+ * renders off-screen, and every one of those clamps was computed against
+ * `window.innerWidth`/`innerHeight`, the *full browser viewport*. That's
+ * wrong when the containing-block ancestor is one with `contain: paint`
+ * (or `strict`/`content`): CSS guarantees nothing painted by a descendant -
+ * including a `position: fixed` one whose containing block it is - can
+ * ever be visible outside that ancestor's own border box, no matter what
+ * `left`/`top` says. Reported live: a toolbar dropdown near the middle of
+ * a `contain: paint` dialog rendered hugging the dialog's own right edge
+ * (barely fit), and one further right ("More to insert") was positioned
+ * entirely outside the dialog's box and so never painted at all - both
+ * fully explained by clamping against the wide browser window instead of
+ * the actual, much narrower, clipping ancestor.
+ *
+ * Deliberately NOT applied for a containing block established only by
+ * `transform`/`perspective`/`filter`/`backdrop-filter`/`will-change` with
+ * no `contain` of its own - none of those clip overflow, so a menu is free
+ * to visually extend past that ancestor's box exactly as it could before
+ * any of this positioning logic existed. Verified directly: constraining
+ * to such an ancestor's bounds regardless made a mobile "More tools" menu
+ * genuinely too tall to fit inside a short transformed host overlap its
+ * own trigger instead of just extending past the host's edge (harmless,
+ * since nothing there clips it) - a real regression from being too
+ * conservative, not a fix.
+ */
+export function getPositioningBounds(el: HTMLElement): { left: number; top: number; right: number; bottom: number } {
+  const viewport = { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight };
+  const container = findFixedPositioningContainer(el);
+  if (!container) return viewport;
+  const containerStyle = window.getComputedStyle(container);
+  if (!containerStyle.contain || !/\b(paint|strict|content)\b/.test(containerStyle.contain)) return viewport;
+  const rect = container.getBoundingClientRect();
+  return {
+    left: Math.max(viewport.left, rect.left),
+    top: Math.max(viewport.top, rect.top),
+    right: Math.min(viewport.right, rect.right),
+    bottom: Math.min(viewport.bottom, rect.bottom),
+  };
+}
