@@ -9,11 +9,23 @@
  *   (`translate-x-[-50%] translate-y-[-50%]`), confirmed live via a Sootr
  *   host rendering the editor inside such a dialog
  *   (docs/bugs/toolbar-menu-misplaced-inside-transformed-ancestor.md).
- * - `contain: paint | strict | content` (CSS Containment) - a common
- *   perf/isolation optimization on large scrollable containers, e.g. a
- *   second, different Sootr dialog reported still misplacing every toolbar
- *   dropdown ("More list tools", "More to insert", "Save a copy", "More
- *   text styles") despite already running the transform-only fix above.
+ * - `contain: layout | paint | strict | content` (CSS Containment) - a
+ *   common perf/isolation optimization on large scrollable containers, e.g.
+ *   a second, different Sootr dialog reported still misplacing every
+ *   toolbar dropdown ("More list tools", "More to insert", "Save a copy",
+ *   "More text styles") despite already running the transform-only fix
+ *   above. `layout` alone (without `paint`) was missed in that first pass -
+ *   only checked for `paint`/`strict`/`content` - and confirmed directly in
+ *   real Chromium to establish the containing block on its own regardless:
+ *   a `position: fixed` descendant of a bare `contain: layout` ancestor (no
+ *   transform, no paint) resolves its `top`/`left` against that ancestor's
+ *   box, not the viewport. A THIRD Sootr dialog using exactly this
+ *   (`contain: layout`, no `paint`) reported the same misplacement symptom
+ *   again - not a clipping/invisibility symptom (see `getPositioningBounds`
+ *   below for that distinct failure mode), just landing in the wrong place
+ *   with no error, since the previous check silently treated this ancestor
+ *   as if it weren't a containing block at all and fell through to
+ *   `{ left: 0, top: 0 }` (viewport-relative) origin math instead.
  *
  *   Deliberately NOT checking bare `container-type` (CSS Containers) -
  *   despite implying `contain: layout style` per spec, verified directly in
@@ -45,7 +57,7 @@ export function findFixedPositioningContainer(el: HTMLElement): HTMLElement | nu
       (style.filter && style.filter !== "none") ||
       (style.backdropFilter && style.backdropFilter !== "none") ||
       (style.willChange && /transform|perspective|filter/.test(style.willChange)) ||
-      (style.contain && /\b(paint|strict|content)\b/.test(style.contain))
+      (style.contain && /\b(layout|paint|strict|content)\b/.test(style.contain))
     ) {
       return node;
     }
@@ -78,10 +90,13 @@ export function getFixedPositioningOrigin(el: HTMLElement): { left: number; top:
  * the actual, much narrower, clipping ancestor.
  *
  * Deliberately NOT applied for a containing block established only by
- * `transform`/`perspective`/`filter`/`backdrop-filter`/`will-change` with
- * no `contain` of its own - none of those clip overflow, so a menu is free
- * to visually extend past that ancestor's box exactly as it could before
- * any of this positioning logic existed. Verified directly: constraining
+ * `transform`/`perspective`/`filter`/`backdrop-filter`/`will-change`, or by
+ * `contain: layout` with no `paint`/`strict`/`content` alongside it - none
+ * of those clip overflow (`layout` containment only isolates layout
+ * calculations, it does not imply paint containment - see the spec note
+ * above `findFixedPositioningContainer`), so a menu is free to visually
+ * extend past that ancestor's box exactly as it could before any of this
+ * positioning logic existed. Verified directly: constraining
  * to such an ancestor's bounds regardless made a mobile "More tools" menu
  * genuinely too tall to fit inside a short transformed host overlap its
  * own trigger instead of just extending past the host's edge (harmless,

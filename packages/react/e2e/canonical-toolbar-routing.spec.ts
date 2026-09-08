@@ -1282,3 +1282,45 @@ test.describe("toolbar overlays: correctly positioned inside a contain:paint anc
     expect(menuBox.x + menuBox.width).toBeLessThanOrEqual(hostBox.x + hostBox.width + 1);
   });
 });
+
+/**
+ * "Still these dropdown overlay misplaced inside dialog box" - a third,
+ * different real Sootr dialog, reported after both the transform-only and
+ * contain:paint fixes above already shipped. Root-caused by reproducing
+ * `contain: layout` (no `paint`) in a minimal real-Chromium page and
+ * confirming directly that it *does* establish a position:fixed containing
+ * block on its own - the previous fix only checked for `paint`/`strict`/
+ * `content` in the `contain` value, silently missing bare `layout`, so a
+ * dialog using only that fell through to viewport-relative origin math and
+ * landed the menu somewhere unrelated to its own trigger (not invisible -
+ * a different failure mode than the contain:paint case above, which is
+ * about clipping, not origin).
+ */
+test.describe("toolbar overlays: correctly positioned inside a contain:layout ancestor (no paint, no transform)", () => {
+  test("a desktop dropdown lands next to its own trigger under contain:layout alone, and is free to extend past the host (layout containment doesn't clip)", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    await page.waitForSelector(".srte-toolbar");
+    await page.evaluate(() => {
+      const root = document.querySelector<HTMLElement>(".srte-root.srte-editor")!;
+      const host = document.createElement("div");
+      host.setAttribute("data-test-contain-host", "true");
+      host.style.contain = "layout";
+      host.style.width = "700px";
+      root.parentNode!.insertBefore(host, root);
+      host.appendChild(root);
+    });
+
+    const dropdown = page.locator("details.srte-toolbar-menu", { has: page.locator("summary", { hasText: "More text styles" }) });
+    const triggerBox = (await dropdown.locator("summary").boundingBox())!;
+    await dropdown.locator("summary").click();
+    const menu = page.locator("details.srte-toolbar-menu[open] > .srte-menu[data-srte-menu-fixed=\"true\"]");
+    await expect(menu).toBeVisible();
+    const menuBox = (await menu.boundingBox())!;
+
+    // The core regression: without the fix, this landed far from the
+    // trigger (viewport-relative math against a non-viewport containing
+    // block) instead of adjacent to it.
+    expect(Math.abs(menuBox.x - triggerBox.x)).toBeLessThan(250);
+    expectAdjacentVertically(menuBox, triggerBox);
+  });
+});

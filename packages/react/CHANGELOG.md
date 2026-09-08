@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.0-beta.13
+
+- Fix toolbar dropdowns still landing far from their trigger inside a dialog whose ancestor uses `contain: layout` without `paint` — `1.0.0-beta.11`'s `contain` fix only checked for `paint`/`strict`/`content`, missing that bare `layout` alone also establishes a `position: fixed` containing block per spec (confirmed directly in real Chromium). Menus rendered hundreds of pixels from their trigger, overlapping unrelated page content, with no error. See `docs/bugs/toolbar-overlay-misplaced-inside-contain-layout-ancestor.md`.
+
 ## 1.0.0-beta.12
 
 - Fix toolbar dropdowns/popovers inside a `contain: paint | strict | content` ancestor rendering off-screen or clipped to invisible near that ancestor's own edge — `1.0.0-beta.11`'s `contain` fix corrected the coordinate origin but still clamped against the full viewport instead of the actual clipping box, so a menu near the host's own right/bottom edge could compute a position outside what the ancestor actually lets paint, making it invisible even though its coordinates looked reasonable. Affects `ToolbarDropdown`, `MobileMoreMenu`, the color picker popover, and the table border popover — all four shared the same viewport-only clamping logic. See `docs/bugs/toolbar-overlay-clamped-to-wrong-viewport-inside-contain-paint.md`.
