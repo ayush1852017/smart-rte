@@ -328,6 +328,17 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
     initialValue?: string;
   } | null>(null);
   const [recentColors, setRecentColors] = useState<{ text: string[]; background: string[]; border: string[] }>({ text: [], background: [], border: [] });
+  /**
+   * "Let both bullet and number list tool icon work as toggle and on click
+   * text should [adopt] respective preset list" - the plain Bulleted
+   * list/Numbered list buttons always applied a generic disc/decimal
+   * marker, ignoring whatever glyph preset (e.g. "❖ ➢ ■") the user had
+   * already picked from the "List preset" dropdown elsewhere in the same
+   * session. Session-only React state, matching recentColors' own
+   * documented "no localStorage" convention above - not persisted across
+   * reloads.
+   */
+  const [lastListPreset, setLastListPreset] = useState<{ bullet: string | null; ordered: string | null }>({ bullet: null, ordered: null });
   const [tableSizePopover, setTableSizePopover] = useState<{ x: number; y: number } | null>(null);
   const [tableBorderPopover, setTableBorderPopover] = useState<{ x: number; y: number; scope: TableGridScope; initial: BorderDraft } | null>(null);
   const [mediaDetailsPopover, setMediaDetailsPopover] = useState<{ x: number; y: number; scope: ResolvedScope; initial: MediaDetailsDraft } | null>(null);
@@ -728,17 +739,30 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
   const toggleList = (style: string, checkable = false) => {
     const selectedList = listScope();
     const context = blockContext();
+    // A checklist's marker is a checkbox, not a bullet/number glyph - never
+    // substitute a remembered preset for it. Otherwise, reapply whichever
+    // preset the user last picked from the "List preset" dropdown for this
+    // same kind (bullet/ordered), instead of always resetting to the
+    // generic disc/decimal marker - see lastListPreset's own doc comment.
+    // setListStyle's own params type has no `preset` field (it's a
+    // deliberately distinct command from setListPreset - see setListPreset
+    // itself clearing `style` and vice versa), so this is a real branch,
+    // not just a differently-shaped params object.
+    const rememberedPreset = checkable ? null : lastListPreset[style === "decimal" ? "ordered" : "bullet"];
     if (selectedList.kind === "list-selection") {
       const rootId = outermostListId(selectedList.listId);
       const list = findNode(runtime.editor.document, rootId);
       const sameStyle = listActiveKind(list) === (style === "decimal" ? "ordered" : "bullet") && Boolean(list?.attrs?.checkable) === checkable;
+      const target = { ...selectedList, listId: rootId };
       const operations = sameStyle
         // Toggling an already-active style off is deliberately scoped to just
         // the current item (selectedList), not the whole list.
         ? unwrapList(runtime.editor.document, selectedList, { splitListIds: ids(4) }, context)
         // Applying a genuinely different style/type is a whole-list decision
         // regardless of how deep the cursor is nested.
-        : setListStyle(runtime.editor.document, { ...selectedList, listId: rootId }, { style, checkable }, context);
+        : rememberedPreset
+          ? setListPreset(runtime.editor.document, target, { preset: rememberedPreset }, context)
+          : setListStyle(runtime.editor.document, target, { style, checkable }, context);
       runtime.executeOperations(operations, { preserveSelectionById: true });
       return;
     }
@@ -748,7 +772,8 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
     // per block, on top of one list per originally-flat contiguous group —
     // over-provision generously rather than compute the exact worst case.
     runtime.executeOperations(createList(runtime.editor.document, selectedBlocks, {
-      listIds: ids(Math.max(1, count * 2)), itemIds: ids(Math.max(1, count)), style, checkable,
+      listIds: ids(Math.max(1, count * 2)), itemIds: ids(Math.max(1, count)), checkable,
+      ...(rememberedPreset ? { preset: rememberedPreset } : { style }),
     }, context), { preserveSelectionById: true });
   };
 
@@ -1753,6 +1778,8 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
       // the cursor is nested — see outermostListId.
       const rootId = outermostListId(currentListParts[0].listId);
       runtime.executeOperations(setListPreset(runtime.editor.document, { ...currentListParts[0], listId: rootId }, { preset }, blockContext()), { preserveSelectionById: true });
+      const pickedKind = SMART_LIST_PRESETS.find((candidate) => candidate.id === preset)?.kind;
+      if (pickedKind) setLastListPreset((previous) => ({ ...previous, [pickedKind]: preset }));
     }} style={{ width: "100%" }}>
       <option value="">List preset</option>
       {SMART_LIST_PRESETS.map((preset) => <option key={preset.id} value={preset.id}>

@@ -583,6 +583,51 @@ test.describe("canonical toolbar routing", () => {
   });
 
   /**
+   * "Let both bullet and number list tool icon work as toggle and on
+   * click text should [adopt] respective preset list" - the plain
+   * Bulleted list/Numbered list buttons always applied the generic disc/
+   * decimal marker even after the user had already picked a specific
+   * glyph preset (e.g. "bullet-diamond") from the "List preset" dropdown -
+   * toggling the list off and back on via the plain button silently reset
+   * it to plain disc. It now reapplies whichever preset was last picked
+   * for that same kind (bullet/ordered), remembered for the session (not
+   * persisted - matches recentColors' own convention).
+   */
+  test("bulleted/numbered list buttons reapply the last picked preset instead of resetting to the plain default", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    const surface = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
+    await selectFirstText(page);
+    await page.getByRole("button", { name: "Bulleted list", exact: true }).click();
+    await openToolbarDropdown(page, "More list tools");
+    await page.getByRole("combobox", { name: "List preset" }).selectOption("bullet-diamond");
+    await expect(surface.locator("ul")).toHaveAttribute("data-smart-list-preset", "bullet-diamond");
+
+    // Toggle off (same style, removes it), then plain-click it back on -
+    // the remembered preset should come back, not plain disc.
+    await page.getByRole("button", { name: "Bulleted list", exact: true }).click();
+    await expect(surface.locator("ul")).toHaveCount(0);
+    await page.getByRole("button", { name: "Bulleted list", exact: true }).click();
+    await expect(surface.locator("ul")).toHaveAttribute("data-smart-list-preset", "bullet-diamond");
+
+    // Converting to Numbered list (a genuinely different kind) has no
+    // remembered ordered preset yet - falls back to the plain default,
+    // matching the original, unchanged behavior for a kind with nothing
+    // remembered.
+    await page.getByRole("button", { name: "Numbered list", exact: true }).click();
+    await expect(surface.locator("ol")).not.toHaveAttribute("data-smart-list-preset", /.+/);
+
+    // Pick an ordered preset, then converting back and forth between
+    // bulleted and numbered should each reapply their own remembered
+    // preset independently.
+    await openToolbarDropdown(page, "More list tools");
+    await page.getByRole("combobox", { name: "List preset" }).selectOption("ordered-upper-alpha");
+    await page.getByRole("button", { name: "Bulleted list", exact: true }).click();
+    await expect(surface.locator("ul")).toHaveAttribute("data-smart-list-preset", "bullet-diamond");
+    await page.getByRole("button", { name: "Numbered list", exact: true }).click();
+    await expect(surface.locator("ol")).toHaveAttribute("data-smart-list-preset", "ordered-upper-alpha");
+  });
+
+  /**
    * A Direction B toolbar dropdown left open, then clicking straight into
    * the editor, previously left it open - the component's own doc comment
    * claimed native `<details>` "already closes on an outside click by
