@@ -1312,11 +1312,20 @@ test.describe("Phase 8b canonical product authority", () => {
       ["bullet-star", "ul"], ["bullet-arrow-circle", "ul"],
     ] as const;
     await openToolbarDropdown(page, "More list tools");
-    const optionValues = await page.getByRole("combobox", { name: "List preset" }).locator("option").evaluateAll((options) =>
+    // getByRole's own accessibility-tree computation can lag a tick behind
+    // the DOM/CSS state right after a <details> "toggle" event fires (a raw
+    // DOM query already sees the select; role-based queries occasionally
+    // don't yet) - toBeVisible() auto-retries until it does, unlike the
+    // bare .count()/.evaluateAll() below, which resolve once against
+    // whatever the accessibility tree currently reports and don't retry.
+    // See docs/bugs/list-preset-select-role-query-race-after-dropdown-open.md.
+    const listPresetCombobox = page.getByRole("combobox", { name: "List preset" });
+    await expect(listPresetCombobox).toBeVisible();
+    const optionValues = await listPresetCombobox.locator("option").evaluateAll((options) =>
       options.map((option) => (option as HTMLOptionElement).value).filter(Boolean));
     expect(optionValues).toEqual(presets.map(([preset]) => preset));
     for (const [preset, tag] of presets) {
-      await page.getByRole("combobox", { name: "List preset" }).selectOption(preset);
+      await listPresetCombobox.selectOption(preset);
       const result = await page.evaluate(() => {
         const runtime = (window as typeof window & { __smartProductCanonical?: {
           editor: { document: { children: Array<{ type: string; attrs?: Record<string, unknown> }> } };
