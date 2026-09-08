@@ -1,885 +1,374 @@
-# Smart RTE (Rich Text Editor) - React
+# smartrte-react
 
 [![npm version](https://img.shields.io/npm/v/smartrte-react.svg)](https://www.npmjs.com/package/smartrte-react)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
-A powerful, feature-rich Rich Text Editor built for React applications with support for tables, formulas (LaTeX/KaTeX), media management, and advanced text formatting.
+A rich text editor for React, built on a document-model core rather than raw `contentEditable` state — tables, LaTeX/KaTeX formulas, media, DOCX/PDF/Markdown import-export, per-tool toolbar visibility, and host-owned integration points for version history, comments, and suggestions/track-changes.
 
-## 🌟 Features
+It pairs with [`smartrte-core`](https://www.npmjs.com/package/smartrte-core), a framework-agnostic document engine — you only need this package to use it from React.
 
-- **📝 Rich Text Editing**: Full-featured WYSIWYG editor with all standard formatting options
-- **📊 Advanced Table Support**: Create, edit, merge, split cells, and customize tables
-- **🔢 Mathematical Formulas**: LaTeX/KaTeX integration for rendering mathematical expressions
-- **🖼️ Media Management**: Image upload, resize, drag-and-drop, and custom media manager integration
-- **🎨 Styling Options**: Font sizes (8-96pt), text colors, background colors, and more
-- **🔗 Link Management**: Easy insertion and editing of hyperlinks
-- **📱 Responsive**: Works seamlessly across different screen sizes
-- **⚡ Lightweight**: Minimal dependencies, optimized for performance
-- **🎯 TypeScript Support**: Fully typed for better developer experience
-- **🔧 Customizable**: Toggle features on/off, custom media managers, and more
+## Contents
 
-## 📦 Installation
+- [Install](#install)
+- [Quick start](#quick-start)
+- [Which component do I use?](#which-component-do-i-use-canonicalauthorityeditor-vs-classiceditor)
+- [Props](#props)
+- [Toolbar customization](#toolbar-customization)
+- [Capability presets](#capability-presets-table-onoff)
+- [Host-owned providers](#host-owned-providers-media-versions-comments-suggestions)
+- [Imperative handle](#imperative-handle-ref)
+- [Import & export formats](#import--export-formats)
+- [Theming](#theming)
+- [Standalone / non-React embed](#standalone--non-react-embed)
+- [Security](#security)
+- [Browser support](#browser-support)
+- [Development](#development)
+- [Contributing](#contributing)
+- [License](#license)
 
-### Using npm
+## Install
 
 ```bash
 npm install smartrte-react
+# or: pnpm add smartrte-react / yarn add smartrte-react
 ```
 
-### Using yarn
+`react` and `react-dom` (`>=18`) are peer dependencies — install them if your project doesn't already have them. No separate CSS import is required; the editor injects its own stylesheet on mount.
 
-```bash
-yarn add smartrte-react
-```
-
-### Using pnpm
-
-```bash
-pnpm add smartrte-react
-```
-
-## 🚀 Quick Start
-
-### 🎮 Live Demo
- 
-Try the editor instantly in your browser:
-
-- **[Live Demo](https://playground-k9l44ah7t-ayush1852017s-projects.vercel.app/)** (Deployed Version)
-- **[CodeSandbox Playground](https://codesandbox.io/s/github/ayush1852017/smart-rte/tree/master/packages/react/playground)** (Interactive)
-
-### Basic Usage
+## Quick start
 
 ```tsx
-import React, { useState } from 'react';
-import { ClassicEditor } from 'smartrte-react';
+import { useState } from "react";
+import { CanonicalAuthorityEditor } from "smartrte-react";
 
 function App() {
-  const [content, setContent] = useState('<p>Start typing...</p>');
+  const [content, setContent] = useState("<p>Start typing…</p>");
 
   return (
-    <div>
-      <ClassicEditor
-        value={content}
-        onChange={(html) => setContent(html)}
-        placeholder="Type here…"
-      />
-    </div>
+    <CanonicalAuthorityEditor
+      defaultValue={content}
+      onHtmlChange={setContent}
+      placeholder="Type here…"
+    />
   );
 }
-
-export default App;
 ```
 
-## 📚 Documentation
+`defaultValue` is uncontrolled — it seeds the editor once on mount, not on every render (see [Props](#props) for why, and how to programmatically replace content later via the imperative handle).
 
-### Component API
+## Which component do I use? `CanonicalAuthorityEditor` vs `ClassicEditor`
 
-#### ClassicEditor Props
+- **`CanonicalAuthorityEditor`** — the actual editor. Everything in this guide (tools, providers, presets, the imperative handle) is its API. Use this for anything new.
+- **`ClassicEditor`** — a thin backwards-compatibility wrapper around `CanonicalAuthorityEditor`, kept for integrations written against the package's older `value`/`onChange: (html: string) => void` shape. It forwards everything it can (`tools`, `mediaProvider`, `versionProvider`, etc.) but silently ignores a handful of props from an even older, now-retired plugin system (`features`, `plugins`, `formats`, `fonts`, `theme`, `mediaManager` as an adapter object). If you're starting fresh, use `CanonicalAuthorityEditor` directly — `ClassicEditor` exists so old call sites keep compiling, not as a recommended entry point.
+
+```tsx
+// Legacy-compatible shape - only use this if migrating an existing integration
+import { ClassicEditor } from "smartrte-react";
+
+<ClassicEditor value={htmlString} onChange={(html) => setHtmlString(html)} />
+```
+
+## Props
+
+The commonly-used `CanonicalAuthorityEditor` props:
 
 | Prop | Type | Default | Description |
-|------|------|---------|-------------|
-| `value` | `string` | `undefined` | HTML content of the editor |
-| `onChange` | `(html: string) => void` | `undefined` | Callback fired when content changes |
-| `placeholder` | `string` | `"Type here…"` | Placeholder text when editor is empty |
-| `minHeight` | `number \| string` | `200` | Minimum height of the editor (in pixels) |
-| `maxHeight` | `number \| string` | `500` | Maximum height of the editor (in pixels) |
-| `readOnly` | `boolean` | `false` | Make the editor read-only |
-| `table` | `boolean` | `true` | Enable/disable table functionality |
-| `media` | `boolean` | `true` | Enable/disable media/image functionality |
-| `formula` | `boolean` | `true` | Enable/disable formula/LaTeX functionality |
-| `features` | `CoreFeatureConfig` | standard preset | Enable or disable individual core plugins |
-| `plugins` | `ReactEditorPlugin[]` | standard preset | Use an exact custom plugin set; replaces the standard preset |
-| `formats` | `EditorFormatConfig` | all built-ins | Enable or disable HTML, Markdown, DOCX, and PDF adapters |
-| `formatDefinitions` | `EditorFormatDefinition[]` | built-ins | Add or replace import/export adapters |
-| `mediaManager` | `MediaManagerAdapter` | `undefined` | Custom media manager for handling images |
-| `fonts` | `{ name: string; value: string }[]` | Default web-safe fonts | Custom font list for the toolbar |
-| `defaultFont` | `string` | `undefined` | Default font family for the editor content |
-| `theme` | `"light" \| "dark"` | `"light"` | Built-in theme mode |
-| `className` | `string` | `undefined` | Custom CSS class for theming via CSS variable overrides |
-| `tools` | `Partial<ToolbarTools>` | every tool `true` | Hide individual toolbar tools (Bold, Video, Version history, etc.) — see [Hiding individual toolbar tools](#hiding-individual-toolbar-tools) below |
+|---|---|---|---|
+| `defaultValue` | `string \| PersistedEditorDocument` | `undefined` | Initial content (HTML string or a previously-saved document envelope). Uncontrolled after mount — see [Imperative handle](#imperative-handle-ref) to replace content later. |
+| `onChange` | `(change: SmartEditorChange) => void` | `undefined` | Fires per transaction with the structured change event. |
+| `onHtmlChange` | `(html: string) => void` | `undefined` | Debounced (~250ms after the last edit) plain-HTML serialization — the simplest way to persist content as a string. |
+| `preset` | `"full" \| "simple"` | `"full"` | Construction-time capability preset — `"simple"` excludes the table plugin entirely (schema-level, not just hidden in the toolbar). See [Capability presets](#capability-presets-table-onoff). |
+| `tools` | `Partial<ToolbarTools>` | every tool `true` | Hide individual toolbar tools without touching document capability. See [Toolbar customization](#toolbar-customization). |
+| `mediaProvider` | `MediaProvider` | `undefined` | Host-owned upload/search/remove boundary for images, video, and audio. Absent ⇒ media tools don't render. |
+| `mediaManager` | `boolean` | `true` when `mediaProvider` is set | Use the library/search/duplicate-detection picker for images (vs. the plain file-input default). |
+| `mediaPicker` | `MediaPickerComponent` | built-in file picker | Replace the default file-picker UI for video/audio (and images, if `mediaManager` is `false`). |
+| `versionProvider` | `VersionProvider` | `undefined` | Host-owned save/list/load/remove boundary for version history. Absent ⇒ Version History tool doesn't render. |
+| `commentProvider` | `CommentProvider` | `undefined` | Host-owned boundary for comment threads. Absent ⇒ comment tools/markers don't render. |
+| `suggestionProvider` | `SuggestionProvider` | `undefined` | Host-owned boundary for *structural* suggestions (track-changes). Absent ⇒ suggestion tools/markers don't render. |
+| `authorId` | `string` | `"anonymous"` | Attributed to new comment replies and suggestions. |
+| `renderFormulaHtml` | `boolean` | `false` | Bake real KaTeX-rendered HTML into `onHtmlChange`'s formula markup instead of an empty placeholder — turn this on if you render that HTML anywhere outside the editor (email, PDF export, a read-only view without KaTeX loaded). |
+| `onClipboardDiagnostic` | `(report: ClipboardDiagnosticReport) => void` | `undefined` | Inspect what a paste was parsed as / why it was rejected — useful while debugging a host's own copy sources. |
+| `placeholder` | `string` | `undefined` | Placeholder text shown when the editor is empty. |
+| `minHeight` / `maxHeight` | `number \| string` | `undefined` | Editing-surface height bounds. |
+| `readOnly` | `boolean` | `false` | Disables editing; toolbar tools become inert. |
+| `className` | `string` | `undefined` | Extra class(es) on the editor's root element — this is also how you enable [dark mode](#theming). |
+| `onRuntime` | `(runtime: CanonicalEditorRuntime) => void` | `undefined` | Escape hatch for tests/diagnostics; not part of the stable editing contract. |
 
-### Advanced Examples
+`ClassicEditor` accepts the same props under `value`/`onChange: (html) => void` instead of `defaultValue`/`onHtmlChange`, plus a legacy `table?: boolean` (equivalent to `preset={table === false ? "simple" : "full"}`).
 
-#### Feature plugins
+## Toolbar customization
 
-The editor uses the same plugin registry for core commands and React toolbar
-state. For the architecture and custom plugin API, see
-[`docs/PLUGIN_ARCHITECTURE.md`](../../docs/PLUGIN_ARCHITECTURE.md).
+`tools` hides individual toolbar entries — Bold, Video, Version history, whatever you name — without touching what the document itself can *store*. Every tool defaults to visible; only name the ones you want off:
 
 ```tsx
-import { ClassicEditor } from 'smartrte-react';
-
-<ClassicEditor
-  features={{
-    table: false,
-    media: false,
-    formula: false,
-    checklist: true,
-  }}
+<CanonicalAuthorityEditor
+  tools={{ video: false, audio: false, versionHistory: false, comments: false, suggestions: false }}
 />
 ```
 
-#### Hiding individual toolbar tools
+`tools` can only ever hide something, never conjure it into existence — a tool still needs its underlying capability to actually be there:
 
-The `table`/`media`/`formula` props above turn off a whole *capability* — no
-tables anywhere, or media/formulas removed from the schema entirely. If you
-just want a **smaller toolbar** while keeping every capability intact (e.g.
-hide Video, Audio, Version history, and Review for a specific product
-surface, without touching what content the editor can actually store), use
-`tools` instead. It's a plain object: name the tools you want off, everything
-else stays on by default. No wrapping, no CSS overrides, no forking the
-component.
+- `image`/`video`/`audio` also need `mediaProvider` configured.
+- `versionHistory` also needs `versionProvider`; `comments` needs `commentProvider`; `suggestions` needs `suggestionProvider`.
+- `insertTable` also needs the table capability enabled (i.e. you haven't set `preset="simple"`).
 
-```tsx
-import { ClassicEditor } from 'smartrte-react';
-
-<ClassicEditor
-  tools={{
-    video: false,
-    audio: false,
-    versionHistory: false,
-    comments: false,
-    suggestions: false,
-  }}
-/>
-```
-
-**How it composes with everything else:** a tool only ever needs *both*
-things to be true to show up — your `tools` flag says yes, *and* whatever
-that tool actually depends on is present. So:
-
-- `tools.video`/`tools.audio`/`tools.image` also need a `mediaProvider` (or
-  `mediaManager`) to be configured at all — turning the flag on can't make
-  media insertion appear out of nowhere if you never wired up a provider.
-- `tools.versionHistory` also needs a `versionProvider`; `tools.comments`
-  needs a `commentProvider`; `tools.suggestions` needs a `suggestionProvider`.
-- `tools.insertTable` also needs the table capability to actually be enabled
-  (i.e. you haven't set `table={false}`) — you can't use `tools` to bring
-  back a capability you turned off elsewhere.
-
-In other words: `tools` can only ever hide something, never force something
-into existence that isn't otherwise configured. This means it's always safe
-to leave `tools` unset — every consumer who doesn't pass it sees the exact
-toolbar they see today.
+This means it's always safe to leave `tools` unset — a consumer who never passes it sees every tool their other configuration already supports.
 
 **Every toggleable key**, grouped the way they appear in the toolbar:
 
 ```ts
 interface ToolbarTools {
   // Text formatting
-  bold, italic, underline, strikethrough, code,
-  superscript, subscript, textColor, backgroundColor, fontSize, fontFamily,
+  bold: boolean; italic: boolean; underline: boolean; strikethrough: boolean; code: boolean;
+  superscript: boolean; subscript: boolean; textColor: boolean; backgroundColor: boolean;
+  fontSize: boolean; fontFamily: boolean;
 
   // Paragraph
-  blockType,   // the Paragraph/Heading/Code block dropdown
-  alignLeft, alignCenter, alignRight, alignJustify,
-  lineHeight,  // the line-spacing dropdown (1/1.15/1.5/2/2.5 presets plus a custom value)
-  quote,
+  blockType: boolean;   // the Paragraph/Heading 1-6/Code block dropdown
+  alignLeft: boolean; alignCenter: boolean; alignRight: boolean; alignJustify: boolean;
+  lineHeight: boolean;  // the line-spacing dropdown (1/1.15/1.5/2/2.5 presets plus a custom value)
+  quote: boolean;
 
   // Lists
-  bulletedList, numberedList, checklist,
-  listPreset,  // the numbered-list style picker (1,2,3 / a,b,c / i,ii,iii / A,B,C / I,II,III)
+  bulletedList: boolean; numberedList: boolean; checklist: boolean;
+  listPreset: boolean;   // the named marker-preset picker (decimal/alpha/roman/outline/bullet glyphs)
 
   // Insert
-  link, removeLink, image, video, audio, insertFormula, specialCharacters,
-  horizontalLine,  // inserts a divider (<hr>)
-  pageBreak,       // inserts a print/export pagination marker - distinct from horizontalLine
-  insertTable,
+  link: boolean; removeLink: boolean;
+  image: boolean; video: boolean; audio: boolean;   // each requires mediaProvider
+  insertFormula: boolean; specialCharacters: boolean;
+  horizontalLine: boolean;   // inserts a divider (<hr>)
+  pageBreak: boolean;        // a print/export pagination marker, distinct from horizontalLine
+  insertTable: boolean;      // requires the table capability (preset)
 
   // Document
-  import,
-  saveAsHtml, saveAsMarkdown, saveAsWord, saveAsPdf, saveAsSmartRte,
-  versionHistory, comments, suggestions,
+  import: boolean;
+  saveAsHtml: boolean; saveAsMarkdown: boolean; saveAsWord: boolean; saveAsPdf: boolean; saveAsSmartRte: boolean;
+  versionHistory: boolean;   // requires versionProvider
+  comments: boolean;         // requires commentProvider
+  suggestions: boolean;      // requires suggestionProvider
 
   // History
-  undo, redo,
+  undo: boolean; redo: boolean;
 }
 ```
 
-A few notes on what's *not* in this list, on purpose: actions that only ever
-apply to something you already have selected — moving a block up/down,
-indenting a list item, adding/removing a table row or column, resizing a
-selected image — aren't individually toggleable. They only make sense as
-part of using the tool that created them (a table, a list, an image), so
-they follow that tool's own visibility rather than needing a separate flag
-each. If you turn off `insertTable`, its row/column tools go with it
-automatically — there's no separate flag to remember.
+Purely contextual actions that only ever act on something already selected — moving a block up/down, indenting a list item, adding/removing a table row, resizing a selected image — aren't individually toggleable; they follow their owning tool's visibility (turn off `insertTable` and its row/column actions go with it, with no separate flag to remember).
 
-If you're using the exported `CanonicalAuthorityEditor` directly instead of
-`ClassicEditor`, `tools` works exactly the same way. And if you're using the
-standalone embed (`window.SmartRTE.ClassicEditor.init(...)`), pass `tools`
-in the same options object you pass `target`/`value`/etc.
+## Capability presets (table on/off)
+
+`preset` is a construction-time, host/integrator-level setting (there's no in-editor UI for a user to change their own preset) — it decides which plugins the document's *schema* is built with, not just what the toolbar shows:
+
+```tsx
+<CanonicalAuthorityEditor preset="simple" />   // excludes the table plugin entirely
+<CanonicalAuthorityEditor preset="full" />     // default - excludes nothing
+```
+
+`"simple"` exists for content that should never contain tables at all (e.g. a short-answer question editor) — `preset="simple"` and `tools={{ insertTable: false }}` are not equivalent: the latter only hides the button, the former means the schema itself will reject a pasted or imported table.
+
+## Host-owned providers (media, versions, comments, suggestions)
+
+Four features are opt-in via a provider interface the *host* implements — the package never holds storage credentials, a socket, or a database connection itself. Absent provider ⇒ that feature's toolbar entries simply don't render; nothing crashes or shows a broken control.
 
 ```ts
-window.SmartRTE.ClassicEditor.init({
-  target: document.getElementById('editor'),
-  tools: { video: false, audio: false },
-});
-```
-
-#### Complete Example with All Features
-
-```tsx
-import React, { useState } from 'react';
-import { ClassicEditor, MediaManagerAdapter } from 'smartrte-react';
-
-// Custom media manager implementation
-const customMediaManager: MediaManagerAdapter = {
-  async search(query) {
-    // Implement your media search logic
-    const response = await fetch(`/api/media/search?q=${query.text}`);
-    const data = await response.json();
-    return {
-      items: data.items.map(item => ({
-        id: item.id,
-        url: item.url,
-        thumbnailUrl: item.thumbnailUrl,
-        title: item.title,
-      })),
-    };
-  },
-  async upload(file) {
-    // Implement your file upload logic
-    const formData = new FormData();
-    formData.append('file', file);
-    const response = await fetch('/api/media/upload', {
-      method: 'POST',
-      body: formData,
-    });
-    const data = await response.json();
-    return {
-      id: data.id,
-      url: data.url,
-      thumbnailUrl: data.thumbnailUrl,
-      title: data.title,
-    };
-  },
-};
-
-function AdvancedEditor() {
-  const [content, setContent] = useState('');
-
-  return (
-    <ClassicEditor
-      value={content}
-      onChange={(html) => {
-        console.log('Content changed:', html);
-        setContent(html);
-      }}
-      placeholder="Start editing..."
-      minHeight={300}
-      maxHeight={800}
-      table={true}
-      media={true}
-      formula={true}
-      mediaManager={customMediaManager}
-    />
-  );
+interface MediaProvider {
+  upload(file: File, opts?: { signal?: AbortSignal }): Promise<{ url: string; id: string }>;
+  search(query: string, filters?: MediaFilters, page?: number): Promise<MediaItem[]>;
+  remove(id: string): Promise<void>;
 }
 
-export default AdvancedEditor;
-```
+interface VersionProvider {
+  save(version: DocumentVersion): Promise<VersionListEntry>;
+  list(): Promise<readonly VersionListEntry[]>;
+  load(id: string): Promise<DocumentVersion>;
+  remove(id: string): Promise<void>;
+}
 
-#### Read-Only Mode
+interface CommentProvider {
+  list(): Promise<readonly CommentThread[]>;
+  save(thread: CommentThread): Promise<void>;
+  remove(threadId: string): Promise<void>;
+}
 
-```tsx
-import { ClassicEditor } from 'smartrte-react';
-
-function ReadOnlyEditor({ content }) {
-  return (
-    <ClassicEditor
-      value={content}
-      readOnly={true}
-      minHeight={200}
-    />
-  );
+interface SuggestionProvider {
+  list(): Promise<readonly StructuralSuggestion[]>;
+  save(suggestion: StructuralSuggestion): Promise<void>;
+  remove(suggestionId: string): Promise<void>;
 }
 ```
 
-#### Minimal Editor (No Tables, Media, or Formulas)
+```tsx
+<CanonicalAuthorityEditor
+  mediaProvider={{
+    async upload(file) {
+      const body = new FormData();
+      body.append("file", file);
+      const res = await fetch("/api/media", { method: "POST", body });
+      return res.json(); // { url, id }
+    },
+    async search(query) {
+      const res = await fetch(`/api/media?q=${encodeURIComponent(query)}`);
+      return res.json();
+    },
+    async remove(id) {
+      await fetch(`/api/media/${id}`, { method: "DELETE" });
+    },
+  }}
+/>
+```
+
+Your `upload` implementation must independently validate file type, size, and content server-side — the editor applies only a best-effort client-side allow-list check as a UX nicety, not a security boundary.
+
+There's a fifth contract, **`CollabTransport`** (real-time multi-writer editing), exported for hosts building against it — it defines `sendTransaction`/`onRemoteTransaction`/`onPresenceUpdate`/`sendPresence`/`getRevisionHistory`, but isn't wired into the editor's runtime yet. Without one connected, the editor behaves exactly as it does today: single-writer, no rebase path ever triggers.
+
+## Imperative handle (ref)
+
+`CanonicalAuthorityEditor`/`ClassicEditor` forward a `SmartEditorHandle` ref for everything `defaultValue`/props alone can't do — replacing content programmatically, reading the current document, and version snapshots:
 
 ```tsx
-import { ClassicEditor } from 'smartrte-react';
+import { useRef } from "react";
+import { CanonicalAuthorityEditor, type SmartEditorHandle } from "smartrte-react";
 
-function MinimalEditor() {
-  const [content, setContent] = useState('');
+function Editor() {
+  const ref = useRef<SmartEditorHandle>(null);
 
-  return (
-    <ClassicEditor
-      value={content}
-      onChange={setContent}
-      table={false}
-      media={false}
-      formula={false}
-      placeholder="Simple text editor"
-    />
-  );
+  const loadDocument = (doc) => ref.current?.replaceValue(doc, { keepSelection: false });
+  const currentDoc = () => ref.current?.getValue();
+
+  return <CanonicalAuthorityEditor ref={ref} />;
 }
 ```
 
-#### Next.js Integration
-
-For Next.js applications, you may need to use dynamic imports to avoid SSR issues:
-
-```tsx
-import dynamic from 'next/dynamic';
-import { useState } from 'react';
-
-const ClassicEditor = dynamic(
-  () => import('smartrte-react').then(mod => mod.ClassicEditor),
-  { ssr: false }
-);
-
-export default function Page() {
-  const [content, setContent] = useState('');
-
-  return (
-    <div>
-      <ClassicEditor
-        value={content}
-        onChange={setContent}
-        placeholder="Start typing..."
-      />
-    </div>
-  );
+```ts
+interface SmartEditorHandle {
+  getValue(): PersistedEditorDocument;
+  replaceValue(doc: PersistedEditorDocument, opts?: { keepSelection?: boolean }): void;
+  isDirty(): boolean;
+  markSaved(revision: number): void;
+  getRevision(): number;
+  focus(): void;
+  executeOperations(operations: readonly SmartOperation[], opts?: ExecuteOperationsOptions): void;
+  createCheckpoint(): SmartEditorCheckpoint;
+  restoreCheckpoint(checkpoint: SmartEditorCheckpoint): void;
+  saveVersion(opts?: { label?: string; authorId?: string }): DocumentVersion;
+  restoreVersion(version: DocumentVersion, opts?: { keepSelection?: boolean }): void;
 }
 ```
 
-## 🔧 Features Deep Dive
+`saveVersion`/`restoreVersion` are the same operations the toolbar's Version History panel calls — use them directly if you want your own save-version UI instead of (or alongside) the built-in one.
 
-### Text Formatting
+## Import & export formats
 
-The editor supports all standard text formatting options:
+The toolbar's "Import" and "Save as ..." tools cover HTML, Markdown, DOCX (Word), PDF, and the package's own JSON document format out of the box — no extra setup. DOCX import preserves real Word styling (fonts, colors, spacing) where possible; PDF export prints the same HTML the editor renders, so formulas, tables, and images all appear as they do live.
 
-- **Bold**, *Italic*, <u>Underline</u>, ~~Strikethrough~~
-- Font sizes from 8pt to 96pt
-- Text color and background color
-- Headings (H1-H6)
-- Paragraph, blockquote, code block
-- Ordered and unordered lists
-- Text alignment (left, center, right, justify)
-- Superscript and subscript
+For a custom import/export pipeline (e.g. converting on a server, or a "Save as..." flow outside the toolbar), the underlying codecs are re-exported from `smartrte-core/foundation`: `exportDocxDocument`, `importDocxDocumentWithMammoth`, `importStyledDocxDocument`, `buildPdfPrintDocument`, `importPdfDocument`, and the format-fidelity contract (`builtInFormatFidelity`) describing exactly what's lossless vs. lossy per format.
 
-### Tables
+## Theming
 
-Full-featured table support includes:
-
-- Create tables with custom rows and columns
-- Add/delete rows and columns
-- Merge and split cells
-- Toggle header rows/cells
-- Cell background colors
-- Cell borders toggle
-- Right-click context menu for table operations
-- Keyboard navigation (Tab, Shift+Tab, Arrow keys)
-
-**Keyboard Shortcuts:**
-- `Tab` - Move to next cell
-- `Shift+Tab` - Move to previous cell
-- `Arrow keys` - Navigate between cells
-- Right-click on cell - Open context menu
-
-### Mathematical Formulas
-
-LaTeX/KaTeX support for mathematical expressions:
+The editor uses CSS custom properties for every color — there's no `theme` prop; dark mode is a CSS class.
 
 ```tsx
-// The editor automatically loads KaTeX
-// Users can insert formulas using the formula button
-// Examples of supported LaTeX:
-// - E=mc^2
-// - \frac{a}{b}
-// - \sqrt{x}
-// - \sum_{i=1}^{n} x_i
+<CanonicalAuthorityEditor className="srte-dark" />
 ```
 
-**Required External Dependency:**
-
-To use formulas, include KaTeX in your HTML:
-
-```html
-<!-- In your public/index.html or _app.tsx -->
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/katex.min.css">
-<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/katex.min.js"></script>
+```css
+/* Or follow system preference yourself and toggle the class conditionally */
+@media (prefers-color-scheme: dark) {
+  .srte-editor:not(.srte-dark) { /* your own light/dark logic here */ }
+}
 ```
 
-### Media Management
-
-Built-in image support with optional custom media manager:
-
-**Default behavior:**
-- Local file upload
-- Drag and drop images
-- Image resize handles
-- Right-click context menu for image operations
-
-**Custom Media Manager Implementation:**
-
-```typescript
-import { MediaManagerAdapter, MediaItem, MediaSearchQuery } from 'smartrte-react';
-
-const myMediaManager: MediaManagerAdapter = {
-  async search(query: MediaSearchQuery) {
-    // Search your media library
-    return {
-      items: [/* array of MediaItem */],
-      hasMore: false,
-      nextPage: undefined,
-    };
-  },
-  
-  async upload(file: File) {
-    // Upload file to your server
-    return {
-      id: 'unique-id',
-      url: 'https://example.com/image.jpg',
-      thumbnailUrl: 'https://example.com/thumb.jpg',
-      title: 'Image title',
-    };
-  },
-};
-```
-
-## 🎨 Theming & Dark Mode
-
-The editor uses CSS custom properties (CSS variables) for all colors, making it fully customizable. No hardcoded colors — everything can be themed.
-
-### Quick Start: Dark Mode
-
-```tsx
-<ClassicEditor theme="dark" onChange={handleChange} />
-```
-
-### Custom Themes via CSS
-
-Apply a custom class and override any CSS variables:
-
-```tsx
-<ClassicEditor className="my-theme" onChange={handleChange} />
-```
+Override individual variables (scoped to your own class, composed alongside `srte-dark` or standalone) to build a custom palette:
 
 ```css
 .my-theme {
-  --srte-bg: #1a1a2e;
-  --srte-text: #eaeaea;
+  --srte-background: #1a1a2e;
+  --srte-foreground: #eaeaea;
   --srte-border: #3a3a5c;
-  /* Override only the variables you need */
+  --srte-accent: #7c3aed;
+  /* override only what you need - everything else falls back to the default */
 }
 ```
 
-### Responding to System Preference
+| Variable | Description |
+|---|---|
+| `--srte-background` / `--srte-canvas` | Toolbar/chrome background vs. editing-surface background |
+| `--srte-foreground` / `--srte-muted-foreground` | Primary vs. secondary text |
+| `--srte-border` | Standard border color |
+| `--srte-ring` | Focus ring color |
+| `--srte-accent` / `--srte-accent-bg` | Selection/active-state color and its translucent background |
+| `--srte-primary` / `--srte-on-primary` | Primary action button background/text |
+| `--srte-danger` | Destructive action color |
+| `--srte-modal-bg` / `--srte-modal-backdrop` | Dialog background and overlay |
+| `--srte-menu-bg` / `--srte-menu-shadow` | Dropdown/context-menu background and shadow |
+| `--srte-code-bg` / `--srte-code-text` | Code block colors |
+
+These fall back to sensible defaults, and also read from common shadcn/ui-style tokens (`--card`, `--background`, `--foreground`, `--muted`, `--border`, `--ring`) if your app already defines those — so a Tailwind/shadcn app may need no overrides at all. Colors set via the color picker (text/background) are inline styles on content and are unaffected by theming — only editor chrome (toolbar, dialogs, menus) is themed.
+
+## Standalone / non-React embed
+
+For a host that isn't a React app (or embeds via WebView — the [Flutter package](https://github.com/ayush1852017/smart-rte/tree/master/dart/smartrte_flutter) uses exactly this), a global-script build is available:
+
+```ts
+import "smartrte-react/standalone/classic-editor-embed";
+
+window.SmartRTE.ClassicEditor.init({
+  target: document.getElementById("editor"),
+  value: "<p>Hello</p>",
+  tools: { video: false, audio: false },
+  onChange: (html) => console.log(html),
+});
+```
+
+Returns a controller: `{ setHtml, getHtml, focus, blur, destroy }`.
+
+## Security
+
+The editor outputs HTML and never persists anything itself — storage, credentials, and the actual save are always the host's. Pasted HTML is sanitized on the way in (DOMPurify), but **always sanitize before rendering elsewhere**: if you take the editor's HTML output and `dangerouslySetInnerHTML` it in a different context (an email, a public page), treat it the same as any other user-generated HTML.
 
 ```tsx
-const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+import DOMPurify from "dompurify";
 
-<ClassicEditor theme={prefersDark ? 'dark' : 'light'} />
-```
-
-Or purely via CSS (without the `theme` prop):
-
-```css
-@media (prefers-color-scheme: dark) {
-  .srte-editor {
-    --srte-bg: #1e1e1e;
-    --srte-text: #e0e0e0;
-    --srte-border: #3a3a3a;
-    /* ... */
-  }
+function DisplayContent({ html }: { html: string }) {
+  return <div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(html) }} />;
 }
 ```
 
-### Available CSS Custom Properties
+Found a security issue? Please email support@openstash.in rather than opening a public issue.
 
-| Variable | Default (Light) | Description |
-|---|---|---|
-| `--srte-bg` | `#ffffff` | Editor container & content background |
-| `--srte-text` | `#111111` | Primary UI text color |
-| `--srte-text-muted` | `#4b5563` | Secondary/subtle text |
-| `--srte-border` | `#dddddd` | Standard border color |
-| `--srte-border-light` | `#eeeeee` | Light separator borders |
-| `--srte-toolbar-bg` | `#ffffff` | Toolbar background |
-| `--srte-input-bg` | `#ffffff` | Button, input, select backgrounds |
-| `--srte-input-text` | `#111111` | Button, input, select text |
-| `--srte-input-border` | `#e5e7eb` | Button, input, select borders |
-| `--srte-modal-backdrop` | `rgba(0,0,0,0.35)` | Modal overlay background |
-| `--srte-modal-bg` | `#ffffff` | Modal/dialog background |
-| `--srte-modal-text` | `#000000` | Modal text color |
-| `--srte-menu-bg` | `#ffffff` | Context menu background |
-| `--srte-menu-text` | `#111111` | Context menu text |
-| `--srte-menu-shadow` | `0 8px 24px rgba(0,0,0,0.18)` | Menu box-shadow |
-| `--srte-accent` | `#1e90ff` | Accent/selection color |
-| `--srte-accent-bg` | `rgba(30,144,255,0.15)` | Accent background (translucent) |
-| `--srte-danger` | `#dc2626` | Destructive action color |
-| `--srte-primary` | `#2563eb` | Primary action button color |
-| `--srte-surface-subtle` | `#f3f4f6` | Subtle surface (dropzone, preset buttons) |
-| `--srte-on-primary` | `#ffffff` | Text on primary/danger buttons |
-| `--srte-cancel-bg` | `#f3f4f6` | Cancel button background |
+## Browser support
 
-### Important Notes
+Chromium, Firefox, and WebKit (Safari) — the full end-to-end suite runs against all three, headless and current, on every change.
 
-- **User content colors are preserved** — colors set via the color picker (text/background) are inline styles on content elements and are not affected by theming.
-- **Color picker swatches are not themed** — they display actual color values regardless of theme.
-- **The theme only affects editor chrome** — toolbar, dialogs, menus, and container. User content remains unchanged.
+## Development
 
-## 🛠️ Development
-
-### Prerequisites
-
-- Node.js 18+ 
-- pnpm 9.10.0+
-
-### Setting Up Development Environment
-
-1. **Clone the repository**
+This package lives in a pnpm workspace monorepo alongside `smartrte-core`.
 
 ```bash
 git clone https://github.com/ayush1852017/smart-rte.git
 cd smart-rte
-```
-
-2. **Install dependencies**
-
-```bash
 pnpm install
+pnpm build          # builds every package
 ```
 
-3. **Build the project**
-
 ```bash
-# Build TypeScript packages
-pnpm build
-```
-
-4. **Run the development playground**
-
-```bash
+# Live playground (aliased to workspace source, not the built dist - edits hot-reload)
 cd packages/react/playground
 pnpm install
-pnpm dev
+pnpm dev             # http://localhost:5173
 ```
-
-The playground will be available at `http://localhost:5173`
-
-### Project Structure
-
-```
-smart-rte/
-├── packages/
-│   └── react/              # Main React package (smartrte-react)
-│       ├── src/
-│       │   ├── components/
-│       │   │   ├── ClassicEditor.tsx   # Main editor component
-│       │   │   └── MediaManager.tsx    # Media management component
-│       │   └── index.ts
-│       ├── playground/     # Development playground
-│       └── package.json
-├── dart/                   # Flutter/Dart packages
-│   ├── smartrte_flutter/   # Flutter WebView integration
-│   └── example_app/        # Flutter example
-└── package.json
-```
-
-### Building for Production
 
 ```bash
-# Build the React package
-cd packages/react
-pnpm build
-
-# This creates:
-# - dist/index.js       - ES module
-# - dist/index.d.ts     - TypeScript definitions
-# - dist/embed.js       - Standalone embed bundle
+# From packages/react
+pnpm test            # vitest unit suite
+pnpm e2e             # Playwright, all 3 browsers
+pnpm storybook       # component stories, http://localhost:6006
 ```
 
-### Running Tests
+## Contributing
 
-```bash
-# Run vitest
-pnpm test
+Issues and PRs are welcome at [github.com/ayush1852017/smart-rte](https://github.com/ayush1852017/smart-rte/issues). For a bug report, include a minimal repro, expected vs. actual behavior, and your browser/OS. For a PR: keep it focused on one change, add test coverage (unit and/or a Playwright spec, matching whichever existing test file is closest to what you touched), and run `pnpm build && pnpm test` before pushing.
 
-# Run E2E tests with Playwright
-pnpm e2e
-```
+## License
 
-### Running Storybook
-
-```bash
-cd packages/react
-pnpm storybook
-```
-
-Storybook will be available at `http://localhost:6006`
-
-## 📝 Publishing
-
-### For Package Maintainers
-
-The package is published to npm as `smartrte-react`.
-
-```bash
-# Make sure you're in packages/react
-cd packages/react
-
-# Update version in package.json
-# Then publish
-pnpm publish
-```
-
-The `prepublishOnly` script automatically runs `build:all` before publishing.
-
-### Version Management
-
-We follow [Semantic Versioning](https://semver.org/):
-
-- **MAJOR** version for incompatible API changes
-- **MINOR** version for backwards-compatible functionality
-- **PATCH** version for backwards-compatible bug fixes
-
-## 🤝 Contributing
-
-We welcome contributions! Here's how you can help:
-
-### Reporting Bugs
-
-1. Check if the bug has already been reported in [Issues](https://github.com/ayush1852017/smart-rte/issues)
-2. If not, create a new issue with:
-   - Clear title and description
-   - Steps to reproduce
-   - Expected vs actual behavior
-   - Screenshots if applicable
-   - Your environment (browser, OS, React version)
-
-### Suggesting Features
-
-1. Check [existing feature requests](https://github.com/ayush1852017/smart-rte/issues?q=is%3Aissue+label%3Aenhancement)
-2. Create a new issue with:
-   - Clear description of the feature
-   - Use cases
-   - Proposed API (if applicable)
-
-### Pull Requests
-
-1. **Fork** the repository
-2. **Create** a feature branch (`git checkout -b feature/amazing-feature`)
-3. **Make** your changes
-4. **Test** your changes thoroughly
-5. **Commit** with clear messages (`git commit -m 'Add amazing feature'`)
-6. **Push** to your fork (`git push origin feature/amazing-feature`)
-7. **Open** a Pull Request
-
-#### PR Guidelines
-
-- Follow the existing code style
-- Add tests for new features
-- Update documentation
-- Keep PRs focused on a single feature/fix
-- Write clear commit messages
-
-### Development Workflow
-
-```bash
-# 1. Create a feature branch
-git checkout -b feature/my-feature
-
-# 2. Make changes and test
-pnpm dev  # Run playground
-pnpm test # Run tests
-
-# 3. Build to ensure no errors
-pnpm build
-
-# 4. Commit and push
-git add .
-git commit -m "feat: add my feature"
-git push origin feature/my-feature
-
-# 5. Create PR on GitHub
-```
-
-## 🐛 Troubleshooting
-
-### Common Issues
-
-#### Issue: Editor not showing/rendering
-
-**Solution:** Make sure React and React-DOM are installed as peer dependencies:
-
-```bash
-npm install react@18 react-dom@18
-```
-
-#### Issue: Formula rendering not working
-
-**Solution:** Ensure KaTeX is loaded in your HTML:
-
-```html
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/katex.min.css">
-<script src="https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/katex.min.js"></script>
-```
-
-#### Issue: TypeScript errors
-
-**Solution:** Make sure you have the latest type definitions:
-
-```bash
-npm install --save-dev @types/react@18 @types/react-dom@18
-```
-
-#### Issue: Build errors in Next.js
-
-**Solution:** Use dynamic imports to disable SSR:
-
-```tsx
-const ClassicEditor = dynamic(
-  () => import('smartrte-react').then(mod => mod.ClassicEditor),
-  { ssr: false }
-);
-```
-
-#### Issue: Images not uploading
-
-**Solution:** Check that the `media` prop is set to `true` and implement a custom `mediaManager` if you need server-side uploads.
-
-## 🔐 Security
-
-### Reporting Security Issues
-
-If you discover a security vulnerability, please email [support@openstash.in] instead of using the issue tracker.
-
-### Content Sanitization
-
-**⚠️ Important:** The editor outputs raw HTML. Always sanitize user-generated content before displaying it to prevent XSS attacks.
-
-Recommended libraries:
-- [DOMPurify](https://github.com/cure53/DOMPurify)
-- [sanitize-html](https://github.com/apostrophecms/sanitize-html)
-
-Example:
-
-```tsx
-import DOMPurify from 'dompurify';
-
-function DisplayContent({ html }) {
-  const sanitized = DOMPurify.sanitize(html);
-  return <div dangerouslySetInnerHTML={{ __html: sanitized }} />;
-}
-```
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](../../dart/smartrte_flutter/LICENSE) file for details.
-
-```
-MIT License
-
-Copyright (c) 2025 Smart RTE Contributors
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-```
-
-## 👥 Authors & Contributors
-
-- **Smart RTE Team** - Initial work and maintenance
-
-See the list of [contributors](https://github.com/ayush1852017/smart-rte/contributors) who participated in this project.
-
-## 🙏 Acknowledgments
-
-- [KaTeX](https://katex.org/) - For mathematical formula rendering
-- [React](https://reactjs.org/) - The UI library
-- [Vite](https://vitejs.dev/) - Build tool
-- All our amazing [contributors](https://github.com/ayush1852017/smart-rte/contributors)
-
-## 📞 Support
-
-- **Documentation:** You're reading it! 📖
-- **Issues:** [GitHub Issues](https://github.com/ayush1852017/smart-rte/issues)
-- **Discussions:** [GitHub Discussions](https://github.com/ayush1852017/smart-rte/discussions)
-- **Twitter:** [@smartrte](https://twitter.com/smartrte) (if applicable)
-
-## 🗺️ Roadmap
-
-### Current Version (0.2.x)
-
-- ✅ Rich text editing
-- ✅ Table support
-- ✅ Formula support (LaTeX/KaTeX)
-- ✅ Media management
-- ✅ TypeScript support
-- ✅ Dark mode & theming (CSS custom properties)
-
-### Upcoming Features
-
-- 🔄 Collaborative editing
-- 🔄 Undo/Redo improvements
-- 🔄 Code syntax highlighting
-- 🔄 Markdown import/export
-- 🔄 Custom toolbar configuration
-- 🔄 Mobile optimization
-- 🔄 Accessibility improvements (ARIA labels, keyboard shortcuts)
-
-## 📊 Browser Support
-
-| Browser | Version |
-|---------|---------|
-| Chrome | Last 2 versions |
-| Firefox | Last 2 versions |
-| Safari | Last 2 versions |
-| Edge | Last 2 versions |
-
-## 🔗 Related Packages
-
-- **smartrte-flutter** - Flutter/Dart WebView implementation
-
-## 💡 Tips & Best Practices
-
-1. **Performance**: For large documents, consider implementing lazy loading or pagination
-2. **State Management**: Use React state or a state management library (Redux, Zustand) for complex applications
-3. **Validation**: Always validate and sanitize HTML content before storing or displaying
-4. **Accessibility**: Test with screen readers and keyboard navigation
-5. **Mobile**: Test on mobile devices as touch interactions may differ
-6. **Auto-save**: Implement auto-save functionality to prevent data loss
-
-## 🎓 Learning Resources
-
-### For Entry-Level Developers
-
-1. **Getting Started with React**: [React Official Tutorial](https://react.dev/learn)
-2. **Understanding Rich Text Editors**: [MDN ContentEditable](https://developer.mozilla.org/en-US/docs/Web/HTML/Global_attributes/contenteditable)
-3. **TypeScript Basics**: [TypeScript Handbook](https://www.typescriptlang.org/docs/handbook/intro.html)
-
-### For Mid-Level Developers
-
-1. **Advanced React Patterns**: Hooks, Context, Performance Optimization
-2. **Component Design**: Building reusable, maintainable components
-3. **State Management**: When and how to use external state management
-
-### For Senior Developers
-
-1. **Architecture**: Designing scalable editor implementations
-2. **Performance**: Optimization techniques for large documents
-3. **Extensibility**: Building plugin systems and custom extensions
-4. **Cross-platform**: Adapting the editor for different frameworks
-
----
-
-**Happy Editing! 🎉**
-
-If you find this package useful, please consider giving it a ⭐ on [GitHub](https://github.com/ayush1852017/smart-rte)!
+MIT — see [LICENSE](https://github.com/ayush1852017/smart-rte/blob/master/LICENSE).
