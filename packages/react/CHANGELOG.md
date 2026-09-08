@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.0-beta.11
+
+- Fix toolbar dropdowns/popovers still landing far from their trigger inside a host container that uses CSS `contain: paint | strict | content` on an ancestor (a real gap in `1.0.0-beta.9`'s transform-only fix — `contain` also creates a `position: fixed` containing block, independent of `transform`). See `docs/bugs/toolbar-overlay-misplaced-inside-contain-ancestor.md`.
+
 ## 1.0.0-beta.10
 
 - Fix a table row resize regression: dragging a row boundary back to where it started (after an earlier drag hit a row's natural content floor) inflated the neighboring row instead of restoring the original layout — the only way back was Undo. Reversing a boundary drag now correctly shrinks the table's total height instead of growing a neighbor that never actually had slack to give.

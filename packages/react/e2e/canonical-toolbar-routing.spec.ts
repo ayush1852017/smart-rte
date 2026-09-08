@@ -1049,3 +1049,49 @@ test.describe("toolbar overlays: correctly positioned inside a transformed ances
     expect(Math.abs(popoverBox.y - itemBox.y)).toBeLessThan(80);
   });
 });
+
+/**
+ * "Opening editor inside Dialog box at sootr ... Doesn't show dropdown
+ * overlay at respective places where user clicked" - reported against
+ * `smartrte-react@1.0.0-beta.10`, which already includes the transform-only
+ * fix above. `contain: paint/strict/content` *also* makes an ancestor the
+ * containing block for `position: fixed` descendants, exactly like
+ * `transform` does, but `fixedPositioning.ts`'s
+ * `findFixedPositioningContainer` never checked for it - a real,
+ * independent gap in that fix, not a version-lag artifact (see
+ * docs/bugs/toolbar-overlay-misplaced-inside-contain-ancestor.md).
+ *
+ * `container-type` alone was also investigated as a candidate (CSS
+ * Containers implies `contain: layout style`) but deliberately left
+ * unchecked - verified directly that `container-type: inline-size` alone
+ * does not actually shift `position: fixed` behavior in real Chromium; a
+ * position already correct without any special-casing stayed correct, and
+ * adding a check for it broke that case instead of fixing anything.
+ */
+test.describe("toolbar overlays: correctly positioned inside a contain:paint ancestor (no transform at all)", () => {
+  const wrapInContainAncestorHost = (page: Page) => page.evaluate(() => {
+    const root = document.querySelector<HTMLElement>(".srte-root.srte-editor")!;
+    const host = document.createElement("div");
+    host.setAttribute("data-test-contain-host", "true");
+    host.style.contain = "paint";
+    host.style.width = "700px";
+    root.parentNode!.insertBefore(host, root);
+    host.appendChild(root);
+  });
+
+  test("a desktop dropdown lands next to its own trigger under contain:paint, with no transform anywhere", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    await page.waitForSelector(".srte-toolbar");
+    await wrapInContainAncestorHost(page);
+
+    const dropdown = page.locator("details.srte-toolbar-menu", { has: page.locator("summary", { hasText: "More text styles" }) });
+    const triggerBox = (await dropdown.locator("summary").boundingBox())!;
+    await dropdown.locator("summary").click();
+    const menu = page.locator("details.srte-toolbar-menu[open] > .srte-menu[data-srte-menu-fixed=\"true\"]");
+    await expect(menu).toBeVisible();
+    const menuBox = (await menu.boundingBox())!;
+
+    expect(Math.abs(menuBox.x - triggerBox.x)).toBeLessThan(250);
+    expectAdjacentVertically(menuBox, triggerBox);
+  });
+});
