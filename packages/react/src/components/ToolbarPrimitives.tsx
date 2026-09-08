@@ -108,7 +108,7 @@ export const toolbarIcons = {
 export type ToolbarIconKey = keyof typeof toolbarIcons;
 
 /** A single always-visible toolbar control: icon + plain-language label together, per the redesign's core principle. */
-export function ToolbarButton({ icon, label, ariaLabel, pressed, disabled, title, onClick, iconOnly, widePromote }: {
+export function ToolbarButton({ icon, label, ariaLabel, pressed, disabled, title, onClick, iconOnly, widePromote, narrowIconOnly }: {
   icon: ToolbarIconKey;
   label: string;
   ariaLabel?: string;
@@ -126,6 +126,16 @@ export function ToolbarButton({ icon, label, ariaLabel, pressed, disabled, title
    * docs/bugs/toolbar-priority-collapse-fixed-threshold-no-wide-promotion.md.
    */
   widePromote?: boolean;
+  /**
+   * Unlike `iconOnly` (always icon-only), this drops the label text only
+   * below theme.ts's 479px container-width breakpoint - the button shows
+   * icon + label at every wider width, matching every other always-visible
+   * button, and falls back to icon-only (title/aria-label still carry the
+   * name, so it stays a real tooltip) only once space is genuinely tight.
+   * A CSS-only toggle (see `[data-srte-narrow-icon-only]` in theme.ts), not
+   * JS viewport state, matching how every other responsive tier here works.
+   */
+  narrowIconOnly?: boolean;
 }) {
   return <button
     type="button"
@@ -137,6 +147,7 @@ export function ToolbarButton({ icon, label, ariaLabel, pressed, disabled, title
     onMouseDown={(event) => event.preventDefault()}
     onClick={onClick}
     {...(widePromote ? { "data-srte-wide-promote": "true" } : {})}
+    {...(narrowIconOnly ? { "data-srte-narrow-icon-only": "true" } : {})}
   >
     {toolbarIcons[icon]}
     {!iconOnly && <span>{label}</span>}

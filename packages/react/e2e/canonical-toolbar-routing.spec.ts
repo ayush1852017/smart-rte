@@ -667,6 +667,65 @@ test.describe("canonical toolbar routing", () => {
   });
 
   /**
+   * "Below 480px don't show tool name just show icon visible enough to
+   * understand. And of course tooltips. For paragraph, bulleted, numbered,
+   * checklist." - scoped to just these four controls (not every
+   * always-visible button) via a dedicated container-width breakpoint,
+   * distinct from the mobile-tier (639px) and split-control-hide (359px)
+   * breakpoints already in theme.ts. Accessible name/tooltip must survive
+   * regardless of which tier is active - that's the whole point of doing
+   * this with a CSS label toggle instead of removing the elements.
+   */
+  test("block type, bulleted list, numbered list, and checklist drop their text label below 480px but keep their name and tooltip", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    await page.evaluate(() => {
+      const root = document.querySelector<HTMLElement>(".srte-root.srte-editor")!;
+      const pane = document.createElement("div");
+      pane.id = "narrow-pane";
+      root.parentNode!.insertBefore(pane, root);
+      pane.appendChild(root);
+    });
+    const setPaneWidth = (width: number) => page.evaluate((w) => {
+      document.getElementById("narrow-pane")!.style.width = `${w}px`;
+    }, width);
+
+    // At (and above) 480px, every label is visible as normal - unchanged.
+    await setPaneWidth(500);
+    await expect(page.getByRole("combobox", { name: "Block type" })).toContainText("Paragraph");
+    await expect(page.getByRole("button", { name: "Bulleted list", exact: true })).toContainText("Bulleted list");
+    await expect(page.getByRole("button", { name: "Numbered list", exact: true })).toContainText("Numbered list");
+    await expect(page.getByRole("button", { name: "Checklist", exact: true })).toContainText("Checklist");
+
+    // Below 480px, the visible text goes away, but the accessible name and
+    // title (tooltip) stay intact - this is a CSS label toggle, not a
+    // reduced control, so screen readers and hover tooltips are unaffected.
+    await setPaneWidth(460);
+    const blockType = page.getByRole("combobox", { name: "Block type" });
+    const bulleted = page.getByRole("button", { name: "Bulleted list", exact: true });
+    const numbered = page.getByRole("button", { name: "Numbered list", exact: true });
+    const checklist = page.getByRole("button", { name: "Checklist", exact: true });
+    await expect(blockType).toBeVisible();
+    await expect(bulleted).toBeVisible();
+    await expect(numbered).toBeVisible();
+    await expect(checklist).toBeVisible();
+    // The label <span> is display:none, not removed - it still contributes
+    // to textContent, so the visibility check has to target the span
+    // itself rather than assert on the button's overall text.
+    await expect(bulleted.locator("span")).toBeHidden();
+    await expect(numbered.locator("span")).toBeHidden();
+    await expect(checklist.locator("span")).toBeHidden();
+    await expect(bulleted).toHaveAttribute("title", "Bulleted list");
+    await expect(numbered).toHaveAttribute("title", "Numbered list");
+    await expect(checklist).toHaveAttribute("title", "Checklist");
+    await expect(blockType).toHaveAttribute("title", "Block type");
+
+    // Still fully functional icon-only - clicking still works.
+    await selectFirstText(page);
+    await bulleted.click();
+    await expect(page.locator('[data-smart-authority="canonical"] [contenteditable="true"] ul')).toHaveCount(1);
+  });
+
+  /**
    * A Direction B toolbar dropdown left open, then clicking straight into
    * the editor, previously left it open - the component's own doc comment
    * claimed native `<details>` "already closes on an outside click by

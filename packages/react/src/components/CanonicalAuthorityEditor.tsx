@@ -1969,6 +1969,7 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
 
       <ToolbarGroup>
         {t.blockType && <select
+          className="srte-block-type-select"
           aria-label="Block type"
           title="Block type"
           value={currentBlockType}
@@ -2006,7 +2007,7 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
           consumer that disabled that feature gets the plain button only.
         */}
         {t.bulletedList && (t.listPreset ? <span className="srte-split-control">
-          <ToolbarButton icon="bulletedList" label="Bulleted list" ariaLabel="Bulleted list" pressed={listStyleActive("disc")} disabled={readOnly} onClick={() => toggleList("disc")} />
+          <ToolbarButton icon="bulletedList" label="Bulleted list" ariaLabel="Bulleted list" pressed={listStyleActive("disc")} disabled={readOnly} narrowIconOnly onClick={() => toggleList("disc")} />
           <select
             aria-label="Bulleted list style" title="Bulleted list style"
             disabled={readOnly || (currentListScope.kind === "list-selection" && currentListParts.length !== 1)}
@@ -2016,9 +2017,9 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
             <option value="">Bulleted list style</option>
             {SMART_LIST_PRESETS.filter((preset) => preset.kind === "bullet").map((preset) => <option key={preset.id} value={preset.id}>{preset.label}</option>)}
           </select>
-        </span> : <ToolbarButton icon="bulletedList" label="Bulleted list" ariaLabel="Bulleted list" pressed={listStyleActive("disc")} disabled={readOnly} onClick={() => toggleList("disc")} />)}
+        </span> : <ToolbarButton icon="bulletedList" label="Bulleted list" ariaLabel="Bulleted list" pressed={listStyleActive("disc")} disabled={readOnly} narrowIconOnly onClick={() => toggleList("disc")} />)}
         {t.numberedList && (t.listPreset ? <span className="srte-split-control">
-          <ToolbarButton icon="numberedList" label="Numbered list" ariaLabel="Numbered list" pressed={listStyleActive("decimal")} disabled={readOnly} onClick={() => toggleList("decimal")} />
+          <ToolbarButton icon="numberedList" label="Numbered list" ariaLabel="Numbered list" pressed={listStyleActive("decimal")} disabled={readOnly} narrowIconOnly onClick={() => toggleList("decimal")} />
           <select
             aria-label="Numbered list style" title="Numbered list style"
             disabled={readOnly || (currentListScope.kind === "list-selection" && currentListParts.length !== 1)}
@@ -2028,8 +2029,8 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
             <option value="">Numbered list style</option>
             {SMART_LIST_PRESETS.filter((preset) => preset.kind === "ordered").map((preset) => <option key={preset.id} value={preset.id}>{preset.label}</option>)}
           </select>
-        </span> : <ToolbarButton icon="numberedList" label="Numbered list" ariaLabel="Numbered list" pressed={listStyleActive("decimal")} disabled={readOnly} onClick={() => toggleList("decimal")} />)}
-        {t.checklist && <ToolbarButton icon="checklist" label="Checklist" ariaLabel="Checklist" pressed={listStyleActive("disc", true)} disabled={readOnly} onClick={() => toggleList("disc", true)} />}
+        </span> : <ToolbarButton icon="numberedList" label="Numbered list" ariaLabel="Numbered list" pressed={listStyleActive("decimal")} disabled={readOnly} narrowIconOnly onClick={() => toggleList("decimal")} />)}
+        {t.checklist && <ToolbarButton icon="checklist" label="Checklist" ariaLabel="Checklist" pressed={listStyleActive("disc", true)} disabled={readOnly} narrowIconOnly onClick={() => toggleList("disc", true)} />}
         <ToolbarDropdown icon="restart" label="More list tools" priority={2}>
           {listPresetSelect}
           {t.listPreset && <div className="srte-menu-separator" />}

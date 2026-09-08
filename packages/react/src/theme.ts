@@ -427,17 +427,6 @@ export const SRTE_DEFAULT_CSS = `
   .srte-tool-button, .srte-toolbar select { height: 40px; min-width: 40px; }
   .srte-toolbar-group[data-srte-priority="3"],
   .srte-toolbar-menu[data-srte-priority="2"] { display: none; }
-  /*
-   * The Bulleted/Numbered list buttons' split-control style picker is an
-   * additional desktop convenience on top of the always-reachable "List
-   * preset" control inside the mobile more-menu below - not a second,
-   * narrower-only path, so hiding it here loses no functionality. Without
-   * this, the extra ~54px it adds to a non-wrapping .srte-toolbar-group
-   * squeezed the Checklist button below its own content width at the
-   * narrowest tested widths instead of the group wrapping cleanly.
-   */
-  .srte-split-control > select { display: none; }
-  .srte-split-control > .srte-tool-button:first-child { border-radius: 8px; }
   .srte-mobile-more { display: block; }
   /* left/top are no longer set here - ToolbarPrimitives.tsx now computes
      them via inline style (JS-measured, position:fixed, viewport-clamped;
@@ -455,6 +444,61 @@ export const SRTE_DEFAULT_CSS = `
     -webkit-overflow-scrolling: touch;
   }
   .srte-menu-item { height: 40px; }
+}
+/*
+ * The Bulleted/Numbered list buttons' split-control style picker (a native
+ * <select> chevron next to the button - see .srte-split-control) needs
+ * ~16px more room than the absolute minimum toolbar width supports.
+ * Empirically bisected (not guessed): the toolbar's own "no button should
+ * render narrower than its content" test only starts failing (Checklist
+ * squeezed) at exactly 340-349px container width, and is clean at 350px and
+ * every width above it. An earlier version of this fix reused the much
+ * wider 639px mobile-tier breakpoint above to hide the select, which "fixed"
+ * the failing test but also hid the feature across the entire ~340-639px
+ * range - it was never actually needed past ~349px, and hiding it that
+ * broadly is what caused a live report ("below 680px it's not showing
+ * dropdown icons at list tools"). Scoped tightly here instead (359px, a
+ * small safety margin past the measured 349px floor) so the picker is only
+ * absent in the sliver of widths that actually can't fit it - the presets
+ * remain reachable via the mobile "List preset" control regardless, once
+ * .srte-mobile-more takes over at 639px anyway.
+ */
+@container srte-editor (max-width: 359px) {
+  .srte-split-control > select { display: none; }
+  .srte-split-control > .srte-tool-button:first-child { border-radius: 8px; }
+}
+/*
+ * Below 480px, the block-structure controls (Paragraph/Heading style,
+ * Bulleted list, Numbered list, Checklist) drop their text label and show
+ * icon-only - "visible enough to understand" plus the existing title/
+ * aria-label as a real tooltip, not a silent accessibility loss. Scoped to
+ * just these four (via data-srte-narrow-icon-only on the buttons, and a
+ * dedicated class on the block-type select) rather than every always-
+ * visible button, since only these were reported as needing it - Bold/
+ * Italic/etc. keep their labels at every width, unchanged.
+ *
+ * The block-type control is a native <select> (its shown text is the
+ * selected option's value, not a separate label node that can be hidden on
+ * its own), so it gets the same treatment .srte-split-control's own select
+ * already uses: transparent text plus a background-image icon standing in
+ * for it - here, the Pilcrow glyph (already in toolbarIcons as
+ * "paragraphStyle" but otherwise unused). The native option list itself is
+ * unaffected and still shows full text when opened.
+ */
+@container srte-editor (max-width: 479px) {
+  .srte-tool-button[data-srte-narrow-icon-only="true"] span { display: none; }
+  .srte-toolbar select.srte-block-type-select {
+    appearance: none;
+    -webkit-appearance: none;
+    color: transparent;
+    width: 40px;
+    min-width: 40px;
+    max-width: 40px;
+    padding: 0;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M13 4v16'/%3E%3Cpath d='M17 4v16'/%3E%3Cpath d='M19 4H9.5a4.5 4.5 0 0 0 0 9H13'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: center;
+  }
 }
 /*
  * Wide-viewport promotion (docs/bugs/toolbar-priority-collapse-fixed-threshold-no-wide-promotion.md):
