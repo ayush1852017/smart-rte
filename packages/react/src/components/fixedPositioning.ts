@@ -9,6 +9,23 @@
  *   (`translate-x-[-50%] translate-y-[-50%]`), confirmed live via a Sootr
  *   host rendering the editor inside such a dialog
  *   (docs/bugs/toolbar-menu-misplaced-inside-transformed-ancestor.md).
+ * - `translate`, `rotate`, `scale` (CSS Transforms Level 2's *independent*
+ *   transform properties, distinct from the legacy composite `transform`
+ *   property) - a FOURTH real Sootr dialog kept misplacing every dropdown
+ *   after all three fixes above shipped, still using the exact same
+ *   `translate-x-[-50%] translate-y-[-50%]` Tailwind centering classes the
+ *   very first fix (above) was written for - but a current Tailwind/browser
+ *   combination compiles those classes to the standalone `translate: -50%
+ *   -50%` CSS property, not `transform: translate(-50%, -50%)`. Confirmed
+ *   directly in real Chromium: an ancestor with only `translate` set (its
+ *   own computed `transform` reads `none`) still fully establishes a
+ *   `position: fixed` containing block, per the CSS Transforms Level 2
+ *   spec - the original fix's own doc comment described the right *symptom*
+ *   (a Radix/shadcn Dialog's centering translate) but checked the wrong
+ *   *property* for it, because at the time it was written the transform
+ *   ended up composited into `transform` rather than emitted as `translate`
+ *   directly. Both are checked now, since either can appear depending on
+ *   the host's exact Tailwind/browser version.
  * - `contain: layout | paint | strict | content` (CSS Containment) - a
  *   common perf/isolation optimization on large scrollable containers, e.g.
  *   a second, different Sootr dialog reported still misplacing every
@@ -53,10 +70,13 @@ export function findFixedPositioningContainer(el: HTMLElement): HTMLElement | nu
     const style = window.getComputedStyle(node);
     if (
       (style.transform && style.transform !== "none") ||
+      (style.translate && style.translate !== "none") ||
+      (style.rotate && style.rotate !== "none") ||
+      (style.scale && style.scale !== "none") ||
       (style.perspective && style.perspective !== "none") ||
       (style.filter && style.filter !== "none") ||
       (style.backdropFilter && style.backdropFilter !== "none") ||
-      (style.willChange && /transform|perspective|filter/.test(style.willChange)) ||
+      (style.willChange && /transform|perspective|filter|translate|rotate|scale/.test(style.willChange)) ||
       (style.contain && /\b(layout|paint|strict|content)\b/.test(style.contain))
     ) {
       return node;
@@ -90,8 +110,9 @@ export function getFixedPositioningOrigin(el: HTMLElement): { left: number; top:
  * the actual, much narrower, clipping ancestor.
  *
  * Deliberately NOT applied for a containing block established only by
- * `transform`/`perspective`/`filter`/`backdrop-filter`/`will-change`, or by
- * `contain: layout` with no `paint`/`strict`/`content` alongside it - none
+ * `transform`/`translate`/`rotate`/`scale`/`perspective`/`filter`/
+ * `backdrop-filter`/`will-change`, or by `contain: layout` with no
+ * `paint`/`strict`/`content` alongside it - none
  * of those clip overflow (`layout` containment only isolates layout
  * calculations, it does not imply paint containment - see the spec note
  * above `findFixedPositioningContainer`), so a menu is free to visually

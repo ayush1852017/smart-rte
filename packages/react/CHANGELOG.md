@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.0-beta.14
+
+- Fix toolbar dropdowns still landing far from their trigger inside a dialog centered via the standalone CSS `translate` property (e.g. Tailwind's `translate-x-[-50%] translate-y-[-50%]` compiled to `translate` rather than the legacy `transform` property, depending on Tailwind/browser version) — `findFixedPositioningContainer` only checked `transform`, missing that `translate`/`rotate`/`scale` (CSS Transforms Level 2's independent transform properties) each independently establish a `position: fixed` containing block too. Root-caused via a live console diagnostic against the real page rather than guessing. See `docs/bugs/toolbar-overlay-misplaced-standalone-translate-property.md`.
+
 ## 1.0.0-beta.13
 
 - Fix toolbar dropdowns still landing far from their trigger inside a dialog whose ancestor uses `contain: layout` without `paint` — `1.0.0-beta.11`'s `contain` fix only checked for `paint`/`strict`/`content`, missing that bare `layout` alone also establishes a `position: fixed` containing block per spec (confirmed directly in real Chromium). Menus rendered hundreds of pixels from their trigger, overlapping unrelated page content, with no error. See `docs/bugs/toolbar-overlay-misplaced-inside-contain-layout-ancestor.md`.

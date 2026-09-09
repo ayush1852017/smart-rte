@@ -1324,3 +1324,51 @@ test.describe("toolbar overlays: correctly positioned inside a contain:layout an
     expectAdjacentVertically(menuBox, triggerBox);
   });
 });
+
+/**
+ * "Still showing in wrong position, way right to the linked element" - a
+ * FOURTH real Sootr dialog, using the exact same shadcn/Radix-style
+ * centering classes (`fixed top-[50%] left-[50%] translate-x-[-50%]
+ * translate-y-[-50%]`) the very first transform fix above was written for -
+ * but root-caused via a live console diagnostic (walking the DOM ancestor
+ * chain and reading each one's computed style) to actually compile those
+ * Tailwind classes to the standalone CSS `translate` property, not the
+ * legacy composite `transform` property (`getComputedStyle(host).transform`
+ * read "none" on the real page). Confirmed directly in real Chromium
+ * first: an ancestor with only `translate` set (no `transform`) still
+ * fully establishes a position:fixed containing block, per CSS Transforms
+ * Level 2 - the original fix checked the wrong CSS property for the exact
+ * right symptom.
+ */
+test.describe("toolbar overlays: correctly positioned inside an ancestor using standalone CSS translate (not the transform property)", () => {
+  test("a desktop dropdown lands next to its own trigger when its ancestor is centered via the translate property alone", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    await page.waitForSelector(".srte-toolbar");
+    await page.evaluate(() => {
+      const root = document.querySelector<HTMLElement>(".srte-root.srte-editor")!;
+      const host = document.createElement("div");
+      host.setAttribute("data-test-translate-host", "true");
+      // Mirrors the real Sootr dialog's own centering classes exactly:
+      // fixed + top/left 50% + translate(-50%, -50%) - via the standalone
+      // `translate` property, not `transform`, matching what the live
+      // console diagnostic found (getComputedStyle(host).transform === "none").
+      host.style.position = "fixed";
+      host.style.top = "50%";
+      host.style.left = "50%";
+      (host.style as unknown as { translate: string }).translate = "-50% -50%";
+      host.style.width = "700px";
+      document.body.appendChild(host);
+      host.appendChild(root);
+    });
+
+    const dropdown = page.locator("details.srte-toolbar-menu", { has: page.locator("summary", { hasText: "More text styles" }) });
+    const triggerBox = (await dropdown.locator("summary").boundingBox())!;
+    await dropdown.locator("summary").click();
+    const menu = page.locator("details.srte-toolbar-menu[open] > .srte-menu[data-srte-menu-fixed=\"true\"]");
+    await expect(menu).toBeVisible();
+    const menuBox = (await menu.boundingBox())!;
+
+    expect(Math.abs(menuBox.x - triggerBox.x)).toBeLessThan(250);
+    expectAdjacentVertically(menuBox, triggerBox);
+  });
+});
