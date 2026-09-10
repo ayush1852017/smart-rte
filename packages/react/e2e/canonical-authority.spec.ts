@@ -798,6 +798,65 @@ test.describe("Phase 8b canonical product authority", () => {
     expect(after.selection.head.offset).toBe(0);
   });
 
+  /**
+   * Regression (2026-09-10, live report + screenshot): a selection spanning
+   * partway into a top-level list item's own paragraph through partway into
+   * a *nested sub-list item*, then clicking Blockquote, threw "replaceNode
+   * before payload does not match document node." and did nothing - the
+   * selection's two ends resolved to two different "nearest list" targets
+   * (the outer list and its own nested sub-list), and treating both as
+   * independent replacements corrupted the document. Fixed in
+   * packages/core's wrapBlocks/unwrapBlocks (dropNestedTargets) - this is
+   * the real-browser confirmation that the actual toolbar path (not just
+   * the core unit test) no longer throws and produces the correct result.
+   */
+  test("applies Blockquote to a selection spanning a list item and its own nested sub-list item without throwing", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1");
+    const root = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
+    await root.click();
+    await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
+    await page.keyboard.press("Backspace");
+    await page.keyboard.type("top item");
+    await page.getByRole("button", { name: "Numbered list", exact: true }).click();
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("Tab");
+    await page.keyboard.type("nested item");
+    await page.waitForTimeout(30);
+
+    const pageErrors: string[] = [];
+    page.on("pageerror", (err) => pageErrors.push(err.message));
+
+    // Select from partway into "top item" through partway into "nested item".
+    await page.evaluate(() => {
+      const surface = document.querySelector('[data-smart-authority="canonical"] [contenteditable="true"]')!;
+      const walker = document.createTreeWalker(surface, NodeFilter.SHOW_TEXT);
+      const texts: Text[] = [];
+      let node: Node | null;
+      while ((node = walker.nextNode())) texts.push(node as Text);
+      const fromText = texts.find((t) => t.textContent === "top item")!;
+      const toText = texts.find((t) => t.textContent === "nested item")!;
+      const range = document.createRange();
+      range.setStart(fromText, "top ".length);
+      range.setEnd(toText, "nested ".length);
+      const selection = window.getSelection()!;
+      selection.removeAllRanges();
+      selection.addRange(range);
+      document.dispatchEvent(new Event("selectionchange"));
+    });
+
+    await page.getByRole("button", { name: "Blockquote", exact: true }).click();
+    await page.waitForTimeout(30);
+
+    expect(pageErrors).toEqual([]);
+    await expect(root.locator("blockquote")).toHaveCount(1);
+    // No data loss - the whole list (both items, full text) survives inside
+    // the one blockquote, exactly as the existing "wraps a whole list once"
+    // policy already guarantees for a fully-selected list.
+    await expect(root.locator("blockquote li")).toHaveCount(2);
+    await expect(root.locator("blockquote")).toContainText("top item");
+    await expect(root.locator("blockquote")).toContainText("nested item");
+  });
+
   test("keeps the moved block caret and native selection aligned while typing", async ({ page }) => {
     await page.goto("/?canonicalAuthority=1&blocks=4");
     await placeCaretInTopLevelBlock(page, 1, true);

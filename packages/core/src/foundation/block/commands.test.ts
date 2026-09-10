@@ -88,6 +88,66 @@ describe("Phase 5 pure block commands", () => {
     expect(unwrapped).toEqual(before);
   });
 
+  /**
+   * Regression (2026-09-10, live report + screenshot): selecting from
+   * partway into one list item's own paragraph through partway into a
+   * *nested* sub-list's item, then applying Blockquote, threw "replaceNode
+   * before payload does not match document node." and did nothing.
+   *
+   * Root cause: the selection's two ends resolve to two different "nearest
+   * list ancestor" targets - the outer list (for the outer item's own
+   * paragraph) and the inner nested list (for the sub-item's paragraph) -
+   * but the inner one is itself inside the outer one. Treating both as
+   * independent replaceNode targets corrupts the document: whichever runs
+   * second captures a "before" snapshot of the outer list that's already
+   * stale by the time it executes, since the first operation already
+   * replaced a node nested inside it.
+   */
+  it("wraps a selection spanning an outer list item and its own nested sub-list item as one quote, not two conflicting replacements", () => {
+    const list: SmartElementNode = { type: "list", id: "outer-list", children: [
+      { type: "list_item", id: "item-1", children: [
+        paragraph("p1", "one"),
+        { type: "list", id: "inner-list", children: [
+          { type: "list_item", id: "item-1a", children: [paragraph("p1a", "one-a")] },
+          { type: "list_item", id: "item-1b", children: [paragraph("p1b", "one-b")] },
+        ] },
+      ] },
+      { type: "list_item", id: "item-2", children: [paragraph("p2", "two")] },
+    ] };
+    const before = documentOf(list);
+    const selected = blockScope("p1", "p1a");
+    expect(() => applyOperations(before, wrapBlocks(before, selected, { type: "blockquote", wrapperIds: ["quote"] }, context(before))))
+      .not.toThrow();
+    const quoted = applyOperations(before, wrapBlocks(before, selected, { type: "blockquote", wrapperIds: ["quote"] }, context(before)));
+    // Exactly one blockquote wrapping the whole outer list untouched - no
+    // data loss, and the redundant inner-list target was dropped rather
+    // than independently (and destructively) replaced.
+    expect(quoted.children).toEqual([{ type: "blockquote", id: "quote", children: [before.children[0]] }]);
+
+    const unwrapped = applyOperations(quoted, unwrapBlocks(quoted, selected, {}, context(quoted)));
+    expect(unwrapped).toEqual(before);
+  });
+
+  it("unwraps a selection spanning an outer blockquote and its own nested blockquote as one operation, not two conflicting replacements", () => {
+    const nested: SmartElementNode = {
+      type: "blockquote", id: "outer-quote", children: [
+        paragraph("p1", "one"),
+        { type: "blockquote", id: "inner-quote", children: [paragraph("p2", "two")] },
+      ],
+    };
+    const before = documentOf(nested);
+    const selected = blockScope("p1", "p2");
+    expect(() => applyOperations(before, unwrapBlocks(before, selected, {}, context(before)))).not.toThrow();
+    const unwrapped = applyOperations(before, unwrapBlocks(before, selected, {}, context(before)));
+    // Only the outer quote unwraps - the nested quote (already covered by
+    // the outer one being a target) is left completely intact, not
+    // independently unwrapped too.
+    expect(unwrapped.children).toEqual([
+      { type: "paragraph", id: "p1", children: [{ type: "text", text: "one" }] },
+      { type: "blockquote", id: "inner-quote", children: [{ type: "paragraph", id: "p2", children: [{ type: "text", text: "two" }] }] },
+    ]);
+  });
+
   it("uses attributes for alignment and indentation and moves a contiguous run", () => {
     const before = documentOf(paragraph("a", "A"), paragraph("b", "B"), paragraph("c", "C"), paragraph("d", "D"));
     let model = applyOperations(before, setBlockAttributes(before, blockScope("b", "c"), { attrs: { align: "center" } }, context(before)));

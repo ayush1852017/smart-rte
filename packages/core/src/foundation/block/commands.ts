@@ -46,6 +46,31 @@ const ancestorWithRole = (
   return null;
 };
 
+/**
+ * Two different selected blocks can resolve to two different target
+ * ancestors (both matching `role`) where one target is itself nested inside
+ * the other - e.g. a selection spanning a top-level list item and a
+ * sub-item of its own nested list has one selected block whose nearest
+ * "list" ancestor is the outer list, and another whose nearest "list"
+ * ancestor is the inner one. Both are real, valid `role` ancestors, but
+ * treating them as two independent wrap/unwrap targets is wrong: the outer
+ * target's own subtree already contains the inner one, so replacing both
+ * separately means the second operation's `before` snapshot (captured
+ * against the pre-edit document) no longer matches the document by the time
+ * it runs, since the first operation already mutated a node inside it -
+ * `applyOperations` throws "replaceNode before payload does not match
+ * document node." Kept only the outermost target per such chain - wrapping/
+ * unwrapping it already covers everything nested inside it.
+ */
+const dropNestedTargets = (targets: Map<string, LocatedBlock>, ctx: BlockCommandContext): void => {
+  const idsToDrop: string[] = [];
+  targets.forEach((_target, id) => {
+    const resolved = ctx.positions.positionOf(id);
+    if (resolved?.ancestors.some((ancestor) => ancestor.id !== id && targets.has(ancestor.id))) idsToDrop.push(id);
+  });
+  idsToDrop.forEach((id) => targets.delete(id));
+};
+
 const ancestorTargets = (
   scope: ResolvedScope,
   role: "list" | "blockquote",
@@ -57,6 +82,7 @@ const ancestorTargets = (
     if (!ancestor || targets.has(ancestor.id)) return;
     targets.set(ancestor.id, locate(ancestor.id, ctx));
   });
+  dropNestedTargets(targets, ctx);
   return [...targets.values()].sort((left, right) =>
     right.pos.path.length - left.pos.path.length || right.pos.offset - left.pos.offset);
 };
@@ -167,6 +193,7 @@ export const unwrapBlocks: BlockCommand<UnwrapBlocksParams> = (_document, scope,
     if (!target || wrappers.has(target.id)) return;
     wrappers.set(target.id, locate(target.id, ctx));
   });
+  dropNestedTargets(wrappers, ctx);
   return [...wrappers.values()].sort((left, right) =>
     right.pos.path.length - left.pos.path.length || right.pos.offset - left.pos.offset).flatMap(({ node, pos }) => {
     if (node.type !== wrapperType) return [];

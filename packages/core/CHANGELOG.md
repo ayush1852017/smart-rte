@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.0-beta.8
+
+- Fix Blockquote (and unwrap) throwing an uncaught error ("replaceNode before payload does not match document node.") and applying nothing, for a selection spanning a list item's own text and a nested sub-list item's text — two selected blocks resolving to two different, nested "list" ancestors were treated as independent (and mutually conflicting) wrap targets instead of recognizing the inner one is already covered by the outer one. Also fixed the identical latent issue for unwrapping nested blockquotes (the schema allows blockquote nesting), even though no live report had surfaced it yet. See `docs/bugs/blockquote-crashes-on-selection-spanning-outer-and-nested-list.md`.
+
 ## 1.0.0-beta.7
 
 - Fix copy, cut, and native drag throwing an uncaught error ("Clipboard copy is clamped to one structural parent.") for any selection whose two endpoints weren't immediate siblings — e.g. starting in a plain paragraph and dragging into a nested list item, or spanning two list items at different nesting depths. This was not an exotic shape: any selection reaching into a list, table, or blockquote from outside it hit this, and the failure was a silent no-op (nothing copied) with a console error, not a graceful fallback. See `docs/bugs/clipboard-copy-cut-throws-across-differently-nested-endpoints.md`.
