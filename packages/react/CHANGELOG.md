@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.0-beta.15
+
+- The Blockquote toolbar button now shows as active (pressed) when the caret is inside a blockquote, matching every other toggle-style tool (Bold, Bulleted list, etc.) — previously it never reflected caret/selection state at all.
+
 ## 1.0.0-beta.14
 
 - Fix toolbar dropdowns still landing far from their trigger inside a dialog centered via the standalone CSS `translate` property (e.g. Tailwind's `translate-x-[-50%] translate-y-[-50%]` compiled to `translate` rather than the legacy `transform` property, depending on Tailwind/browser version) — `findFixedPositioningContainer` only checked `transform`, missing that `translate`/`rotate`/`scale` (CSS Transforms Level 2's independent transform properties) each independently establish a `position: fixed` containing block too. Root-caused via a live console diagnostic against the real page rather than guessing. See `docs/bugs/toolbar-overlay-misplaced-standalone-translate-property.md`.

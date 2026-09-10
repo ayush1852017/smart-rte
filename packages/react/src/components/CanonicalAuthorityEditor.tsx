@@ -688,6 +688,12 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
     return "paragraph";
   };
   const currentBlockType = blockTypeAt(runtime.editor.selection.head);
+  // Mirrors toggleBlockquote's own ancestor lookup exactly, so "the button
+  // looks active" and "clicking it again unwraps" can never drift apart -
+  // same discipline as listStyleActive for the list toggle buttons.
+  const currentBlockquoteActive = Boolean(
+    [...runtime.editor.resolve({ pos: runtime.editor.selection.head }).ancestors].reverse().find((node) => node.type === "blockquote"),
+  );
   const currentListPreset = currentListParts.length === 1 && typeof rootList?.attrs?.preset === "string"
     ? rootList.attrs.preset
     : "";
@@ -1988,7 +1994,7 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
         {t.alignRight && <ToolbarButton icon="alignRight" label="Align right" ariaLabel="Align right" iconOnly disabled={readOnly} onClick={() => transactBlock(setBlockAttributes(runtime.editor.document, blockScope(), { attrs: { align: "right" } }, blockContext()))} />}
         {t.alignJustify && <ToolbarButton icon="alignJustify" label="Justify" ariaLabel="Align justify" iconOnly disabled={readOnly} onClick={() => transactBlock(setBlockAttributes(runtime.editor.document, blockScope(), { attrs: { align: "justify" } }, blockContext()))} />}
         {t.lineHeight && <ToolbarDropdown icon="lineHeight" label="Line spacing" priority={2}>{lineHeightMenuItems}</ToolbarDropdown>}
-        {t.quote && <ToolbarButton icon="quote" label="Quote" ariaLabel="Blockquote" disabled={readOnly} onClick={toggleBlockquote} />}
+        {t.quote && <ToolbarButton icon="quote" label="Quote" ariaLabel="Blockquote" pressed={currentBlockquoteActive} disabled={readOnly} onClick={toggleBlockquote} />}
         <ToolbarDropdown icon="moveUp" label="More paragraph tools" priority={2}>{paragraphToolsMenuItems}</ToolbarDropdown>
       </ToolbarGroup>
 

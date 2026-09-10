@@ -799,6 +799,36 @@ test.describe("Phase 8b canonical product authority", () => {
   });
 
   /**
+   * "Don't you think if blockquote is applied then it should show as active
+   * if cursor is there?" - the Blockquote button never wired up a `pressed`
+   * prop at all, so it never reflected caret/selection state, unlike every
+   * other toggle button (Bold, Bulleted list, etc.). The detection logic
+   * already existed inside toggleBlockquote itself (walk the caret's
+   * ancestors for the nearest blockquote) - it just was never surfaced to
+   * the button's own display state.
+   */
+  test("the Blockquote button shows pressed when the caret is inside a blockquote, and un-pressed once it isn't", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1");
+    const quote = page.getByRole("button", { name: "Blockquote", exact: true });
+    await expect(quote).toHaveAttribute("aria-pressed", "false");
+
+    await selectFirstText(page);
+    await quote.click();
+    await expect(quote).toHaveAttribute("aria-pressed", "true");
+
+    // Moving the caret into a different, non-quoted paragraph un-presses it.
+    const root = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
+    await root.focus();
+    await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
+    await page.keyboard.press("ArrowDown");
+    await expect(quote).toHaveAttribute("aria-pressed", "false");
+
+    // Moving the caret back into the quoted first block re-presses it.
+    await selectFirstText(page);
+    await expect(quote).toHaveAttribute("aria-pressed", "true");
+  });
+
+  /**
    * Regression (2026-09-10, live report + screenshot): a selection spanning
    * partway into a top-level list item's own paragraph through partway into
    * a *nested sub-list item*, then clicking Blockquote, threw "replaceNode
