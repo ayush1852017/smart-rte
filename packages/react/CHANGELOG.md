@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.0-beta.16
+
+- Bold, Italic, Underline, Strikethrough, Code, Superscript, Subscript, Text colour, Background colour, Font size, Font family, and Link now disable themselves whenever nothing in the current selection would actually accept the mark (the caret is inside a code block, or an atom like an image is selected) — previously these stayed fully clickable and silently did nothing in those contexts. A selection spanning both allowed and disallowed content still applies to its allowed part, unchanged.
+
 ## 1.0.0-beta.15
 
 - The Blockquote toolbar button now shows as active (pressed) when the caret is inside a blockquote, matching every other toggle-style tool (Bold, Bulleted list, etc.) — previously it never reflected caret/selection state at all.

@@ -26,6 +26,7 @@ import {
   removeTableColumnCommand,
   removeTableCommand,
   removeTableRowCommand,
+  reportMarkApplication,
   resizeAtom,
   runAtomUpload,
   restartListNumbering,
@@ -1701,6 +1702,26 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
     if (!entry) return false;
     return entry.coverage === "all" ? true : "mixed";
   };
+  /**
+   * Whether clicking this mark tool right now would do anything at all - a
+   * node type can declare `marks: ""` (code_block, every atom) to disallow
+   * every mark, and applyMarkCommand already silently skips owners that
+   * disallow the mark rather than erroring - previously that made these
+   * buttons stay fully clickable no-ops with zero feedback inside a code
+   * block or with an image selected. Reuses reportMarkApplication (already
+   * built for exactly this question, previously only exercised by tests)
+   * rather than re-deriving the schema check: "allowed somewhere" is
+   * ownerCount > ownerIdsSkipped.length, i.e. at least one touched owner
+   * does NOT skip it. Deliberately "somewhere", not "everywhere" - a
+   * selection spanning both a normal paragraph and a code block still
+   * partially applies to the paragraph half today, and disabling here
+   * would take that capability away for no reason.
+   */
+  const markToolAllowed = (id: string): boolean => {
+    const scope = runtime.editor.resolveScope({ want: "inline-range" }) as ResolvedScope;
+    const report = reportMarkApplication(runtime.editor.document, scope, markTool(id).markType, blockContext());
+    return report.ownerCount > report.ownerIdsSkipped.length;
+  };
   const toggleMark = (id: string) => { executeMarkTool(runtime.editor, markTool(id), "toggle"); runtime.focus(); };
   const openLinkPopover = (event: React.MouseEvent<HTMLButtonElement>) => {
     const description = runtime.editor.resolveScope({ want: "describe" }) as SelectionDescription;
@@ -1733,19 +1754,19 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
   // same as before. "Code" isn't promoted - see the docs/bugs/ writeup on
   // why it stayed the dropdown's sole remaining item at wide widths.
   const textStylesMenuItems = <>
-    {t.code && <ToolbarMenuItem icon="code" label="Code" pressed={markCoverage("inlineCode")} disabled={readOnly} onClick={() => toggleMark("inlineCode")} />}
-    {t.superscript && <ToolbarMenuItem icon="superscript" label="Superscript" pressed={markCoverage("superscript")} disabled={readOnly} onClick={() => toggleMark("superscript")} widePromote />}
-    {t.subscript && <ToolbarMenuItem icon="subscript" label="Subscript" pressed={markCoverage("subscript")} disabled={readOnly} onClick={() => toggleMark("subscript")} widePromote />}
-    {t.textColor && <ToolbarMenuItem icon="textColor" label="Text colour" disabled={readOnly} widePromote onClick={(event) => {
+    {t.code && <ToolbarMenuItem icon="code" label="Code" pressed={markCoverage("inlineCode")} disabled={readOnly || !markToolAllowed("inlineCode")} onClick={() => toggleMark("inlineCode")} />}
+    {t.superscript && <ToolbarMenuItem icon="superscript" label="Superscript" pressed={markCoverage("superscript")} disabled={readOnly || !markToolAllowed("superscript")} onClick={() => toggleMark("superscript")} widePromote />}
+    {t.subscript && <ToolbarMenuItem icon="subscript" label="Subscript" pressed={markCoverage("subscript")} disabled={readOnly || !markToolAllowed("subscript")} onClick={() => toggleMark("subscript")} widePromote />}
+    {t.textColor && <ToolbarMenuItem icon="textColor" label="Text colour" disabled={readOnly || !markToolAllowed("textColor")} widePromote onClick={(event) => {
       const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
       setColorPopover({ x: rect.left, y: rect.bottom + 4, target: { kind: "mark", markId: "textColor" }, initialValue: currentMarkColor("textColor") });
     }} />}
-    {t.backgroundColor && <ToolbarMenuItem icon="backgroundColor" label="Background colour" disabled={readOnly} widePromote onClick={(event) => {
+    {t.backgroundColor && <ToolbarMenuItem icon="backgroundColor" label="Background colour" disabled={readOnly || !markToolAllowed("backgroundColor")} widePromote onClick={(event) => {
       const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
       setColorPopover({ x: rect.left, y: rect.bottom + 4, target: { kind: "mark", markId: "backgroundColor" }, initialValue: currentMarkColor("backgroundColor") });
     }} />}
-    {t.fontSize && <ToolbarMenuItem icon="fontSize" label="Font size" disabled={readOnly} onClick={() => applyAttributedMark("fontSize")} widePromote />}
-    {t.fontFamily && <ToolbarMenuItem icon="fontFamily" label="Font family" disabled={readOnly} onClick={() => applyAttributedMark("fontFamily")} widePromote />}
+    {t.fontSize && <ToolbarMenuItem icon="fontSize" label="Font size" disabled={readOnly || !markToolAllowed("fontSize")} onClick={() => applyAttributedMark("fontSize")} widePromote />}
+    {t.fontFamily && <ToolbarMenuItem icon="fontFamily" label="Font family" disabled={readOnly || !markToolAllowed("fontFamily")} onClick={() => applyAttributedMark("fontFamily")} widePromote />}
   </>;
   const showMoreTextStyles = t.code || t.superscript || t.subscript || t.textColor || t.backgroundColor || t.fontSize || t.fontFamily;
   /**
@@ -1953,23 +1974,23 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
   return <section className={`srte-root srte-editor srte-canonical-authority${className ? ` ${className}` : ""}`} data-smart-authority="canonical">
     <div className="srte-toolbar" role="toolbar" aria-label="Formatting toolbar">
       <ToolbarGroup>
-        {t.bold && <ToolbarButton icon="bold" label="Bold" pressed={markCoverage("bold")} disabled={readOnly} onClick={() => toggleMark("bold")} />}
-        {t.italic && <ToolbarButton icon="italic" label="Italic" pressed={markCoverage("italic")} disabled={readOnly} onClick={() => toggleMark("italic")} />}
-        {t.underline && <ToolbarButton icon="underline" label="Underline" pressed={markCoverage("underline")} disabled={readOnly} onClick={() => toggleMark("underline")} />}
-        {t.strikethrough && <ToolbarButton icon="strikethrough" label="Strikethrough" pressed={markCoverage("strikethrough")} disabled={readOnly} onClick={() => toggleMark("strikethrough")} />}
+        {t.bold && <ToolbarButton icon="bold" label="Bold" pressed={markCoverage("bold")} disabled={readOnly || !markToolAllowed("bold")} onClick={() => toggleMark("bold")} />}
+        {t.italic && <ToolbarButton icon="italic" label="Italic" pressed={markCoverage("italic")} disabled={readOnly || !markToolAllowed("italic")} onClick={() => toggleMark("italic")} />}
+        {t.underline && <ToolbarButton icon="underline" label="Underline" pressed={markCoverage("underline")} disabled={readOnly || !markToolAllowed("underline")} onClick={() => toggleMark("underline")} />}
+        {t.strikethrough && <ToolbarButton icon="strikethrough" label="Strikethrough" pressed={markCoverage("strikethrough")} disabled={readOnly || !markToolAllowed("strikethrough")} onClick={() => toggleMark("strikethrough")} />}
         {/* Wide-viewport promoted copies of tools that also live in "More text styles" - see textStylesMenuItems's own comment. */}
-        {t.superscript && <ToolbarButton icon="superscript" label="Superscript" pressed={markCoverage("superscript")} disabled={readOnly} onClick={() => toggleMark("superscript")} widePromote />}
-        {t.subscript && <ToolbarButton icon="subscript" label="Subscript" pressed={markCoverage("subscript")} disabled={readOnly} onClick={() => toggleMark("subscript")} widePromote />}
-        {t.textColor && <ToolbarButton icon="textColor" label="Text colour" disabled={readOnly} widePromote onClick={(event) => {
+        {t.superscript && <ToolbarButton icon="superscript" label="Superscript" pressed={markCoverage("superscript")} disabled={readOnly || !markToolAllowed("superscript")} onClick={() => toggleMark("superscript")} widePromote />}
+        {t.subscript && <ToolbarButton icon="subscript" label="Subscript" pressed={markCoverage("subscript")} disabled={readOnly || !markToolAllowed("subscript")} onClick={() => toggleMark("subscript")} widePromote />}
+        {t.textColor && <ToolbarButton icon="textColor" label="Text colour" disabled={readOnly || !markToolAllowed("textColor")} widePromote onClick={(event) => {
           const rect = event.currentTarget.getBoundingClientRect();
           setColorPopover({ x: rect.left, y: rect.bottom + 4, target: { kind: "mark", markId: "textColor" }, initialValue: currentMarkColor("textColor") });
         }} />}
-        {t.backgroundColor && <ToolbarButton icon="backgroundColor" label="Background colour" disabled={readOnly} widePromote onClick={(event) => {
+        {t.backgroundColor && <ToolbarButton icon="backgroundColor" label="Background colour" disabled={readOnly || !markToolAllowed("backgroundColor")} widePromote onClick={(event) => {
           const rect = event.currentTarget.getBoundingClientRect();
           setColorPopover({ x: rect.left, y: rect.bottom + 4, target: { kind: "mark", markId: "backgroundColor" }, initialValue: currentMarkColor("backgroundColor") });
         }} />}
-        {t.fontSize && <ToolbarButton icon="fontSize" label="Font size" disabled={readOnly} onClick={() => applyAttributedMark("fontSize")} widePromote />}
-        {t.fontFamily && <ToolbarButton icon="fontFamily" label="Font family" disabled={readOnly} onClick={() => applyAttributedMark("fontFamily")} widePromote />}
+        {t.fontSize && <ToolbarButton icon="fontSize" label="Font size" disabled={readOnly || !markToolAllowed("fontSize")} onClick={() => applyAttributedMark("fontSize")} widePromote />}
+        {t.fontFamily && <ToolbarButton icon="fontFamily" label="Font family" disabled={readOnly || !markToolAllowed("fontFamily")} onClick={() => applyAttributedMark("fontFamily")} widePromote />}
         {showMoreTextStyles && <ToolbarDropdown icon="textColor" label="More text styles" priority={2}>{textStylesMenuItems}</ToolbarDropdown>}
       </ToolbarGroup>
 
@@ -2045,7 +2066,7 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
       </ToolbarGroup>
 
       <ToolbarGroup>
-        {t.link && <ToolbarButton icon="link" label="Link" ariaLabel="Insert or edit link" disabled={readOnly} onClick={openLinkPopover} />}
+        {t.link && <ToolbarButton icon="link" label="Link" ariaLabel="Insert or edit link" disabled={readOnly || !markToolAllowed("link")} onClick={openLinkPopover} />}
         {showImageTool && <ToolbarButton icon="image" label="Image" ariaLabel="Insert image" disabled={readOnly} onClick={() => setMediaKind("image")} />}
         {/* Wide-viewport promoted copies of tools that also live in "More to insert" - see insertMoreMenuItems's own comment. */}
         {t.removeLink && <ToolbarButton icon="unlink" label="Remove link" disabled={readOnly} onClick={removeLink} widePromote />}

@@ -829,6 +829,43 @@ test.describe("Phase 8b canonical product authority", () => {
   });
 
   /**
+   * "Should we conditionally disable not-allowed tools to make it clear in
+   * the first place for users?" - code_block declares `marks: ""` (no marks
+   * allowed at all), so clicking Bold/Italic/etc. with the caret inside one
+   * was previously a fully-clickable, silent no-op. Reuses
+   * reportMarkApplication (already built, previously exercised only by
+   * core unit tests) to disable each mark tool whenever nothing in the
+   * current selection would actually accept it - deliberately "nothing",
+   * not "not everything", so a selection spanning both a normal paragraph
+   * and a code block still leaves the tool enabled for its allowed half.
+   */
+  test("mark toolbar tools disable inside a code block (which allows no marks) and re-enable back in a normal paragraph", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1");
+    const bold = page.getByRole("button", { name: "Bold", exact: true });
+    const italic = page.getByRole("button", { name: "Italic", exact: true });
+    const link = page.getByRole("button", { name: "Insert or edit link" });
+
+    await selectFirstText(page);
+    await expect(bold).toBeEnabled();
+    await expect(italic).toBeEnabled();
+    await expect(link).toBeEnabled();
+
+    // Convert the first block to a code block via the Block type dropdown.
+    await page.getByRole("combobox", { name: "Block type" }).selectOption("code_block");
+    await selectFirstText(page);
+    await expect(bold).toBeDisabled();
+    await expect(italic).toBeDisabled();
+    await expect(link).toBeDisabled();
+
+    // Convert back to a paragraph - the tools come back.
+    await page.getByRole("combobox", { name: "Block type" }).selectOption("paragraph");
+    await selectFirstText(page);
+    await expect(bold).toBeEnabled();
+    await expect(italic).toBeEnabled();
+    await expect(link).toBeEnabled();
+  });
+
+  /**
    * Regression (2026-09-10, live report + screenshot): a selection spanning
    * partway into a top-level list item's own paragraph through partway into
    * a *nested sub-list item*, then clicking Blockquote, threw "replaceNode
