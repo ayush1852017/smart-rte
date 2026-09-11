@@ -16,6 +16,7 @@ import {
 } from "../index.js";
 
 const p = (id: string, text = ""): SmartElementNode => ({ type: "paragraph", id, children: text ? [{ type: "text", text }] : [] });
+const code = (id: string, text = ""): SmartElementNode => ({ type: "code_block", id, attrs: { language: "ts" }, children: text ? [{ type: "text", text }] : [] });
 const item = (id: string, text = "", extra: SmartElementNode[] = []): SmartElementNode => ({ type: "list_item", id, children: [p(`${id}-p`, text), ...extra] });
 const list = (id: string, items: SmartElementNode[]): SmartElementNode => ({ type: "list", id, attrs: { style: "disc" }, children: items });
 const doc = (...children: SmartElementNode[]): SmartDocument => ({ type: "doc", id: "doc", children });
@@ -71,6 +72,30 @@ describe("Phase 3 list Enter matrix", () => {
     const topResult = enterInList(topBefore, { path: [0, 0, 0], offset: 0 }, enterIds, ctx(topBefore));
     expect(topResult?.intent).toBe("unwrap");
     expect(apply(topBefore, topResult).children).toMatchObject([{ id: "empty-p" }, { id: "after" }]);
+  });
+
+  /**
+   * Regression (2026-09-11, live report): after block/input.ts's
+   * exitCodeBlock creates a new sibling item to escape a code block, that
+   * item is necessarily empty - meaning the very next Enter, before typing
+   * anything, would otherwise hit this same function's "empty item exits
+   * the list" branch and immediately undo the escape. From the keyboard
+   * this is indistinguishable from a genuine "type, Enter, Enter" exit
+   * request, so the fix is structural: an empty item whose immediately
+   * preceding sibling ends in a code block swallows the Enter instead.
+   */
+  it("swallows Enter on an empty item that immediately follows a code-block item, instead of exiting the list", () => {
+    const codeItem: SmartElementNode = { type: "list_item", id: "code-item", children: [code("code", "line")] };
+    const before = doc(list("root", [codeItem, item("empty")]));
+    const result = enterInList(before, { path: [0, 1, 0], offset: 0 }, enterIds, ctx(before));
+    expect(result).toEqual({ operations: [], intent: "noop", selectionTarget: { ownerId: "empty-p", offset: 0 } });
+    expect(applyOperations(before, result!.operations)).toEqual(before);
+  });
+
+  it("still unwraps a depth-zero empty item whose preceding sibling is an ordinary (non-code) item", () => {
+    const before = doc(list("root", [item("a", "A"), item("empty")]));
+    const result = enterInList(before, { path: [0, 1, 0], offset: 0 }, enterIds, ctx(before));
+    expect(result?.intent).toBe("unwrap");
   });
 
   it("outdents a depth-two empty item before it can exit the root list", () => {

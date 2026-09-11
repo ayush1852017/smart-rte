@@ -940,6 +940,44 @@ test.describe("Phase 8b canonical product authority", () => {
   });
 
   /**
+   * Regression (2026-09-11, live report): "I tried but still it's add new
+   * lines every time." Investigation showed the fix above works exactly as
+   * designed (a real item 2 is created after two Enters), but that item is
+   * necessarily empty, and a bare third Enter (nothing typed yet) looked
+   * identical to the editor's own separate, pre-existing "empty item + Enter
+   * exits the list" convention - immediately undoing the escape and leaving
+   * only plain paragraphs from then on, matching the reported symptom. A
+   * third Enter on that still-empty escaped item must now do nothing, so it
+   * survives long enough to type into.
+   */
+  test("a third Enter on the item just escaped from a code block does not exit the list", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1");
+    const surface = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
+    await surface.click();
+    await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
+    await page.keyboard.press("Backspace");
+
+    await page.getByRole("button", { name: "Numbered list", exact: true }).click();
+    await page.keyboard.type("item one");
+    await page.getByRole("combobox", { name: "Block type" }).selectOption("code_block");
+    await page.waitForTimeout(30);
+    await page.keyboard.press("End");
+
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("Enter");
+    await page.waitForTimeout(30);
+    await expect(surface.locator("ol > li")).toHaveCount(2);
+
+    await page.keyboard.press("Enter"); // the one-too-many press that used to exit the list
+    await page.waitForTimeout(30);
+    await expect(surface.locator("ol > li")).toHaveCount(2);
+    await expect(surface.locator("ol")).toHaveCount(1);
+
+    await page.keyboard.type("item two");
+    await expect(surface.locator("ol > li").nth(1)).toContainText("item two");
+  });
+
+  /**
    * Regression (2026-09-10, live report + screenshot): a selection spanning
    * partway into a top-level list item's own paragraph through partway into
    * a *nested sub-list item*, then clicking Blockquote, threw "replaceNode

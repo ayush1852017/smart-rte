@@ -14,7 +14,7 @@ export interface ListSelectionTarget {
 export interface ListInputResult {
   readonly operations: SmartOperation[];
   readonly selectionTarget: ListSelectionTarget;
-  readonly intent: "split" | "indent" | "outdent" | "unwrap" | "merge-backward" | "merge-forward" | "line-break" | "check";
+  readonly intent: "split" | "indent" | "outdent" | "unwrap" | "merge-backward" | "merge-forward" | "line-break" | "check" | "noop";
 }
 
 export interface ListEnterIds {
@@ -161,6 +161,13 @@ const splitInlineOwner = (owner: SmartElementNode, offset: number, newId: string
 
 const emptyParagraph = (id: string): SmartElementNode => ({ type: "paragraph", id, children: [] });
 
+const endsInCodeBlock = (item: SmartNode): boolean => {
+  if (isTextNode(item)) return false;
+  const children = item.children || [];
+  const last = children[children.length - 1];
+  return Boolean(last) && !isTextNode(last) && last.type === "code_block";
+};
+
 export const enterInList = (
   document: SmartDocument,
   pos: SmartPos,
@@ -174,6 +181,20 @@ export const enterInList = (
   const itemEmpty = (context.item.children || []).filter(isElementNode).filter((child) => child.type !== "list")
     .every((child) => isInlineOwner(child) && inlineSize(child) === 0);
   if (itemEmpty) {
+    // A code block can only ever be escaped into a *new*, necessarily empty
+    // sibling item (block/input.ts's exitCodeBlock) - so the very next Enter
+    // pressed on that item, before anything is typed, is exactly the
+    // one-keystroke-too-many trap of "type, Enter, Enter, Enter" reported
+    // live: the third Enter looks identical to any other empty-item Enter
+    // and immediately exits the list again, undoing the escape it just
+    // took two Enters to reach. Swallow it instead of exiting so the newly
+    // created item survives long enough to type into.
+    const preceding = context.itemIndex > 0 ? context.list.children?.[context.itemIndex - 1] : undefined;
+    if (preceding && endsInCodeBlock(preceding)) return {
+      operations: [],
+      selectionTarget: { ownerId: context.owner.id, offset: 0 },
+      intent: "noop",
+    };
     if (depth > 0) return {
       operations: outdentList(document, scope, {}, ctx),
       selectionTarget: { ownerId: context.owner.id, offset: 0 },
