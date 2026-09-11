@@ -48,7 +48,24 @@ export const indentInsideCodeBlock = (document: SmartDocument, pos: SmartPos): C
   };
 };
 
-/** Ctrl/Cmd+Enter exits before only at offset zero; otherwise it exits after. */
+/**
+ * Ctrl/Cmd+Enter exits before only at offset zero; otherwise it exits after.
+ *
+ * If the code block is the first/last content of a `list_item` (nothing
+ * else before/after it in the exit direction), exiting creates a new
+ * sibling *list item* instead of just another block stuffed inside the
+ * current one - list.ts's own `isInlineOwner` deliberately excludes
+ * `code_block` from its list-split logic (typing more lines of code must
+ * never accidentally split into a new item), which otherwise leaves no way
+ * to ever start a new item after one whose only content is a code block:
+ * "I create a number list ... type something ... clicked on number list
+ * tool which create new list again instead of becoming one with previous"
+ * was a *different*, already-fixed report, but the same investigation
+ * surfaced this - "Enter only creating new lines inside of code-block"
+ * when trying to add item 5 after a code-block item 4. This check doesn't
+ * require depending on the list module - it only reads generic node types,
+ * the same way `codeAt` above already does.
+ */
 export const exitCodeBlock = (
   document: SmartDocument,
   pos: SmartPos,
@@ -59,6 +76,23 @@ export const exitCodeBlock = (
   const parentPath = pos.path.slice(0, -1);
   const codeIndex = pos.path[pos.path.length - 1];
   const before = pos.offset === 0;
+  const parent = nodeAtPath(document, parentPath);
+  const siblingCount = parent && !isTextNode(parent) ? (parent.children || []).length : 0;
+  const atListItemBoundary = parent && !isTextNode(parent) && parent.type === "list_item"
+    && (before ? codeIndex === 0 : codeIndex === siblingCount - 1) && parentPath.length > 0;
+  if (atListItemBoundary) {
+    const listItemIndex = parentPath[parentPath.length - 1];
+    const listPath = parentPath.slice(0, -1);
+    return {
+      operations: [{
+        type: "insertNode",
+        pos: { path: listPath, offset: listItemIndex + (before ? 0 : 1) },
+        node: { type: "list_item", id: createNodeId(), children: [{ type: "paragraph", id: paragraphId, children: [] }] },
+      }],
+      selectionTarget: { ownerId: paragraphId, offset: 0 },
+      intent: before ? "exit-before" : "exit-after",
+    };
+  }
   return {
     operations: [{
       type: "insertNode",

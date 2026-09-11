@@ -3,6 +3,7 @@
 ## 1.0.0-beta.9
 
 - Fix converting a paragraph sitting directly after an existing list into a list of the same kind always creating a second, independently-numbered list instead of continuing the existing one — e.g. typing after exiting a numbered list (Enter twice) and clicking "Numbered list" again now correctly appends as the next item rather than restarting at "1." next to it. See `docs/bugs/list-creation-ignores-adjacent-identical-list.md`.
+- Fix pressing Enter at the end of a code-block list item never being able to create a new sibling list item — it previously only ever added lines inside the current item's own code block, with the only way "out" leaving a permanent stray empty paragraph behind. The same "type, Enter, Enter" rhythm already used to exit an empty list item now correctly starts a genuine new item instead. See `docs/bugs/code-block-list-item-cannot-exit-to-new-sibling-item.md`.
 
 ## 1.0.0-beta.8
 

@@ -898,6 +898,48 @@ test.describe("Phase 8b canonical product authority", () => {
   });
 
   /**
+   * Regression (2026-09-11, live report + screenshot): "inside Blockquote I
+   * am trying to adding new list item after 4 which is inside code-block.
+   * But enter only creating new lines inside of code-block." Pressing Enter
+   * at the end of a code-block list item's content should still create a
+   * new sibling list item (via the same "type, Enter, Enter" rhythm the
+   * editor already uses to exit an empty list item elsewhere) rather than
+   * only ever adding lines inside the current item's own code block.
+   */
+  test("pressing Enter twice at the end of a code-block list item (inside a blockquote) creates a new sibling list item", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1");
+    const surface = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
+    await surface.click();
+    await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
+    await page.keyboard.press("Backspace");
+
+    await page.getByRole("button", { name: "Numbered list", exact: true }).click();
+    await page.keyboard.type("item one");
+    await page.getByRole("combobox", { name: "Block type" }).selectOption("code_block");
+    await page.waitForTimeout(30);
+
+    await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
+    await page.getByRole("button", { name: "Blockquote", exact: true }).click();
+    // Clicking a toolbar button doesn't refocus the editor - click back into
+    // the code block's own text and move to its true end before typing.
+    await surface.locator("pre").click();
+    await page.keyboard.press("End");
+    await page.waitForTimeout(30);
+
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("Enter");
+    await page.waitForTimeout(30);
+    await page.keyboard.type("item two");
+
+    await expect(surface.locator("blockquote ol")).toHaveCount(1);
+    await expect(surface.locator("blockquote ol > li")).toHaveCount(2);
+    // Item 1 stays a clean, single code block - no stray leftover paragraph.
+    await expect(surface.locator("blockquote ol > li").nth(0).locator("> *")).toHaveCount(1);
+    await expect(surface.locator("blockquote ol > li").nth(0).locator("pre")).toContainText("item one");
+    await expect(surface.locator("blockquote ol > li").nth(1)).toContainText("item two");
+  });
+
+  /**
    * Regression (2026-09-10, live report + screenshot): a selection spanning
    * partway into a top-level list item's own paragraph through partway into
    * a *nested sub-list item*, then clicking Blockquote, threw "replaceNode
