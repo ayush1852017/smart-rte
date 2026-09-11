@@ -215,15 +215,49 @@ export const createList: ListCommand<CreateListParams> = (document, scope, param
     ...(params.start !== undefined ? { start: params.start } : {}),
     ...(params.checkable !== undefined ? { checkable: params.checkable } : {}),
   };
+  // Only style/preset/checkable define whether two lists are "the same
+  // list" for merge purposes - `start` deliberately excluded, since
+  // appending items to an already-numbered list should keep continuing
+  // from wherever it already is, not require an exact `start` match.
+  const listIdentityMatches = (existing: Attrs | undefined): boolean =>
+    (existing?.preset ?? undefined) === (listAttrs as Record<string, unknown>).preset
+    && (existing?.style ?? undefined) === (listAttrs as Record<string, unknown>).style
+    && Boolean(existing?.checkable) === Boolean((listAttrs as Record<string, unknown>).checkable);
   return groups.flatMap((group) => {
     const depths = clampedDepths(group.entries.map((entry) => entry.node));
-    const list: SmartElementNode = {
-      type: "list",
-      id: nextListId(),
-      attrs: listAttrs,
-      children: buildListItems(group.entries, depths, 0, () => itemIds[itemCursor++], nextListId, listAttrs),
-    };
     const first = group.entries[0];
+    /**
+     * "I create a number list and press enter twice to take the cursor out
+     * from the list, then type something there and click the list tool" -
+     * previously always created a brand-new, independently-numbered list
+     * even when it sat directly after an existing, identical one - two
+     * separate "1."s instead of one continuous "1./2." list. If the
+     * immediately preceding sibling (same parent, same nesting level) is
+     * already a list of the exact same kind, the converted content joins
+     * it as trailing item(s) instead of starting a second list right next
+     * to the first.
+     */
+    const precedingIndex = first.pos.offset - 1;
+    const parent = ctx.positions.positionOf(first.id)?.parent;
+    const preceding = precedingIndex >= 0 ? parent?.children?.[precedingIndex] : undefined;
+    const mergeTarget = preceding && !isTextNode(preceding) && preceding.type === "list" && listIdentityMatches(preceding.attrs)
+      ? preceding : undefined;
+    const newItems = buildListItems(group.entries, depths, 0, () => itemIds[itemCursor++], nextListId, listAttrs);
+    if (mergeTarget) {
+      const operations: SmartOperation[] = [{
+        type: "replaceNode",
+        pos: { path: [...first.pos.path], offset: precedingIndex },
+        before: mergeTarget,
+        after: withChildren(mergeTarget, [...(mergeTarget.children || []), ...newItems]),
+      }];
+      // Descending order so removing a later entry never shifts the index
+      // an earlier removeNode in this same batch still needs to target.
+      for (let index = group.entries.length - 1; index >= 0; index -= 1) {
+        operations.push({ type: "removeNode", pos: { path: [...first.pos.path], offset: first.pos.offset + index }, node: group.entries[index].node });
+      }
+      return operations;
+    }
+    const list: SmartElementNode = { type: "list", id: nextListId(), attrs: listAttrs, children: newItems };
     const operations: SmartOperation[] = [{ type: "replaceNode", pos: first.pos, before: first.node, after: list }];
     group.entries.slice(1).forEach((entry) => operations.push({
       type: "removeNode",

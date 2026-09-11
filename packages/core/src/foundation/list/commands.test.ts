@@ -66,6 +66,50 @@ describe("Phase 3 pure list commands", () => {
     expect(validate(after, foundationSchema)).toEqual([]);
   });
 
+  /**
+   * Regression (2026-09-11, live report): "I create a number list and press
+   * enter twice to take cursor out from list then again type something
+   * there and clicked on numbered list tool which create new list again
+   * instead of becoming one with previous" - reproduced exactly: a plain
+   * paragraph sitting directly after an existing list, converted to a list
+   * of the identical kind, previously always became its own independent
+   * list (restarting the numbering at "1.") instead of joining the
+   * existing one as a trailing item.
+   */
+  it("joins an identical adjacent list instead of creating a second, independently-numbered one", () => {
+    const before = frozen(doc(list("l", [item("a", "abcd")], { style: "decimal" }), p("b", "efgh")));
+    const operations = createList(before, {
+      kind: "block-range", blockIds: ["b"], promotedFromPartial: true, commonParentId: "doc",
+      range: { from: { path: [], offset: 1 }, to: { path: [], offset: 2 } }, isolatingAncestorId: null, clamped: false,
+    }, { listIds: ["unused"], itemIds: ["i-b"], style: "decimal" }, ctxFor(before));
+    const after = applyOperations(before, operations);
+    expect(after.children).toEqual([{
+      type: "list", id: "l", attrs: { style: "decimal" }, children: [
+        item("a", "abcd"),
+        { type: "list_item", id: "i-b", children: [{ type: "paragraph", id: "b", children: [{ type: "text", text: "efgh" }] }] },
+      ],
+    }]);
+    expect(validate(after, foundationSchema)).toEqual([]);
+  });
+
+  it("does not join an adjacent list of a different style, checkable state, or preset", () => {
+    const styleMismatch = frozen(doc(list("l", [item("a", "A")], { style: "disc" }), p("b", "B")));
+    const stillSeparate = applyOperations(styleMismatch, createList(styleMismatch, {
+      kind: "block-range", blockIds: ["b"], promotedFromPartial: true, commonParentId: "doc",
+      range: { from: { path: [], offset: 1 }, to: { path: [], offset: 2 } }, isolatingAncestorId: null, clamped: false,
+    }, { listIds: ["l2"], itemIds: ["i-b"], style: "decimal" }, ctxFor(styleMismatch)));
+    expect(stillSeparate.children).toHaveLength(2);
+    expect(stillSeparate.children[1]).toMatchObject({ type: "list", id: "l2" });
+
+    const checkableMismatch = frozen(doc(list("l", [item("a", "A")], { style: "disc", checkable: true }), p("b", "B")));
+    const stillSeparateChecklist = applyOperations(checkableMismatch, createList(checkableMismatch, {
+      kind: "block-range", blockIds: ["b"], promotedFromPartial: true, commonParentId: "doc",
+      range: { from: { path: [], offset: 1 }, to: { path: [], offset: 2 } }, isolatingAncestorId: null, clamped: false,
+    }, { listIds: ["l3"], itemIds: ["i-b"], style: "disc" }, ctxFor(checkableMismatch)));
+    expect(stillSeparateChecklist.children).toHaveLength(2);
+    expect(stillSeparateChecklist.children[1]).toMatchObject({ type: "list", id: "l3" });
+  });
+
   it("unwraps a middle run and splits the list deterministically", () => {
     const before = frozen(doc(list("l", [item("a", "A"), item("b", "B"), item("c", "C")])));
     const operations = unwrapList(before, scope("l", ["b"]), { splitListIds: ["l-after"] }, ctxFor(before));

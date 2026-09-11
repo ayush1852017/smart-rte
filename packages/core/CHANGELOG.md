@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.0-beta.9
+
+- Fix converting a paragraph sitting directly after an existing list into a list of the same kind always creating a second, independently-numbered list instead of continuing the existing one — e.g. typing after exiting a numbered list (Enter twice) and clicking "Numbered list" again now correctly appends as the next item rather than restarting at "1." next to it. See `docs/bugs/list-creation-ignores-adjacent-identical-list.md`.
+
 ## 1.0.0-beta.8
 
 - Fix Blockquote (and unwrap) throwing an uncaught error ("replaceNode before payload does not match document node.") and applying nothing, for a selection spanning a list item's own text and a nested sub-list item's text — two selected blocks resolving to two different, nested "list" ancestors were treated as independent (and mutually conflicting) wrap targets instead of recognizing the inner one is already covered by the outer one. Also fixed the identical latent issue for unwrapping nested blockquotes (the schema allows blockquote nesting), even though no live report had surfaced it yet. See `docs/bugs/blockquote-crashes-on-selection-spanning-outer-and-nested-list.md`.

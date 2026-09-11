@@ -866,6 +866,38 @@ test.describe("Phase 8b canonical product authority", () => {
   });
 
   /**
+   * Regression (2026-09-11, live report): "I create a number list and press
+   * enter twice to takes cursor out from list then again type something
+   * there and clicked on number list tool which create new list again
+   * instead of becoming one with previous." Expected: typing right after an
+   * existing list and re-applying the same list type joins that list as a
+   * new trailing item (continuing the numbering), not a second,
+   * independently-numbered list sitting right next to the first.
+   */
+  test("re-applying Numbered list to a paragraph right after an existing numbered list joins it instead of starting a second one", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1");
+    const surface = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
+    await surface.click();
+    await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
+    await page.keyboard.press("Backspace");
+
+    await page.getByRole("button", { name: "Numbered list", exact: true }).click();
+    await page.keyboard.type("abcd");
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("Enter"); // second Enter exits the list
+    await page.waitForTimeout(30);
+    await page.keyboard.type("efgh");
+
+    await page.getByRole("button", { name: "Numbered list", exact: true }).click();
+
+    // One list, two items - not two separate single-item lists.
+    await expect(surface.locator("ol")).toHaveCount(1);
+    await expect(surface.locator("ol > li")).toHaveCount(2);
+    await expect(surface.locator("ol > li").nth(0)).toContainText("abcd");
+    await expect(surface.locator("ol > li").nth(1)).toContainText("efgh");
+  });
+
+  /**
    * Regression (2026-09-10, live report + screenshot): a selection spanning
    * partway into a top-level list item's own paragraph through partway into
    * a *nested sub-list item*, then clicking Blockquote, threw "replaceNode
