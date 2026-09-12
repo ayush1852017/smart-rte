@@ -315,4 +315,22 @@ describe("Phase 4 links, stored marks, and hard breaks", () => {
       { type: "text", text: "a" }, { type: "hard_break", id: "fixed-break" }, { type: "text", text: "b" },
     ]);
   });
+
+  /**
+   * Regression (2026-09-12, live report): dragging the color picker on a
+   * document containing any multi-line code block crashed with "Children
+   * do not match 'text*'." code_block's schema is `content: "text*"` - it
+   * never accepts a hard_break child - but this migration (run on every
+   * restoreCheckpoint/replaceState, including the color picker's own live
+   * preview) recursed into it anyway and split its literal "\n" content
+   * into text+hard_break pieces, producing a document that fails
+   * validate() on the very next round-trip.
+   */
+  it("leaves a code block's own literal newlines untouched - it is not a hard_break-migration target", () => {
+    const doc: SmartDocument = { type: "doc", id: "doc", children: [{ type: "code_block", id: "code", attrs: { language: "ts" }, children: [{ type: "text", text: "a\nb\n" }] }] };
+    const migrated = migrateNewlineTextToHardBreaks(doc);
+    expect(migrated.migratedBreaks).toBe(0);
+    expect(migrated.document).toEqual(doc);
+    expect(validate(migrated.document)).toEqual([]);
+  });
 });

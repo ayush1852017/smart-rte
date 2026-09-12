@@ -15,6 +15,16 @@ export const migrateNewlineTextToHardBreaks = (document: SmartDocument): HardBre
       if (!node.text.includes("\n")) return node;
       throw new Error("Text-node migration must be performed by its inline owner.");
     }
+    // code_block is the one node type whose schema is `content: "text*"` -
+    // it never accepts a hard_break child, and its own newline handling
+    // (block/input.ts's insertCodeBlockNewline) deliberately keeps line
+    // breaks as literal "\n" characters, unlike every inline-owner this
+    // migration actually targets. Splitting a code block's text here
+    // produced a hard_break inside a "text*"-only parent - a document that
+    // fails validate() on the very next restoreCheckpoint/replaceState
+    // call (live report: dragging the color picker on a document with any
+    // multi-line code block crashed with "Children do not match 'text*'").
+    if (node.type === "code_block") return node;
     const children: SmartNode[] = [];
     let changed = false;
     (node.children || []).forEach((child) => {
