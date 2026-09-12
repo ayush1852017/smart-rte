@@ -50,6 +50,22 @@ const atomTypes = new Set(["image", "block_image", "formula", "block_formula", "
 const atomErrorTitle = (node: SmartElementNode, fallback: string): string =>
   typeof node.attrs?.error === "string" && node.attrs.error ? node.attrs.error : fallback;
 const emptyLineOwnerTypes = new Set(["paragraph", "heading", "code_block"]);
+const SMART_TRAILING_NEWLINE_ATTRIBUTE = "data-smart-trailing-newline";
+
+/**
+ * A code block stores line breaks as literal "\n" characters inside its text
+ * (unlike a paragraph, which uses explicit hard_break nodes) - so a trailing
+ * "\n" with nothing rendered after it renders with zero extra height under
+ * white-space:pre-wrap (there's no following content to anchor a new line
+ * box against). Pressing Enter at the end of a code block's content was
+ * indistinguishable from doing nothing until a second character followed it.
+ */
+const codeBlockEndsInNewline = (node: SmartElementNode): boolean => {
+  if (node.type !== "code_block") return false;
+  const children = node.children || [];
+  const last = children[children.length - 1];
+  return Boolean(last) && isTextNode(last) && last.text.endsWith("\n");
+};
 
 const tagForNode = (node: SmartElementNode): string => {
   if (node.type === "paragraph") return "p";
@@ -489,6 +505,7 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
         }
       });
       this.syncEmptyLineProjection(element, node);
+      this.syncTrailingNewlineProjection(element, node);
     }
     this.modelById.set(node.id, node);
     this.mapping.track(node, path, element);
@@ -526,6 +543,22 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
     } else if (!needsProjection && existing) {
       existing.remove();
       element.removeAttribute("data-srte-caret-boundary");
+      this.recordWrite(node.id);
+    }
+  }
+
+  /** Renderer-only <br> forcing the last, otherwise-invisible blank line of a code block's trailing "\n" to actually take up space. Must run after real text children are already in the DOM, since it's appended after them. */
+  private syncTrailingNewlineProjection(element: HTMLElement, node: SmartElementNode): void {
+    const existing = element.querySelector<HTMLElement>(`:scope > [${SMART_TRAILING_NEWLINE_ATTRIBUTE}]`);
+    const needsProjection = codeBlockEndsInNewline(node);
+    if (needsProjection && !existing) {
+      const line = element.ownerDocument.createElement("br");
+      line.setAttribute(SMART_TRAILING_NEWLINE_ATTRIBUTE, "true");
+      line.setAttribute(SMART_UI_ATTRIBUTE, "trailing-newline");
+      element.appendChild(line);
+      this.recordWrite(node.id);
+    } else if (!needsProjection && existing) {
+      existing.remove();
       this.recordWrite(node.id);
     }
   }
@@ -635,6 +668,7 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
       structural = true;
     }
     this.syncEmptyLineProjection(element, after);
+    this.syncTrailingNewlineProjection(element, after);
     return structural;
   }
 

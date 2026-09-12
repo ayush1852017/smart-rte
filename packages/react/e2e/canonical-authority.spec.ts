@@ -940,6 +940,36 @@ test.describe("Phase 8b canonical product authority", () => {
   });
 
   /**
+   * Regression (2026-09-12, live report): "single enter not adding new
+   * line." A code block stores line breaks as literal "\n" characters in
+   * its text (unlike a paragraph's explicit hard_break nodes) - a trailing
+   * "\n" with nothing rendered after it took up zero extra height under
+   * white-space:pre-wrap, so the model was correct but the box never grew
+   * and a single Enter looked like a no-op.
+   */
+  test("pressing Enter once at the end of a code block's content grows the visible box, even though it stays in the code block", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1");
+    const surface = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
+    await surface.click();
+    await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
+    await page.keyboard.press("Backspace");
+
+    await page.keyboard.type("some code");
+    await page.getByRole("combobox", { name: "Block type" }).selectOption("code_block");
+    await page.waitForTimeout(30);
+    await page.keyboard.press("End");
+
+    const pre = surface.locator("pre");
+    const before = await pre.evaluate((el) => el.getBoundingClientRect().height);
+    await page.keyboard.press("Enter");
+    await page.waitForTimeout(30);
+    const after = await pre.evaluate((el) => el.getBoundingClientRect().height);
+
+    expect(after).toBeGreaterThan(before);
+    await expect(pre).toContainText("some code");
+  });
+
+  /**
    * Regression (2026-09-11, live report): "I tried but still it's add new
    * lines every time." Investigation showed the fix above works exactly as
    * designed (a real item 2 is created after two Enters), but that item is
