@@ -3658,6 +3658,42 @@ test.describe("Phase 8b canonical product authority", () => {
     }
   });
 
+  /**
+   * Regression (2026-09-12, live report): "Line spacing custom not
+   * changing when cursor move to something else." The custom input used
+   * React's `defaultValue`, which is only ever applied on initial mount -
+   * and this control never unmounts on its own (ToolbarDropdown always
+   * renders its menu content; only CSS visibility toggles when closed), so
+   * once a custom value was typed once, the field kept showing it forever
+   * regardless of where the caret moved afterward, even to a block with a
+   * completely different (or no) line-height override.
+   */
+  test("the custom line-spacing input updates to reflect a different block once the caret moves there", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=2");
+    await placeCaret(page, '[data-smart-authority="canonical"] [contenteditable="true"] p', false);
+    await openToolbarDropdown(page, "Line spacing");
+    const customInput = page.getByRole("spinbutton", { name: "Custom line spacing" });
+    await customInput.fill("1.75");
+    await customInput.press("Enter");
+
+    // Move the caret to the second, untouched paragraph - no override there.
+    await placeCaret(page, '[data-smart-authority="canonical"] [contenteditable="true"] p', true);
+    await openToolbarDropdown(page, "Line spacing");
+    await expect(page.getByRole("spinbutton", { name: "Custom line spacing" })).toHaveValue("");
+
+    // And a preset value on that second paragraph is reflected too, not
+    // the first paragraph's stale custom "1.75".
+    await toolbarMenuItem(page, "1.5").click();
+    await openToolbarDropdown(page, "Line spacing");
+    await expect(page.getByRole("spinbutton", { name: "Custom line spacing" })).toHaveValue("");
+    await expect(toolbarMenuItem(page, "1.5")).toHaveAttribute("aria-pressed", "true");
+
+    // Moving back to the first paragraph still shows its own real value.
+    await placeCaret(page, '[data-smart-authority="canonical"] [contenteditable="true"] p', false);
+    await openToolbarDropdown(page, "Line spacing");
+    await expect(page.getByRole("spinbutton", { name: "Custom line spacing" })).toHaveValue("1.75");
+  });
+
   test("shows no checkmark (mixed state) when the selection spans blocks with different line-heights", async ({ page }) => {
     await page.goto("/?canonicalAuthority=1&blocks=2");
     const editor = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
@@ -5507,6 +5543,58 @@ test.describe("Phase 8b canonical product authority", () => {
     await editor.click({ position: { x: 2, y: 2 } });
     await expect(page.locator('[data-srte-color-popover="true"]')).not.toBeVisible();
     await expect(editor.locator('[data-smart-mark="textColor"]')).toHaveAttribute("style", previewedStyle!);
+  });
+
+  /**
+   * Regression (2026-09-12, live report + console stack trace): dragging
+   * the color picker anywhere in a document that also contains a
+   * multi-line code block crashed with "Children do not match 'text*'."
+   * previewColor's checkpoint-then-restore live-preview mechanism runs the
+   * *whole* document through migrateNewlineTextToHardBreaks on every
+   * restoreCheckpoint call - that migration didn't know code_block's
+   * schema (`content: "text*"`) never accepts a hard_break child, so it
+   * split the code block's own literal "\n" content into text+hard_break
+   * pieces and produced a document that failed validation on the very
+   * next call, well before the drag handler itself ran again - matching
+   * the reported symptoms exactly (drag looked broken, clicks "didn't
+   * reflect," and the popover couldn't be dismissed, because the thrown
+   * error broke the interaction mid-frame).
+   */
+  test("dragging the color picker does not crash when the document also contains a multi-line code block", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1");
+    const editor = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
+    await editor.click();
+    await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
+    await page.keyboard.press("Backspace");
+
+    await page.keyboard.type("colortext");
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("line one");
+    await page.getByRole("combobox", { name: "Block type" }).selectOption("code_block");
+    await page.waitForTimeout(30);
+    await page.keyboard.press("End");
+    await page.keyboard.press("Enter"); // embeds a literal "\n" in the code block's own text
+    await page.waitForTimeout(30);
+
+    const pageErrors: string[] = [];
+    page.on("pageerror", (err) => pageErrors.push(err.message));
+
+    await selectFirstText(page); // selects "colortext", not the code block
+    await openToolbarDropdown(page, "More text styles");
+    await toolbarMenuItem(page, "Text colour").click();
+    const svSquare = page.locator('[data-srte-color-sv-square="true"]');
+    await expect(svSquare).toBeVisible();
+    const svBox = (await svSquare.boundingBox())!;
+    await page.mouse.move(svBox.x + svBox.width * 0.5, svBox.y + svBox.height * 0.5);
+    await page.mouse.down();
+    await page.mouse.move(svBox.x + svBox.width * 0.9, svBox.y + svBox.height * 0.1, { steps: 5 });
+    await page.mouse.up();
+    await expect(editor.locator('[data-smart-mark="textColor"]')).toHaveCount(1);
+
+    await page.keyboard.press("Escape");
+    await expect(page.locator('[data-srte-color-popover="true"]')).not.toBeVisible();
+    expect(pageErrors).toEqual([]);
+    await expect(editor.locator("pre")).toContainText("line one");
   });
 
   /**

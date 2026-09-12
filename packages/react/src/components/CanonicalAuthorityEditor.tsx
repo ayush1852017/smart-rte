@@ -1798,6 +1798,14 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
     <div className="srte-line-height-custom" style={{ padding: "4px 8px", display: "flex", alignItems: "center", gap: 6 }}>
       <span aria-hidden="true" style={{ fontSize: 12, whiteSpace: "nowrap" }}>Custom:</span>
       <input
+        // Keyed by the live value so moving the caret to a different
+        // selection remounts this uncontrolled input with a fresh
+        // defaultValue - React only applies defaultValue on initial mount,
+        // and this control never unmounts on its own (CSS visibility, not
+        // conditional rendering, is what hides the closed dropdown), so an
+        // unkeyed input kept showing whatever custom value was last typed
+        // regardless of where the caret actually moved afterward.
+        key={String((() => { const current = currentLineHeight(); return typeof current === "number" && !LINE_HEIGHT_PRESETS.includes(current) ? current : "none"; })())}
         aria-label="Custom line spacing"
         type="number"
         min={0.1}

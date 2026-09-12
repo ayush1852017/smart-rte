@@ -3,6 +3,7 @@
 ## 1.0.0-beta.16
 
 - Bold, Italic, Underline, Strikethrough, Code, Superscript, Subscript, Text colour, Background colour, Font size, Font family, and Link now disable themselves whenever nothing in the current selection would actually accept the mark (the caret is inside a code block, or an atom like an image is selected) — previously these stayed fully clickable and silently did nothing in those contexts. A selection spanning both allowed and disallowed content still applies to its allowed part, unchanged.
+- Fix the "Line spacing" dropdown's custom-value field getting stuck on whatever value was last typed, regardless of where the caret moved afterward — it used React `defaultValue`, which the toolbar's always-mounted (only CSS-hidden when closed) dropdown content never gave a chance to re-apply. See `docs/bugs/line-spacing-custom-input-stale-on-caret-move.md`.
 
 ## 1.0.0-beta.15
 
