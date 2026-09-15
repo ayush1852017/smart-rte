@@ -22,7 +22,16 @@ const blockAttrs = { align: alignmentAttr, indentLevel: indentLevelAttr, lineHei
 export const blockNodeSpecs: readonly NodeSpec[] = [
   { type: "paragraph", group: "block", content: "inline*", attributes: blockAttrs },
   { type: "heading", group: "block", content: "inline*", attributes: { ...blockAttrs, level: { required: true, default: 1, validate: (v) => Number.isInteger(v) && Number(v) >= 1 && Number(v) <= 6 } } },
-  { type: "blockquote", group: "block", content: "block+", attributes: blockAttrs, defining: true },
+  {
+    type: "blockquote", group: "block", content: "block+", defining: true,
+    // backgroundColor/textColor are plain CSS colour values, matching
+    // table_cell's own background/textColor attrs. borderLeft stores one
+    // composed CSS shorthand ("4px solid #0284c7") rather than separate
+    // width/style/colour attrs - blockquote only ever shows a single
+    // visible border side, so there's no per-side independence to
+    // preserve the way table_cell's 4-sided borders need.
+    attributes: { ...blockAttrs, backgroundColor: stringAttr, textColor: stringAttr, borderLeft: stringAttr },
+  },
   { type: "code_block", group: "block", content: "text*", marks: "", attributes: { ...blockAttrs, language: stringAttr }, defining: true },
 ];
 

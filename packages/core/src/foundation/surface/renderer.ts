@@ -135,6 +135,21 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
     // natural line-height, not a forced "1".
     if (node.attrs?.lineHeight) element.style.lineHeight = String(node.attrs.lineHeight);
     else if (element.style.lineHeight) element.style.removeProperty("line-height");
+    if (node.type === "blockquote") {
+      // Inline styles always beat theme.ts's own `.srte-editor
+      // [contenteditable] blockquote { border-left: ...; background: ...;
+      // color: ...; }` rule regardless of selector specificity, so
+      // clearing an attr here lets that default show through again
+      // automatically - same pattern as align/indentLevel/lineHeight
+      // above, just scoped to this one node type since these three are
+      // blockquote-only, not shared block attrs.
+      if (node.attrs?.backgroundColor) element.style.background = String(node.attrs.backgroundColor);
+      else element.style.removeProperty("background");
+      if (node.attrs?.textColor) element.style.color = String(node.attrs.textColor);
+      else element.style.removeProperty("color");
+      if (node.attrs?.borderLeft) element.style.borderLeft = String(node.attrs.borderLeft);
+      else element.style.removeProperty("border-left");
+    }
     if (node.type === "code_block") {
       const language = typeof node.attrs?.language === "string" && node.attrs.language.trim()
         ? node.attrs.language.trim()
