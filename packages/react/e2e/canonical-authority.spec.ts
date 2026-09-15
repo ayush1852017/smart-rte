@@ -1239,6 +1239,49 @@ test.describe("Phase 8b canonical product authority", () => {
     expect(afterEnd.anchor.offset).toBe(afterEnd.head.offset);
   });
 
+  /**
+   * Regression (2026-09-15, live report): "Should I expect shift+left arrow
+   * and shift+right arrow to select text before and after of the cursor?"
+   * moveCaret always collapsed to a fresh caret regardless of Shift - the
+   * same bug class as Shift+Home/End above, just never threaded through
+   * for plain arrows.
+   */
+  test("Shift+ArrowLeft and Shift+ArrowRight actually extend the selection instead of moving a collapsed caret", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    const editor = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
+    await editor.click();
+    await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
+    await page.keyboard.press("Backspace");
+    await page.keyboard.type("hello world");
+    await page.keyboard.press("Home");
+    for (let i = 0; i < 5; i += 1) await page.keyboard.press("ArrowRight"); // caret after "hello"
+
+    const selectionOf = () => page.evaluate(() => (window as typeof window & {
+      __smartProductCanonical?: { editor: { selection: { anchor: { offset: number }; head: { offset: number } } } };
+    }).__smartProductCanonical!.editor.selection);
+
+    await page.keyboard.press("Shift+ArrowLeft");
+    let selection = await selectionOf();
+    expect(selection.anchor.offset).toBe(5);
+    expect(selection.head.offset).toBe(4);
+
+    await page.keyboard.press("Shift+ArrowLeft");
+    selection = await selectionOf();
+    expect(selection.anchor.offset).toBe(5);
+    expect(selection.head.offset).toBe(3);
+
+    // Bare (non-Shift) arrow still collapses, unchanged.
+    await page.keyboard.press("ArrowRight");
+    selection = await selectionOf();
+    expect(selection.anchor.offset).toBe(selection.head.offset);
+
+    // Shift+ArrowRight extends forward the same way.
+    await page.keyboard.press("Shift+ArrowRight");
+    selection = await selectionOf();
+    expect(selection.anchor.offset).toBe(5);
+    expect(selection.head.offset).toBe(6);
+  });
+
   test("selecting a whole line with Home/Shift+End then repeated Block up moves it correctly", async ({ page }) => {
     await page.goto("/?canonicalAuthority=1&blocks=3");
     await placeCaretInTopLevelBlock(page, 2, true);

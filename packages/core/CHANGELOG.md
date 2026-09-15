@@ -7,6 +7,7 @@
 - Fix a further Enter pressed on that newly escaped (necessarily empty) item immediately exiting the list again instead of letting you type into it — indistinguishable from the editor's own separate "empty item + Enter exits the list" convention, so one extra keystroke silently undid the escape above and produced only stray paragraphs afterward. See `docs/bugs/code-block-list-item-cannot-exit-to-new-sibling-item.md`.
 - Fix pressing Enter at the end of a code block's own content looking like it did nothing — a trailing "\n" with no following content rendered at zero extra height under `white-space:pre-wrap` (the model was correct; only the visible box failed to grow). See `docs/bugs/code-block-trailing-newline-invisible.md`.
 - Fix any color or border live-preview (e.g. dragging the color picker, table-cell background/text colour) throwing "Children do not match 'text*'" and getting permanently stuck — unable to apply, unable to close by any means — the moment the document contained a multi-line code block anywhere in it, not just the target being colored. See `docs/bugs/checkpoint-restore-crashes-with-multiline-code-block.md`.
+- Fix Shift+ArrowLeft/Shift+ArrowRight moving a collapsed caret instead of extending the selection (outside of a table cell, where this already worked) — the same gap already fixed once for Shift+Home/End, never carried over to plain arrows. See `docs/bugs/shift-arrow-left-right-does-not-extend-selection.md`.
 
 ## 1.0.0-beta.8
 

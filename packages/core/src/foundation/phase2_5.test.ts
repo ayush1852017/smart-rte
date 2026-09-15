@@ -897,6 +897,47 @@ describe("Phase 2.5 renderer and input pipeline", () => {
     pipeline.destroy();
   });
 
+  /**
+   * Regression (2026-09-15, live report): "Should I expect shift+left arrow
+   * and shift+right arrow to select text before and after of the cursor?"
+   * moveCaret always collapsed to `{anchor: next, head: next}`, with no
+   * path for Shift to preserve the existing anchor - the shiftKey flag was
+   * read only for the table-cell-selection and range-collapse branches,
+   * never passed into moveCaret itself. Mirrors the same bug class already
+   * fixed once for Shift+Home/End (see that handler's own doc comment).
+   */
+  it("extends the selection with Shift+ArrowLeft/Right instead of collapsing it", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const editor = createFoundationEditor({ document: documentOf("hello world"), selection: caret(5) });
+    const renderer = createSubtreeRenderer(root);
+    const pipeline = createInputPipeline(editor, renderer, root);
+    const dispatch = (key: "ArrowLeft" | "ArrowRight", shiftKey: boolean) =>
+      pipeline.handleKeyDown(new KeyboardEvent("keydown", { key, shiftKey }));
+
+    dispatch("ArrowLeft", true);
+    expect(editor.selection).toEqual({ type: "text", anchor: { path: [0], offset: 5 }, head: { path: [0], offset: 4 } });
+    dispatch("ArrowLeft", true);
+    expect(editor.selection).toEqual({ type: "text", anchor: { path: [0], offset: 5 }, head: { path: [0], offset: 3 } });
+
+    // A later plain (non-Shift) arrow still collapses to the range's own
+    // normalized endpoint (the pre-existing, correct behavior), unchanged.
+    dispatch("ArrowRight", false);
+    expect(editor.selection).toEqual(caret(5));
+
+    // Extending across a paragraph boundary keeps the original anchor too.
+    const crossing = createFoundationEditor({ document: documentOf("abc", "def"), selection: caret(0, [1]) });
+    const crossingRoot = document.createElement("div");
+    document.body.appendChild(crossingRoot);
+    const crossingRenderer = createSubtreeRenderer(crossingRoot);
+    crossingRenderer.render(crossing.document, crossing.selection);
+    const crossingPipeline = createInputPipeline(crossing, crossingRenderer, crossingRoot);
+    crossingPipeline.handleKeyDown(new KeyboardEvent("keydown", { key: "ArrowLeft", shiftKey: true }));
+    expect(crossing.selection).toEqual({ type: "text", anchor: { path: [1], offset: 0 }, head: { path: [0], offset: 3 } });
+    pipeline.destroy();
+    crossingPipeline.destroy();
+  });
+
   it("preserves consecutive spaces as ordinary live-model text", () => {
     const root = document.createElement("div");
     document.body.appendChild(root);

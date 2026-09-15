@@ -1355,7 +1355,7 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
     }
   }
 
-  private moveCaret(direction: -1 | 1, word = false): void {
+  private moveCaret(direction: -1 | 1, word = false, extend = false): void {
     const selection = this.editor.selection;
     const active = selection.head;
     const activeOwner = nodeAtPath(this.editor.document, active.path);
@@ -1404,7 +1404,16 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
       }
     }
     const next = { path: [...path], offset };
-    const model: SmartSelection = { type: "text", anchor: next, head: next };
+    // Shift+Left/Right is the standard "extend selection one character/word"
+    // gesture - keep the existing anchor (from wherever the shift-extend
+    // sequence started) and only move `head`, matching how Shift+Home/End
+    // already does this (see that handler's own doc comment for the
+    // matching bug this mirrors). Not threaded through
+    // moveFromStructuralBoundary above - extending a text selection through
+    // or onto a structural/atomic node is a materially different problem
+    // (a different selection shape entirely), out of scope here.
+    const anchor = extend ? selection.anchor : next;
+    const model: SmartSelection = { type: "text", anchor, head: next };
     this.editor.setSelection(model, { source: "keyboard" });
     this.renderer.render(this.editor.document, model);
   }
@@ -1557,7 +1566,7 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
         this.renderer.render(this.editor.document, model);
         return;
       }
-      this.moveCaret(direction, modifier || event.altKey);
+      this.moveCaret(direction, modifier || event.altKey, event.shiftKey);
     } else if (event.key === "ArrowUp" || event.key === "ArrowDown") {
       if (event.shiftKey && this.handleTableShiftArrow(event.key === "ArrowUp" ? -1 : 1, 0)) {
         event.preventDefault();
