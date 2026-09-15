@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.0
+
+- Add `backgroundColor`, `textColor`, and `borderLeft` attrs to `blockquote` (the last a single composed CSS shorthand, since a blockquote only ever shows one visible border side, unlike `table_cell`'s 4-sided borders) — rendered as real CSS in the same change, alongside the existing `align`/`indentLevel`/`lineHeight` block attrs. See `docs/bugs/blockquote-styling-context-menu.md`.
+
 ## 1.0.0
 
 General availability of the canonical/foundation architecture introduced in `1.0.0-beta.1` — promoted from the `beta` npm dist-tag to `latest`. No functional changes beyond the `1.0.0-beta.2`–`beta.9` entries below; see those for the full list of changes across the beta cycle.

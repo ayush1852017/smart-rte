@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.0
+
+- Right-clicking inside a blockquote now opens a context menu with "Blockquote background colour," "Blockquote text colour," and "Blockquote border options" (style/width/colour for its left border — no per-side toggle, since a blockquote only ever shows one visible side) — previously right-clicking one opened nothing. A table cell nested inside a blockquote still shows cell options, not these. Depends on `smartrte-core@1.1.0`. See `docs/bugs/blockquote-styling-context-menu.md`.
+
 ## 1.0.0
 
 General availability of the canonical/foundation architecture introduced in `1.0.0-beta.1` — promoted from the `beta` npm dist-tag to `latest`. No functional changes beyond the `1.0.0-beta.2`–`beta.16` entries below; see those for the full list of changes across the beta cycle. This release also drops the legacy DOM-manipulation `ClassicEditor` implementation entirely — `ClassicEditor` remains available as a thin prop-compatible wrapper around `CanonicalAuthorityEditor` (unchanged from `1.0.0-beta.1` onward), since the underlying rollback path it once pointed at was already retired at Phase 8b closeout.
