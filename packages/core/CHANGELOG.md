@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.0
+
+General availability of the canonical/foundation architecture introduced in `1.0.0-beta.1` — promoted from the `beta` npm dist-tag to `latest`. No functional changes beyond the `1.0.0-beta.2`–`beta.9` entries below; see those for the full list of changes across the beta cycle.
+
 ## 1.0.0-beta.9
 
 - Fix converting a paragraph sitting directly after an existing list into a list of the same kind always creating a second, independently-numbered list instead of continuing the existing one — e.g. typing after exiting a numbered list (Enter twice) and clicking "Numbered list" again now correctly appends as the next item rather than restarting at "1." next to it. See `docs/bugs/list-creation-ignores-adjacent-identical-list.md`.

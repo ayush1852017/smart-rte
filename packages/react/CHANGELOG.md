@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.0
+
+General availability of the canonical/foundation architecture introduced in `1.0.0-beta.1` — promoted from the `beta` npm dist-tag to `latest`. No functional changes beyond the `1.0.0-beta.2`–`beta.16` entries below; see those for the full list of changes across the beta cycle. This release also drops the legacy DOM-manipulation `ClassicEditor` implementation entirely — `ClassicEditor` remains available as a thin prop-compatible wrapper around `CanonicalAuthorityEditor` (unchanged from `1.0.0-beta.1` onward), since the underlying rollback path it once pointed at was already retired at Phase 8b closeout.
+
 ## 1.0.0-beta.16
 
 - Bold, Italic, Underline, Strikethrough, Code, Superscript, Subscript, Text colour, Background colour, Font size, Font family, and Link now disable themselves whenever nothing in the current selection would actually accept the mark (the caret is inside a code block, or an atom like an image is selected) — previously these stayed fully clickable and silently did nothing in those contexts. A selection spanning both allowed and disallowed content still applies to its allowed part, unchanged.
