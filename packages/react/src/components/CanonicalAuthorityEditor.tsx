@@ -91,6 +91,7 @@ import { TableSizePickerPopover } from "./TableSizePickerPopover.js";
 import { FormulaLibraryPopover } from "./FormulaLibraryPopover.js";
 import { SpecialCharacterPopover } from "./SpecialCharacterPopover.js";
 import { TableBorderPopover, BORDER_WIDTH_PRESETS, type BorderDraft, type BorderSides, type BorderStyle } from "./TableBorderPopover.js";
+import { BlockquoteBorderPopover, type BlockquoteBorderDraft } from "./BlockquoteBorderPopover.js";
 import type { FormulaLibraryEntry } from "../formulaLibrary.js";
 import { TableResizeHandles } from "./TableResizeHandles.js";
 import { MediaOverlay } from "./MediaOverlay.js";
@@ -231,7 +232,7 @@ const CONTEXT_MENU_DANGER_COMMANDS = new Set(["table.remove", "table.removeRow",
  */
 const RECENT_COLOR_LIMIT = 4;
 type ColorBucket = "text" | "background" | "border";
-const colorBucketFor = (target: { kind: "mark"; markId: "textColor" | "backgroundColor" } | { kind: "cell"; attr: "background" | "textColor" }): ColorBucket =>
+const colorBucketFor = (target: { kind: "mark"; markId: "textColor" | "backgroundColor" } | { kind: "cell"; attr: "background" | "textColor" } | { kind: "blockquote"; attr: "backgroundColor" | "textColor" }): ColorBucket =>
   target.kind === "mark" ? (target.markId === "textColor" ? "text" : "background")
     : target.attr === "textColor" ? "text" : "background";
 
@@ -325,7 +326,11 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
     // between the popover opening and the user staging a color, resolving
     // the live selection away from the table entirely - see
     // docs/bugs/color-picker-cell-target-recomputed-live-race.md.
-    target: { kind: "mark"; markId: "textColor" | "backgroundColor" } | { kind: "cell"; attr: "background" | "textColor"; scope: TableGridScope };
+    // The blockquote case captures the blockquote's own node id at click
+    // time, same discipline as the cell case's scope capture above (and
+    // for the same reason - an async selectionchange landing between
+    // open and stage must not retarget which blockquote gets styled).
+    target: { kind: "mark"; markId: "textColor" | "backgroundColor" } | { kind: "cell"; attr: "background" | "textColor"; scope: TableGridScope } | { kind: "blockquote"; attr: "backgroundColor" | "textColor"; blockId: string };
     initialValue?: string;
   } | null>(null);
   const [recentColors, setRecentColors] = useState<{ text: string[]; background: string[]; border: string[] }>({ text: [], background: [], border: [] });
@@ -342,8 +347,10 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
   const [lastListPreset, setLastListPreset] = useState<{ bullet: string | null; ordered: string | null }>({ bullet: null, ordered: null });
   const [tableSizePopover, setTableSizePopover] = useState<{ x: number; y: number } | null>(null);
   const [tableBorderPopover, setTableBorderPopover] = useState<{ x: number; y: number; scope: TableGridScope; initial: BorderDraft } | null>(null);
+  const [blockquoteBorderPopover, setBlockquoteBorderPopover] = useState<{ x: number; y: number; blockId: string; initial: BlockquoteBorderDraft } | null>(null);
   const [mediaDetailsPopover, setMediaDetailsPopover] = useState<{ x: number; y: number; scope: ResolvedScope; initial: MediaDetailsDraft } | null>(null);
   const borderPreviewCheckpointRef = useRef<SmartEditorCheckpoint | null>(null);
+  const blockquoteBorderPreviewCheckpointRef = useRef<SmartEditorCheckpoint | null>(null);
   const [formulaLibraryPopover, setFormulaLibraryPopover] = useState<{ x: number; y: number } | null>(null);
   const [specialCharPopover, setSpecialCharPopover] = useState<{ x: number; y: number } | null>(null);
   const [recentSpecialChars, setRecentSpecialChars] = useState<string[]>([]);
@@ -689,12 +696,27 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
     return "paragraph";
   };
   const currentBlockType = blockTypeAt(runtime.editor.selection.head);
-  // Mirrors toggleBlockquote's own ancestor lookup exactly, so "the button
-  // looks active" and "clicking it again unwraps" can never drift apart -
-  // same discipline as listStyleActive for the list toggle buttons.
-  const currentBlockquoteActive = Boolean(
-    [...runtime.editor.resolve({ pos: runtime.editor.selection.head }).ancestors].reverse().find((node) => node.type === "blockquote"),
-  );
+  /**
+   * Nearest enclosing blockquote ancestor of `pos` (defaulting to the
+   * current selection head), or undefined outside one. For a nested
+   * blockquote this resolves to the innermost one - shared by the toggle
+   * button's active state, the toggle command itself, the right-click
+   * gate, and the blockquote styling context-menu items below, so all
+   * four can never drift apart on "which blockquote is this."
+   */
+  const findBlockquoteAncestor = (pos: SmartPos = runtime.editor.selection.head) =>
+    [...runtime.editor.resolve({ pos }).ancestors].reverse().find((node) => node.type === "blockquote");
+  const currentBlockquoteActive = Boolean(findBlockquoteAncestor());
+  /** A synthetic block-range scope targeting exactly one blockquote node's own id - the shape setBlockAttributes/wrapBlocks/unwrapBlocks all expect. */
+  const blockquoteScopeFor = (blockId: string, pos: SmartPos): ResolvedScope => ({
+    kind: "block-range",
+    blockIds: [blockId],
+    promotedFromPartial: false,
+    commonParentId: null,
+    range: { from: pos, to: pos },
+    isolatingAncestorId: null,
+    clamped: false,
+  });
   const currentListPreset = currentListParts.length === 1 && typeof rootList?.attrs?.preset === "string"
     ? rootList.attrs.preset
     : "";
@@ -895,6 +917,18 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
     return typeof value === "string" ? value : undefined;
   };
 
+  const currentBlockquoteColor = (blockId: string, attr: "backgroundColor" | "textColor"): string | undefined => {
+    const value = findNode(runtime.editor.document, blockId)?.attrs?.[attr];
+    return typeof value === "string" ? value : undefined;
+  };
+
+  /** Blockquote's *effective* left border (only one side exists, unlike table_cell's 4 - no `sides` toggle concept needed at all). */
+  const currentBlockquoteBorderDraft = (blockId: string): BlockquoteBorderDraft => {
+    const value = findNode(runtime.editor.document, blockId)?.attrs?.borderLeft;
+    const parsed = parseBorderShorthand(value);
+    return { style: parsed?.style ?? "solid", widthPx: parsed?.widthPx ?? BORDER_WIDTH_PRESETS[0].px, hex: parsed?.hex ?? "#000000" };
+  };
+
   const CELL_BORDER_SIDE_KEYS = { top: "borderTop", right: "borderRight", bottom: "borderBottom", left: "borderLeft" } as const;
 
   /** Reads the cell's *effective* per-side border (a side's own override, falling back to the legacy uniform `borders` value) to seed the Border options popover. */
@@ -950,6 +984,43 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
     runtime.focus();
   };
 
+  /** Same shape as applyCellBorderDraft, but for the one side a blockquote has - the whole draft always applies to borderLeft, no per-side toggle to reduce down first. */
+  const applyBlockquoteBorderDraft = (blockId: string, draft: BlockquoteBorderDraft, options: { addToHistory: boolean }) => {
+    const scope = blockquoteScopeFor(blockId, runtime.editor.selection.head);
+    runtime.executeOperations(
+      setBlockAttributes(runtime.editor.document, scope, { attrs: { borderLeft: composeBorderShorthand(draft.widthPx, draft.style, draft.hex) } }, blockContext()),
+      { preserveSelectionById: true, ...options },
+    );
+  };
+
+  const previewBlockquoteBorder = (draft: BlockquoteBorderDraft) => {
+    if (!blockquoteBorderPopover) return;
+    if (!blockquoteBorderPreviewCheckpointRef.current) blockquoteBorderPreviewCheckpointRef.current = runtime.createCheckpoint();
+    runtime.restoreCheckpoint(blockquoteBorderPreviewCheckpointRef.current);
+    applyBlockquoteBorderDraft(blockquoteBorderPopover.blockId, draft, { addToHistory: false });
+  };
+
+  const applyBlockquoteBorderCommit = (draft: BlockquoteBorderDraft) => {
+    if (!blockquoteBorderPopover) return;
+    if (blockquoteBorderPreviewCheckpointRef.current) {
+      runtime.restoreCheckpoint(blockquoteBorderPreviewCheckpointRef.current);
+      blockquoteBorderPreviewCheckpointRef.current = null;
+    }
+    applyBlockquoteBorderDraft(blockquoteBorderPopover.blockId, draft, { addToHistory: true });
+    recordRecentColor("border", draft.hex);
+    setBlockquoteBorderPopover(null);
+    runtime.focus();
+  };
+
+  const cancelBlockquoteBorderPopover = () => {
+    if (blockquoteBorderPreviewCheckpointRef.current) {
+      runtime.restoreCheckpoint(blockquoteBorderPreviewCheckpointRef.current);
+      blockquoteBorderPreviewCheckpointRef.current = null;
+    }
+    setBlockquoteBorderPopover(null);
+    runtime.focus();
+  };
+
   const recordRecentColor = (bucket: ColorBucket, hex: string) => {
     setRecentColors((current) => ({
       ...current,
@@ -962,12 +1033,19 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
     if (!colorPopover) return;
     if (colorPopover.target.kind === "mark") {
       applyMarkAttrs(colorPopover.target.markId, { value: hex }, options);
-    } else {
+    } else if (colorPopover.target.kind === "cell") {
       // Uses the scope captured when the popover opened, not a fresh
       // tableScope() re-resolved against the live selection - see the
       // colorPopover state's own doc comment for why.
       runtime.executeOperations(
         setTableCellAttributesCommand(runtime.editor.document, colorPopover.target.scope, { attrs: { [colorPopover.target.attr]: hex } }, blockContext()),
+        { preserveSelectionById: true, ...options },
+      );
+    } else {
+      // Same captured-id-at-click-time discipline as the cell case above.
+      const scope = blockquoteScopeFor(colorPopover.target.blockId, runtime.editor.selection.head);
+      runtime.executeOperations(
+        setBlockAttributes(runtime.editor.document, scope, { attrs: { [colorPopover.target.attr]: hex } }, blockContext()),
         { preserveSelectionById: true, ...options },
       );
     }
@@ -1030,18 +1108,10 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
   const toggleBlockquote = () => {
     const scope = blockScope();
     const resolved = runtime.editor.resolve({ pos: runtime.editor.selection.head });
-    const ancestor = [...resolved.ancestors].reverse().find((node) => node.type === "blockquote");
+    const ancestor = findBlockquoteAncestor();
     const context = blockContext();
     if (ancestor) {
-      const quoteScope: ResolvedScope = {
-        kind: "block-range",
-        blockIds: [ancestor.id],
-        promotedFromPartial: false,
-        commonParentId: null,
-        range: { from: resolved.pos, to: resolved.pos },
-        isolatingAncestorId: null,
-        clamped: false,
-      };
+      const quoteScope = blockquoteScopeFor(ancestor.id, resolved.pos);
       runtime.executeOperations(unwrapBlocks(runtime.editor.document, quoteScope, { type: "blockquote" }, context), { preserveSelectionById: true });
       return;
     }
@@ -1210,6 +1280,32 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
           onSelect: () => setTableBorderPopover({ x: openX, y: openY, scope: tableGridScope as TableGridScope, initial: currentCellBorderDraft(tableGridScope) }),
         },
       );
+    } else {
+      // Table cell checked first (above) - a right-click inside a table
+      // nested inside a blockquote shows cell options, not these.
+      const blockquoteAncestor = findBlockquoteAncestor();
+      if (blockquoteAncestor) {
+        const openX = contextMenu?.x ?? 0;
+        const openY = contextMenu?.y ?? 0;
+        const blockId = blockquoteAncestor.id;
+        items.push(
+          {
+            id: "blockquote.contextMenu.backgroundColor",
+            label: "Blockquote background colour",
+            onSelect: () => setColorPopover({ x: openX, y: openY, target: { kind: "blockquote", attr: "backgroundColor", blockId }, initialValue: currentBlockquoteColor(blockId, "backgroundColor") }),
+          },
+          {
+            id: "blockquote.contextMenu.textColor",
+            label: "Blockquote text colour",
+            onSelect: () => setColorPopover({ x: openX, y: openY, target: { kind: "blockquote", attr: "textColor", blockId }, initialValue: currentBlockquoteColor(blockId, "textColor") }),
+          },
+          {
+            id: "blockquote.contextMenu.borderOptions",
+            label: "Blockquote border options",
+            onSelect: () => setBlockquoteBorderPopover({ x: openX, y: openY, blockId, initial: currentBlockquoteBorderDraft(blockId) }),
+          },
+        );
+      }
     }
     return items;
   };
@@ -2243,7 +2339,9 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
       y={colorPopover.y}
       label={colorPopover.target.kind === "mark"
         ? (colorPopover.target.markId === "textColor" ? "Text colour" : "Background colour")
-        : colorPopover.target.attr === "textColor" ? "Cell text colour" : "Cell background colour"}
+        : colorPopover.target.kind === "blockquote"
+          ? (colorPopover.target.attr === "textColor" ? "Blockquote text colour" : "Blockquote background colour")
+          : colorPopover.target.attr === "textColor" ? "Cell text colour" : "Cell background colour"}
       {...(colorPopover.initialValue ? { initialValue: colorPopover.initialValue } : {})}
       recentColors={recentColors[colorBucketFor(colorPopover.target)]}
       onPreview={previewColor}
@@ -2271,6 +2369,15 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
       onPreview={previewCellBorder}
       onApply={applyCellBorderCommit}
       onCancel={cancelTableBorderPopover}
+    />}
+    {blockquoteBorderPopover && <BlockquoteBorderPopover
+      x={blockquoteBorderPopover.x}
+      y={blockquoteBorderPopover.y}
+      initial={blockquoteBorderPopover.initial}
+      recentColors={recentColors.border}
+      onPreview={previewBlockquoteBorder}
+      onApply={applyBlockquoteBorderCommit}
+      onCancel={cancelBlockquoteBorderPopover}
     />}
     {mediaDetailsPopover && <MediaDetailsPopover
       x={mediaDetailsPopover.x}
@@ -2418,9 +2525,14 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
           }
         }
         // A right-click that is not handled by the media branch above and
-        // does not resolve to a table cell opens no generic menu.
+        // does not resolve to a table cell or a blockquote opens no
+        // generic menu. Table cell checked first: a right-click inside a
+        // table nested inside a blockquote should still show cell
+        // options, matching "closest/innermost container wins."
         const rightClickTableScope = runtime.editor.resolveScope({ want: "table-grid" });
         if ("kind" in rightClickTableScope && rightClickTableScope.kind === "table-grid") {
+          setContextMenu({ x: event.clientX, y: event.clientY });
+        } else if (findBlockquoteAncestor()) {
           setContextMenu({ x: event.clientX, y: event.clientY });
         }
       }}
