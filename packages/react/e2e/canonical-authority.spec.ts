@@ -5114,6 +5114,140 @@ test.describe("Phase 8b canonical product authority", () => {
   });
 
   /**
+   * "Should I be able to change blockquote background/text colour, with a
+   * separate context menu for that, plus a left-border colour option too"
+   * (live request). Right-clicking inside a blockquote previously opened
+   * nothing at all - the context menu only ever appeared over a table
+   * cell or a media atom. Mirrors the table-cell background/text colour
+   * test above, same ColorPickerPopover machinery, different target kind.
+   */
+  test("sets blockquote background and text colour via the right-click context menu", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    const editor = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
+    await editor.click();
+    await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
+    await page.keyboard.press("Backspace");
+    await page.keyboard.type("quoted text");
+    await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
+    await page.getByRole("button", { name: "Blockquote", exact: true }).click();
+    const quote = editor.locator("blockquote");
+    await expect(quote).toBeVisible();
+
+    await quote.click({ button: "right" });
+    const menu = page.locator('[data-srte-context-menu="true"]');
+    await expect(menu).toBeVisible();
+    await menu.locator('[data-srte-context-menu-item="blockquote.contextMenu.backgroundColor"]').click();
+    const colorPopover = page.locator('[data-srte-color-popover="true"]');
+    await expect(colorPopover).toBeVisible();
+    await pickColor(page, "#fff3bf");
+    await expect(quote).toHaveCSS("background-color", "rgb(255, 243, 191)");
+
+    await quote.click({ button: "right" });
+    await expect(menu).toBeVisible();
+    await menu.locator('[data-srte-context-menu-item="blockquote.contextMenu.textColor"]').click();
+    await expect(colorPopover).toBeVisible();
+    await page.locator("[data-srte-color-hex-input]").fill("#1971c2");
+    await page.keyboard.press("Escape");
+    await expect(quote).toHaveCSS("color", "rgb(25, 113, 194)");
+  });
+
+  /**
+   * Same request's border ask, restricted to the left border only
+   * (blockquote only ever shows one visible side) - a deliberately
+   * simpler popover than the table cell's 4-side "Border options", no
+   * sides toggle at all since there's nothing to toggle between.
+   */
+  test("sets blockquote left-border style, width, and colour via the Border options popover", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    const editor = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
+    await editor.click();
+    await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
+    await page.keyboard.press("Backspace");
+    await page.keyboard.type("quoted text");
+    await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
+    await page.getByRole("button", { name: "Blockquote", exact: true }).click();
+    const quote = editor.locator("blockquote");
+    await expect(quote).toBeVisible();
+
+    await quote.click({ button: "right" });
+    const menu = page.locator('[data-srte-context-menu="true"]');
+    await expect(menu).toBeVisible();
+    await menu.locator('[data-srte-context-menu-item="blockquote.contextMenu.borderOptions"]').click();
+    const popover = page.locator('[data-srte-blockquote-border-popover="true"]');
+    await expect(popover).toBeVisible();
+    // No sides toggle at all - unlike the table cell's Border options popover.
+    await expect(popover.getByRole("button", { name: "Top border" })).toHaveCount(0);
+    await expect(popover.getByRole("button", { name: "All sides", exact: true })).toHaveCount(0);
+
+    await popover.getByRole("combobox", { name: "Border style" }).selectOption("dashed");
+    await popover.getByRole("combobox", { name: "Border width" }).selectOption("thick");
+    await expect(quote).toHaveCSS("border-left-style", "dashed");
+    await expect(quote).toHaveCSS("border-left-width", "4px");
+
+    await popover.getByRole("button", { name: "Border colour" }).click();
+    const colorPopover = page.locator('[data-srte-color-popover="true"]');
+    await expect(colorPopover).toBeVisible();
+    await page.locator("[data-srte-color-hex-input]").fill("#2f9e44");
+    await page.keyboard.press("Escape"); // Commits into the border popover's own staged draft, not the document yet.
+    await expect(colorPopover).not.toBeVisible();
+    await expect(popover).toBeVisible();
+    await expect(quote).toHaveCSS("border-left-color", "rgb(47, 158, 68)"); // Still just a preview.
+
+    await popover.getByRole("button", { name: "Apply", exact: true }).click();
+    await expect(popover).not.toBeVisible();
+    await expect(quote).toHaveCSS("border-left-style", "dashed");
+    await expect(quote).toHaveCSS("border-left-color", "rgb(47, 158, 68)");
+
+    // Reopening reflects the already-committed state.
+    await quote.click({ button: "right" });
+    await expect(menu).toBeVisible();
+    await menu.locator('[data-srte-context-menu-item="blockquote.contextMenu.borderOptions"]').click();
+    await expect(popover).toBeVisible();
+    await expect(popover.getByRole("combobox", { name: "Border style" })).toHaveValue("dashed");
+    await expect(popover.getByRole("combobox", { name: "Border width" })).toHaveValue("thick");
+    await expect(popover.getByRole("button", { name: "Border colour" })).toContainText("#2f9e44");
+
+    // Cancel reverts a live-previewed change without touching the already-applied one.
+    await popover.getByRole("combobox", { name: "Border style" }).selectOption("dotted");
+    await expect(quote).toHaveCSS("border-left-style", "dotted");
+    await popover.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(popover).not.toBeVisible();
+    await expect(quote).toHaveCSS("border-left-style", "dashed");
+  });
+
+  /**
+   * The right-click gate must be scoped correctly in both directions: no
+   * menu at all over plain paragraph text, and a table cell that happens
+   * to sit inside a blockquote still shows cell options (not blockquote
+   * options) - table-grid scope wins, matching "closest/innermost
+   * container" in the same order the gate itself checks it.
+   */
+  test("blockquote context menu is scoped correctly: no menu over plain text, cell options win inside a quoted table", async ({ page }) => {
+    await page.goto("/?canonicalAuthority=1&blocks=1");
+    const editor = page.locator('[data-smart-authority="canonical"] [contenteditable="true"]');
+    await editor.click();
+    await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
+    await page.keyboard.press("Backspace");
+    await page.keyboard.type("plain paragraph");
+    const menu = page.locator('[data-srte-context-menu="true"]');
+
+    await editor.locator("p").click({ button: "right" });
+    await expect(menu).toHaveCount(0);
+
+    await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
+    await page.getByRole("button", { name: "Blockquote", exact: true }).click();
+    const quote = editor.locator("blockquote");
+    await insertDefaultTable(page);
+    const cell = quote.locator('[data-smart-type="table"] td').first();
+    await expect(cell).toBeVisible();
+
+    await cell.click({ button: "right" });
+    await expect(menu).toBeVisible();
+    await expect(menu.locator('[data-srte-context-menu-item="table.contextMenu.cellBackgroundColor"]')).toBeVisible();
+    await expect(menu.locator('[data-srte-context-menu-item="blockquote.contextMenu.backgroundColor"]')).toHaveCount(0);
+  });
+
+  /**
    * Regression: "Thin" (originally 1px) silently failed to render on any
    * side that faced an already-rendered neighbor. The table uses
    * border-collapse:collapse (theme.ts), and every cell already carries a
