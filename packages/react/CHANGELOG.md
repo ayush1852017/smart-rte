@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.1
+
+- Fix `1.1.0`'s published package listing its `smartrte-core` dependency as the literal string `workspace:^` instead of a real semver range — publishing via plain `npm publish` skips pnpm's workspace-protocol rewrite (that only happens through `pnpm publish`), so any consumer installing `1.1.0` hit `npm error EUNSUPPORTEDPROTOCOL`. No code changes; `1.1.0` should be treated as broken and not installed.
+
 ## 1.1.0
 
 - Right-clicking inside a blockquote now opens a context menu with "Blockquote background colour," "Blockquote text colour," and "Blockquote border options" (style/width/colour for its left border — no per-side toggle, since a blockquote only ever shows one visible side) — previously right-clicking one opened nothing. A table cell nested inside a blockquote still shows cell options, not these. Depends on `smartrte-core@1.1.0`. See `docs/bugs/blockquote-styling-context-menu.md`.
