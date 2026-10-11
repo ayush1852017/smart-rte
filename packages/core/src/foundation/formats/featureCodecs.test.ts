@@ -48,15 +48,15 @@ describe("Phase 9 SS3 gate 3: FeatureFormatCodec declarations", () => {
     }
   });
 
-  it("leaves parse/serialize undefined for the 35 remaining cells backed only by whole-document walkers", () => {
+  it("leaves parse/serialize undefined for the 39 remaining cells backed only by whole-document walkers", () => {
     const wired = new Set(["inline-marks/docx", "colors-fonts-sizes/docx", "headings-alignment/docx", "blockquote-code/docx", "line-height/docx"]);
     const withoutRealCodec = builtInFeatureFormatCodecs.filter((entry) =>
       entry.feature !== "images-media" && entry.feature !== "formulas" && entry.feature !== "page-break" && !wired.has(`${entry.feature}/${entry.format}`));
-    // 13 features total; images-media/formulas/page-break (3) get every
-    // format wired via atom/formats.ts's per-node functions, leaving 10
+    // 14 features total; images-media/formulas/page-break (3) get every
+    // format wired via atom/formats.ts's per-node functions, leaving 11
     // features here - 5 of which (the `wired` set above) have their own
     // single docx cell wired via blockToDocxEntry/docxProperties.
-    expect(withoutRealCodec).toHaveLength(10 * 4 - wired.size);
+    expect(withoutRealCodec).toHaveLength(11 * 4 - wired.size);
     for (const codec of withoutRealCodec) {
       expect(codec.serialize).toBeUndefined();
       expect(codec.parse).toBeUndefined();

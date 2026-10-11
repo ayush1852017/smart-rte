@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.2.0
+
+Additive release; depends on `smartrte-core@1.2.0`.
+
+- **Image captions:** Media details has a new **Caption** field (block images only, after Alt text). The caption shows under the image, and clicking it reopens Media details on that field. Clearing the field removes the caption. Each edit is a single undo step. Content saved by earlier versions as `<img>` followed by a loose `<figcaption>` is repaired into a captioned image on load, and is rewritten as `<figure>` on its first save (see `smartrte-core`'s 1.2.0 entry). Right-clicking an image still opens Media details directly; there's no separate image context menu, so there are no "Add/Edit/Remove caption" menu items.
+- **`insertImage(input, opts)`** on the editor handle, for inserting images from your app (e.g. a side panel). It inserts at the last caret position, using exactly the toolbar insert's placement rules (now shared in `insertion.ts`), or at the end. It does not take focus by default, and returns `{ ok: true, nodeId }` or `{ ok: false, reason: "read_only" | "invalid_image" | "no_valid_position" }` instead of throwing.
+- **`imageMetadataAttributes` prop/runtime option:** an allowlist of host `data-*` attributes kept on block images through loading, paste, file import and `insertImage`. Invalid names are dropped with a development-mode warning. If you call `parseCanonicalListHtml` yourself (e.g. in a `replaceValue` wrapper), pass the same list there.
+- **`getSectionContext()` and `listImages()`** on the editor handle. Both are read-only and allowed in `readOnly` mode.
+- `CanonicalEditorRuntime.setReadOnly()`/`isReadOnly()`; the component keeps it in sync with the `readOnly` prop.
+- `ExecuteOperationsOptions` gains `focus` (default `true`) and `selectNodeId`.
+
 ## 1.1.1
 
 - Fix `1.1.0`'s published package listing its `smartrte-core` dependency as the literal string `workspace:^` instead of a real semver range — publishing via plain `npm publish` skips pnpm's workspace-protocol rewrite (that only happens through `pnpm publish`), so any consumer installing `1.1.0` hit `npm error EUNSUPPORTEDPROTOCOL`. No code changes; `1.1.0` should be treated as broken and not installed.

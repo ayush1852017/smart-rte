@@ -703,6 +703,40 @@ export const SRTE_DEFAULT_CSS = `
  * line with an explicit "Page break" label, per the feature's own design
  * decision.
  */
+/*
+ * A block image's caption (a renderer projection placed right after the
+ * <img>, see surface/renderer.ts's syncImageCaptions). Small and muted,
+ * close under the image, following its alignment; max-width is set inline
+ * to the image's width when known. A left/right image floats, so its
+ * caption floats the same way and clears that side to stack underneath.
+ */
+.srte-editor [contenteditable] [data-smart-projection="image-caption"] {
+  display: block;
+  box-sizing: border-box;
+  margin: 4px 0 0.75em;
+  color: var(--srte-text-muted);
+  font-size: 0.85em;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+  user-select: none;
+}
+.srte-editor [contenteditable] [data-smart-projection="image-caption"][data-smart-align="center"] {
+  margin-left: auto;
+  margin-right: auto;
+  text-align: center;
+}
+.srte-editor [contenteditable] [data-smart-projection="image-caption"][data-smart-align="left"] {
+  float: left;
+  clear: left;
+  margin-right: 8px;
+}
+.srte-editor [contenteditable] [data-smart-projection="image-caption"][data-smart-align="right"] {
+  float: right;
+  clear: right;
+  margin-left: 8px;
+  text-align: right;
+}
 .srte-editor [contenteditable] [data-smart-type="page_break"] {
   display: block;
   position: relative;

@@ -63,6 +63,8 @@ export interface ClipboardRepresentations {
 
 export interface ClipboardPipelineOptions {
   readonly ownerDocument: Document;
+  /** Passed to parseCanonicalListHtml for HTML payloads. Native SmartRTE fragments keep their stored metadata as-is. */
+  readonly imageMetadataAttributes?: readonly string[];
   readonly normalizers?: readonly SourceNormalizer[];
   /** Test/audit switch proving detection is never required for correctness. */
   readonly normalizerMode?: "detected" | "generic";

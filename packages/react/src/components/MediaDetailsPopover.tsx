@@ -5,6 +5,8 @@ export type MediaAlign = "left" | "center" | "right" | undefined;
 
 export interface MediaDetailsDraft {
   alt: string;
+  /** Plain-text caption shown under a block image. Ignored for inline images. */
+  caption: string;
   href: string;
   openInNewTab: boolean;
   width: number | undefined;
@@ -21,9 +23,16 @@ export interface MediaDetailsPopoverProps {
   x: number;
   y: number;
   initial: MediaDetailsDraft;
+  /** Show the Caption field - block images only; a caption under an inline image has no layout meaning. */
+  showCaption?: boolean;
+  /** Field to focus when the panel opens (e.g. from clicking a rendered caption). */
+  focusField?: "caption";
   onApply: (draft: MediaDetailsDraft) => void;
   onCancel: () => void;
 }
+
+/** Matches smartrte-core's IMAGE_CAPTION_MAX_LENGTH. */
+const CAPTION_MAX_LENGTH = 500;
 
 const LICENSE_TYPE_PRESETS = ["CC BY", "CC BY-SA", "CC BY-ND", "CC BY-NC", "CC BY-NC-SA", "CC BY-NC-ND", "CC0 (Public Domain)", "All rights reserved"];
 
@@ -77,7 +86,7 @@ const alignButton = (current: MediaAlign, value: MediaAlign, label: string, onCl
  * is the image editing surface, while resize handles remain available
  * independently around the selected image.
  */
-export function MediaDetailsPopover({ x, y, initial, onApply, onCancel }: MediaDetailsPopoverProps) {
+export function MediaDetailsPopover({ x, y, initial, showCaption = false, focusField, onApply, onCancel }: MediaDetailsPopoverProps) {
   const [draft, setDraft] = useState<MediaDetailsDraft>(initial);
   const [licenseTypeCustom, setLicenseTypeCustom] = useState(!!initial.licenseType && !LICENSE_TYPE_PRESETS.includes(initial.licenseType));
   const [error, setError] = useState("");
@@ -85,6 +94,13 @@ export function MediaDetailsPopover({ x, y, initial, onApply, onCancel }: MediaD
   const [placement, setPlacement] = useState<{ left: number; top: number } | null>(null);
   const onCancelRef = useRef(onCancel);
   onCancelRef.current = onCancel;
+  const captionInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Focus only once the panel has been measured and made visible - a
+  // visibility:hidden input can't take focus.
+  useEffect(() => {
+    if (placement && focusField === "caption") captionInputRef.current?.focus();
+  }, [placement !== null, focusField]);
 
   useLayoutEffect(() => {
     const el = rootRef.current;
@@ -179,6 +195,24 @@ export function MediaDetailsPopover({ x, y, initial, onApply, onCancel }: MediaD
         />
       </label>
       {error && <div role="alert" style={{ color: "var(--srte-danger)", fontSize: 12 }}>{error}</div>}
+
+      {showCaption && (
+        <label style={labelStyle}>
+          Caption
+          <input
+            ref={captionInputRef}
+            data-srte-media-caption-input="true"
+            value={draft.caption}
+            maxLength={CAPTION_MAX_LENGTH}
+            aria-describedby="srte-media-caption-help"
+            onChange={(event) => update({ caption: event.target.value })}
+            style={inputStyle}
+          />
+          <span id="srte-media-caption-help" style={{ display: "block", marginTop: 4, fontSize: 11, fontWeight: 400, opacity: 0.75 }}>
+            Shown under the image. Alt text is read by screen readers.
+          </span>
+        </label>
+      )}
 
       <label style={labelStyle}>
         Link

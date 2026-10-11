@@ -692,17 +692,17 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
       && selection.focusNode === head.node && selection.focusOffset === head.offset;
   }
 
-  private restoreSelection(model: SmartSelection): void {
+  private restoreSelection(model: SmartSelection, syncDom = true): void {
     const selection = this.root.ownerDocument.getSelection();
     if (!selection) return;
     if (model.type === "none") {
-      if (selection.rangeCount) selection.removeAllRanges();
+      if (syncDom && selection.rangeCount) selection.removeAllRanges();
       return;
     }
     const anchor = this.mapping.posToDom(model.anchor);
     const head = this.mapping.posToDom(model.head);
     if (!anchor || !head) return;
-    if (!this.selectionMatches(selection, anchor, head)) {
+    if (syncDom && !this.selectionMatches(selection, anchor, head)) {
       if (typeof selection.setBaseAndExtent === "function") {
         selection.setBaseAndExtent(anchor.node, anchor.offset, head.node, head.offset);
       } else {
@@ -799,18 +799,73 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
    * must not leave a stale checkbox projection behind.  Reconcile these
    * projections from the current model after every render; attribute writes
    * remain idempotent.
+   *
+   * The same single document walk also collects every captioned block
+   * image for syncImageCaptions, so captions add no second traversal.
    */
   private syncListProjections(document: SmartDocument): void {
+    const captions = new Map<string, SmartElementNode>();
     const visit = (node: SmartNode, listDepth = 0): void => {
       if (isTextNode(node)) return;
       if (node.type === "list" || node.type === "list_item") {
         const element = this.mapping.nodeToDom(node.id);
         if (element) this.syncNodeAttributes(element, node, listDepth);
+      } else if (node.type === "block_image" && typeof node.attrs?.caption === "string" && node.attrs.caption) {
+        captions.set(node.id, node);
       }
       const childListDepth = node.type === "list" ? listDepth + 1 : listDepth;
       node.children?.forEach((child) => visit(child, childListDepth));
     };
     visit(document);
+    this.syncImageCaptions(captions);
+  }
+
+  /**
+   * A block image's caption is a renderer projection - a non-editable
+   * sibling element placed immediately after the <img>, since an <img> can't
+   * hold children the way <table> holds its caption projection. Projection
+   * elements are already excluded from modelChildren/modelDomChildren, so
+   * the caption never enters the model or the selection mapping.
+   *
+   * diffElement moves, replaces and removes model elements without knowing
+   * about this sibling, so instead of patching every one of those paths this
+   * re-asserts the invariant after each render pass: every captioned image
+   * is followed directly by exactly one caption projection with the current
+   * text, and no other caption projection exists. Reuses (moves) an
+   * existing projection element rather than recreating it.
+   */
+  private syncImageCaptions(captions: ReadonlyMap<string, SmartElementNode>): void {
+    const existing = new Map<string, HTMLElement>();
+    this.root.querySelectorAll<HTMLElement>(`[${SMART_PROJECTION_ATTRIBUTE}="image-caption"]`).forEach((element) => {
+      const owner = element.getAttribute("data-smart-caption-for") || "";
+      if (!captions.has(owner) || existing.has(owner)) {
+        element.remove();
+        this.recordWrite(owner);
+      } else existing.set(owner, element);
+    });
+    captions.forEach((node, id) => {
+      const image = this.mapping.nodeToDom(id);
+      if (!image?.parentNode || image === this.root) return;
+      let caption = existing.get(id);
+      if (!caption) {
+        caption = image.ownerDocument.createElement("div");
+        caption.setAttribute(SMART_PROJECTION_ATTRIBUTE, "image-caption");
+        caption.setAttribute("data-smart-caption-for", id);
+        caption.setAttribute("aria-hidden", "true");
+        caption.setAttribute("contenteditable", "false");
+        this.recordWrite(id);
+      }
+      if (image.nextSibling !== caption) { image.after(caption); this.recordWrite(id); }
+      const text = String(node.attrs?.caption);
+      if (caption.textContent !== text) { caption.textContent = text; this.recordWrite(id); }
+      const align = node.attrs?.align === "left" || node.attrs?.align === "center" || node.attrs?.align === "right" ? String(node.attrs.align) : null;
+      if (align) this.setAttribute(caption, "data-smart-align", align, id); else this.removeAttribute(caption, "data-smart-align", id);
+      // Wrap to the image's own width when it has one, so a narrow image
+      // doesn't get a page-wide caption line.
+      const width = Number(node.attrs?.width);
+      const maxWidth = Number.isFinite(width) && width > 0 ? `${width}px` : "";
+      if (caption.style.maxWidth !== maxWidth) { caption.style.maxWidth = maxWidth; this.recordWrite(id); }
+    });
   }
 
   private announceSelectedLevel(before: SmartDocument, after: SmartDocument, selection: SmartSelection): void {
@@ -844,7 +899,8 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
     this.liveRegion.textContent = `List level ${active[1].depth + 1}`;
   }
 
-  render(document: SmartDocument, selection: SmartSelection): void {
+  render(document: SmartDocument, selection: SmartSelection, options: { syncDomSelection?: boolean } = {}): void {
+    const syncDom = options.syncDomSelection !== false;
     if (!this.current) {
       this.mapping.beginUpdate(document);
       document.children.forEach((node, index) => this.root.appendChild(this.createNode(node, [index])));
@@ -853,12 +909,12 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
       this.syncListProjections(document);
       this.syncTableAccessibility();
       this.modelById.set(document.id, document);
-      this.restoreSelection(selection);
+      this.restoreSelection(selection, syncDom);
       this.syncCellSelectionProjection(selection);
       return;
     }
     if (this.current === document) {
-      this.restoreSelection(selection);
+      this.restoreSelection(selection, syncDom);
       this.syncCellSelectionProjection(selection);
       this.syncContentVisibility(document, document, selection);
       return;
@@ -871,7 +927,7 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
     if (structural) this.mapping.rebuild(this.root, document);
     this.syncListProjections(document);
     if (structural) this.syncTableAccessibility();
-    this.restoreSelection(selection);
+    this.restoreSelection(selection, syncDom);
     this.syncCellSelectionProjection(selection);
     this.syncContentVisibility(before, document, selection);
     this.announceSelectedLevel(before, document, selection);

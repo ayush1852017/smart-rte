@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { ClassicEditor, type CanonicalEditorRuntime, type CommentProvider, type CommentThread, type DocumentVersion, type MediaItem, type MediaProvider, type StructuralSuggestion, type SuggestionProvider, type VersionProvider } from "smartrte-react";
-import { parseCanonicalListHtml, foundationSchema } from "smartrte-core/foundation";
+import { parseCanonicalListHtml, serializeCanonicalListHtml, foundationSchema } from "smartrte-core/foundation";
 import CanonicalSurface from "./CanonicalSurface";
 import ClipboardCapture from "./ClipboardCapture";
 import Gate13ReplaySurface from "./Gate13ReplaySurface";
@@ -170,6 +170,10 @@ function App() {
           // malformed shapes (e.g. bare <span> siblings of a document root)
           // that only reproduce when loading raw stored HTML directly.
           // Usage from devtools console: loadRawHtml(`<p>...</p>`)
+          // The clean HTML a host would persist (what onHtmlChange emits) -
+          // pair with loadRawHtml for a real save -> reload round trip.
+          (window as Window & { getCleanHtml?: () => string }).getCleanHtml = () =>
+            serializeCanonicalListHtml(runtime.getValue().document, { clean: true });
           (window as Window & { loadRawHtml?: (html: string) => void }).loadRawHtml = (html: string) => {
             runtime.replaceValue({
               schemaVersion: foundationSchema.version,

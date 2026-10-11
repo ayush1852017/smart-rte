@@ -17,6 +17,9 @@ It pairs with [`smartrte-core`](https://www.npmjs.com/package/smartrte-core), a 
 - [Capability presets](#capability-presets-table-onoff)
 - [Host-owned providers](#host-owned-providers-media-versions-comments-suggestions)
 - [Imperative handle](#imperative-handle-ref)
+- [Image captions](#image-captions)
+- [Inserting images from your app](#inserting-images-from-your-app)
+- [Upgrading to 1.2.0](#upgrading-to-120)
 - [Import & export formats](#import--export-formats)
 - [Theming](#theming)
 - [Standalone / non-React embed](#standalone--non-react-embed)
@@ -88,6 +91,7 @@ The commonly-used `CanonicalAuthorityEditor` props:
 | `authorId` | `string` | `"anonymous"` | Attributed to new comment replies and suggestions. |
 | `renderFormulaHtml` | `boolean` | `false` | Bake real KaTeX-rendered HTML into `onHtmlChange`'s formula markup instead of an empty placeholder — turn this on if you render that HTML anywhere outside the editor (email, PDF export, a read-only view without KaTeX loaded). |
 | `onClipboardDiagnostic` | `(report: ClipboardDiagnosticReport) => void` | `undefined` | Inspect what a paste was parsed as / why it was rejected — useful while debugging a host's own copy sources. |
+| `imageMetadataAttributes` | `string[]` | `[]` | Host-defined `data-*` attributes (e.g. `["data-ai-generated", "data-source"]`) that block images keep through loading, paste, import and `insertImage`, and write back out in HTML. Construction-time only. See [Inserting images from your app](#inserting-images-from-your-app). |
 | `placeholder` | `string` | `undefined` | Placeholder text shown when the editor is empty. |
 | `minHeight` / `maxHeight` | `number \| string` | `undefined` | Editing-surface height bounds. |
 | `readOnly` | `boolean` | `false` | Disables editing; toolbar tools become inert. |
@@ -252,10 +256,95 @@ interface SmartEditorHandle {
   restoreCheckpoint(checkpoint: SmartEditorCheckpoint): void;
   saveVersion(opts?: { label?: string; authorId?: string }): DocumentVersion;
   restoreVersion(version: DocumentVersion, opts?: { keepSelection?: boolean }): void;
+  // 1.2.0
+  insertImage(input: InsertImageInput, opts?: InsertImageOptions): InsertImageResult;
+  getSectionContext(opts?: { maxChars?: number }): SectionContext;
+  listImages(): DocumentImageInfo[];
 }
 ```
 
 `saveVersion`/`restoreVersion` are the same operations the toolbar's Version History panel calls — use them directly if you want your own save-version UI instead of (or alongside) the built-in one.
+
+## Image captions
+
+Any block image can have a plain-text caption. Right-click an image (or use "Edit selected media") to open **Media details** and fill in **Caption**; the caption shows in small muted text under the image, and clicking it reopens Media details on that field. Clear the field to remove the caption. Inline images (inside a line of text) don't take captions.
+
+In saved HTML a captioned image is a standard `<figure>`, with every image attribute still on the `<img>`:
+
+```html
+<figure data-smart-figure="true"><img data-smart-type="block_image" src="…" alt="…"><figcaption>Caption text</figcaption></figure>
+```
+
+Images without a caption are saved exactly as before. Pasting or loading any `<figure>` with one image and a `<figcaption>` (from a web page, a CMS, or SmartRTE itself) gives you a captioned image. Content saved by older versions as a loose `<img>` followed by `<figcaption>` is repaired on load, and the next save writes it back as a `<figure>`. Markdown exports the caption as an italic line under the image, DOCX as a paragraph in Word's Caption style, and plain-text copy as `alt - caption`; see `builtInFormatFidelity` (`image-captions`) for what comes back on import.
+
+## Inserting images from your app
+
+`insertImage` puts an image (optionally captioned) where the user last had the caret — the same place the toolbar's image insert would — without uploading or rewriting `src`, and without taking focus from your own UI unless you ask:
+
+```tsx
+const ref = useRef<SmartEditorHandle>(null);
+
+function onUseFigure(src: string, caption: string) {
+  const result = ref.current?.insertImage(
+    { src, alt: caption, caption, metadata: { "data-ai-generated": "true" } },
+  );
+  if (result && !result.ok) showMessage(result.reason); // "read_only" | "invalid_image" | "no_valid_position"
+}
+
+<CanonicalAuthorityEditor ref={ref} imageMetadataAttributes={["data-ai-generated"]} />
+```
+
+```ts
+interface InsertImageInput {
+  src: string;                 // used as given; must pass the editor's image URL policy
+  alt: string;                 // required unless decorative: true
+  decorative?: boolean;
+  caption?: string;            // plain text, whitespace collapsed, capped at 500 characters
+  width?: number; height?: number;
+  align?: "left" | "center" | "right";
+  metadata?: Record<string, string>;   // only names in imageMetadataAttributes are kept
+}
+interface InsertImageOptions {
+  position?: "selection" | "end";      // default "selection"; falls back to "end" if there's no usable caret
+  focus?: boolean;                     // default false
+}
+type InsertImageResult = { ok: true; nodeId: string } | { ok: false; reason: "read_only" | "invalid_image" | "no_valid_position" };
+```
+
+The insert is one undo step and fires `onChange`/`onHtmlChange` like any edit; the new image is selected afterwards. It returns a result instead of throwing, so you can show a message such as "Unlock the editor to insert" for `read_only`.
+
+**Image metadata.** `imageMetadataAttributes` lists the `data-*` attributes your app wants to attach to images (at most 10; each `data-` + lowercase kebab-case, at most 40 characters, not starting with the reserved `data-smart-`). They round-trip through editing, copy/paste and HTML as plain escaped text and are never shown in the editor UI. If your app parses saved HTML itself with `parseCanonicalListHtml` (from `smartrte-core/foundation`) — for example in a `replaceValue` wrapper — pass the same list there, or metadata is dropped on that path:
+
+```ts
+parseCanonicalListHtml(html, { imageMetadataAttributes: ["data-ai-generated"] });
+```
+
+**Reading context.** For features like "suggest a figure for this section":
+
+```ts
+const { heading, text, truncated } = ref.current!.getSectionContext({ maxChars: 8000 });
+// heading: nearest top-level heading at/above the caret ({ id, level, text }) or null
+// text: that section's plain text; existing figures appear as "[Figure: caption]", tables as tab-separated rows
+const images = ref.current!.listImages(); // [{ nodeId, src, alt, caption?, metadata? }] in document order
+```
+
+Both are read-only and work in `readOnly` mode. The same logic is available without React as `getSectionContext(document, selection)` and `listDocumentImages(document)` from `smartrte-core/foundation`.
+
+## Upgrading to 1.2.0
+
+1.2.0 is additive: no props, handle methods or exports were removed or renamed. Upgrade both packages together, because `smartrte-react@1.2.0` requires `smartrte-core@^1.2.0`.
+
+**What's new**
+- Image captions on block images ([Image captions](#image-captions)).
+- `insertImage`, `getSectionContext` and `listImages` on the editor handle ([Inserting images from your app](#inserting-images-from-your-app)).
+- The `imageMetadataAttributes` prop.
+- New types: `InsertImageInput`, `InsertImageOptions`, `InsertImageResult`, `SectionContext`, `SectionContextOptions` and `DocumentImageInfo` (from `smartrte-react`), and `ParseCanonicalListHtmlOptions` (from `smartrte-core/foundation`).
+
+**On by default: captions.** You don't need to configure anything. Images without a caption save exactly as before, byte for byte. A captioned image saves as `<figure data-smart-figure="true">…<figcaption>…</figcaption></figure>`. If your app renders saved HTML outside the editor, style `figure`/`figcaption` there. One change applies to existing content: HTML saved by earlier versions as `<img>` followed by a loose `<figcaption>` now loads as a captioned image, and the next save rewrites it as a `<figure>`. Stored JSON documents are not repaired; the repair runs only when HTML is parsed.
+
+**Opt-in: image metadata.** `data-*` attributes on images are dropped unless they're listed in `imageMetadataAttributes`, as in 1.1.x. The default is an empty list.
+
+**Caveat: `parseCanonicalListHtml`.** The editor passes the allowlist on every path it owns: initial value, paste, drop, file import and `insertImage`. If your app calls `parseCanonicalListHtml` itself, for example in a `replaceValue` wrapper or server-side, pass `{ imageMetadataAttributes }` there too. Otherwise metadata is silently dropped on that path. Captions need no option there.
 
 ## Import & export formats
 

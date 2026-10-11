@@ -7,7 +7,13 @@ export interface CanonicalSubtreeRenderer {
   readonly composingNodeId: string | null;
   readonly domWriteCount: number;
   readonly composingDomWriteCount: number;
-  render(document: SmartDocument, selection: SmartSelection): void;
+  /**
+   * `syncDomSelection: false` renders and scrolls the selection into view
+   * without moving the browser selection into the editor - setting it
+   * would pull focus out of a host's own UI (e.g. a side panel calling
+   * insertImage). Default true.
+   */
+  render(document: SmartDocument, selection: SmartSelection, options?: { syncDomSelection?: boolean }): void;
   beginComposition(nodeId: string): void;
   endComposition(): void;
   resetWriteCounters(): void;
@@ -48,4 +54,6 @@ export interface CanonicalInputPipelineOptions {
   onFiles?: (files: readonly File[], position: SmartSelection) => void;
   /** Privacy-safe clipboard telemetry; reports hashes and structure, never text. */
   onClipboardDiagnostic?: (report: ClipboardDiagnosticReport) => void;
+  /** Host-defined `data-*` attributes kept on pasted block images (see parseCanonicalListHtml's option of the same name). Default: none. */
+  imageMetadataAttributes?: readonly string[];
 }

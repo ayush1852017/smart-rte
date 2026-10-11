@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.2.0
+
+All changes are additive: documents without captions or metadata export byte-identically to 1.1.x (HTML, clipboard HTML/plain text, Markdown, DOCX), checked against golden output from the 1.1.x source.
+
+- **Image captions.** `block_image` gains an optional plain-text `caption` attribute (normalised: control characters stripped, whitespace collapsed, at most 500 characters). A captioned image exports as `<figure data-smart-figure="true">(<a>)<img …><figcaption>…</figcaption></figure>`, with every attribute still on the `<img>`. It also exports to Markdown (an italic line under the image), DOCX (a Caption-style paragraph) and plain text (`alt - caption`). On import, any `<figure>` with one image and one `<figcaption>` becomes a captioned image; marks inside the caption are flattened. A figcaption with no image becomes a paragraph instead of `[Unsupported: figcaption]`. The live renderer shows the caption as a non-editable projection directly under the image. See `docs/bugs/pasted-web-images-and-hr-render-as-unsupported.md`.
+- **Heads-up, changes how existing content parses:** HTML that earlier versions saved as a loose `<img>` followed by `<figcaption>` (a pasted `<figure>` flattened on save) is now repaired on load. The figcaption becomes the image's caption, and the next save rewrites it as a `<figure>`. See `docs/bugs/figure-wrapper-lost-on-save.md`. Stored JSON documents still hold the old `unknown` figcaption node; the repair runs on HTML parsing only.
+- **Host image metadata.** `block_image` gains an optional `metadata` map of host-defined `data-*` attributes (at most 10; values at most 500 characters; the `data-smart-` namespace is reserved). It's exported as escaped attributes on the `<img>`. `parseCanonicalListHtml(html, { imageMetadataAttributes })` (a new optional options parameter, also threaded through paste/drop via `CanonicalInputPipelineOptions.imageMetadataAttributes`) keeps only the names you allowlist; the default keeps none, as before.
+- **Document queries:** `getSectionContext(document, selection, { maxChars })` returns the nearest top-level heading at the caret and that section's plain text. `listDocumentImages(document)` lists every image in document order.
+- `CanonicalSubtreeRenderer.render` takes an optional `{ syncDomSelection }`, which renders without moving the browser selection (and therefore focus) into the editor.
+- Fix: a block image's alignment was lost on every HTML save → reload (`data-smart-align` was written but never read back). See `docs/bugs/block-image-align-lost-on-html-reload.md`.
+- Fix (latent): model/DOM offset mapping counted renderer projections (table caption/colgroup, checklist controls) as block children. See `docs/bugs/block-boundary-offsets-counted-renderer-projections.md`.
+- New `image-captions` row in `builtInFormatFidelity`.
+
 ## 1.1.0
 
 - Add `backgroundColor`, `textColor`, and `borderLeft` attrs to `blockquote` (the last a single composed CSS shorthand, since a blockquote only ever shows one visible border side, unlike `table_cell`'s 4-sided borders) — rendered as real CSS in the same change, alongside the existing `align`/`indentLevel`/`lineHeight` block attrs. See `docs/bugs/blockquote-styling-context-menu.md`.

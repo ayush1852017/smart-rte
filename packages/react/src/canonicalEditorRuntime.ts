@@ -1,6 +1,13 @@
 import {
   createFoundationEditor,
   applyOperations,
+  atomDeclarations,
+  filterImageMetadata,
+  getSectionContext as sectionContextOf,
+  listDocumentImages,
+  normalizeImageCaption,
+  normalizeImageMetadataAllowlist,
+  sanitizeAtomSource,
   createInputPipeline,
   createNodeId,
   createSubtreeRenderer,
@@ -12,6 +19,7 @@ import {
   type CanonicalInputPipeline,
   type ClipboardDiagnosticReport,
   type CanonicalSubtreeRenderer,
+  type DocumentImageInfo,
   type DocumentVersion,
   type FoundationEditor,
   type PersistedEditorDocument,
@@ -20,9 +28,12 @@ import {
   type SmartOperation,
   type SmartPos,
   type SmartSelection,
+  type SectionContext,
+  type SectionContextOptions,
   type SmartTransaction,
 } from "smartrte-core/foundation";
 import { capabilityPresetRegistry, type EditorCapabilityPreset } from "./capabilityPresets.js";
+import { planBlockAtomInsertion } from "./insertion.js";
 
 export interface SmartEditorCheckpoint {
   envelope: PersistedEditorDocument;
@@ -49,7 +60,39 @@ export interface SmartEditorHandle {
   restoreCheckpoint(checkpoint: SmartEditorCheckpoint): void;
   saveVersion(opts?: SaveVersionOptions): DocumentVersion;
   restoreVersion(version: DocumentVersion, opts?: { keepSelection?: boolean }): void;
+  /** Inserts a block image from the host app (e.g. a side panel) at the last caret position. Never throws for bad input: see InsertImageResult. */
+  insertImage(input: InsertImageInput, opts?: InsertImageOptions): InsertImageResult;
+  /** The section around the last caret position: nearest top-level heading above it and that section's plain text. Allowed in read-only mode. */
+  getSectionContext(opts?: SectionContextOptions): SectionContext;
+  /** Every block and inline image, in document order. */
+  listImages(): DocumentImageInfo[];
 }
+
+export interface InsertImageInput {
+  /** Used as given - no upload, no data-URL conversion. Must pass the same image URL policy as every other image path. */
+  src: string;
+  /** Required unless `decorative: true`. */
+  alt: string;
+  decorative?: boolean;
+  /** Plain text; normalised (whitespace collapsed) and capped at 500 characters. */
+  caption?: string;
+  width?: number;
+  height?: number;
+  align?: "left" | "center" | "right";
+  /** Filtered by the editor's `imageMetadataAttributes` allowlist; anything else is dropped. */
+  metadata?: Record<string, string>;
+}
+
+export interface InsertImageOptions {
+  /** "selection" (default) inserts after the block at the last caret position, like the toolbar; "end" appends to the document. */
+  position?: "selection" | "end";
+  /** Default false: the host's own panel keeps focus. */
+  focus?: boolean;
+}
+
+export type InsertImageResult =
+  | { ok: true; nodeId: string }
+  | { ok: false; reason: "read_only" | "invalid_image" | "no_valid_position" };
 
 export interface SaveVersionOptions {
   label?: string;
@@ -64,6 +107,10 @@ export interface ExecuteOperationsOptions {
   /** Put the caret in a newly-created inline owner after the operation. */
   selectionOwnerId?: string;
   selectionOffset?: number;
+  /** Select this (newly inserted) node as a node selection after the operation. */
+  selectNodeId?: string;
+  /** Focus the editor after a history-eligible commit. Default true (the long-standing behaviour); host APIs pass false so the host's panel keeps focus. */
+  focus?: boolean;
 }
 
 export interface CanonicalEditorRuntimeOptions {
@@ -93,7 +140,21 @@ export interface CanonicalEditorRuntimeOptions {
    * it themselves (e.g. a read-only preview panel built from saved HTML).
    */
   renderFormulaHtml?: boolean;
+  /**
+   * Host-defined `data-*` attributes (e.g. `["data-ai-generated",
+   * "data-source"]`) that block images keep as `attrs.metadata` through
+   * HTML loading, paste and insertImage, and write back out on export.
+   * Names must match `data-[a-z0-9-]+`, may not start with `data-smart-`,
+   * at most 40 characters, at most 10 names; invalid names are dropped with
+   * a development-mode warning. Default: none, so no behaviour changes.
+   */
+  imageMetadataAttributes?: readonly string[];
 }
+
+const isDevelopment = () => {
+  const global = globalThis as typeof globalThis & { process?: { env?: { NODE_ENV?: string } } };
+  return global.process?.env?.NODE_ENV !== "production";
+};
 
 const nodeAtPath = (root: SmartNode, path: readonly number[]): SmartNode | null => {
   let node: SmartNode = root;
@@ -139,9 +200,9 @@ const firstTextSelection = (document: PersistedEditorDocument["document"]): Smar
   return { type: "text", anchor: pos, head: pos };
 };
 
-const envelopeFrom = (value?: string | PersistedEditorDocument): PersistedEditorDocument => {
+const envelopeFrom = (value: string | PersistedEditorDocument | undefined, imageMetadataAttributes: readonly string[]): PersistedEditorDocument => {
   if (typeof value === "object" && value) return structuredClone(value);
-  const document = parseCanonicalListHtml(typeof value === "string" ? value : "<p></p>");
+  const document = parseCanonicalListHtml(typeof value === "string" ? value : "<p></p>", { imageMetadataAttributes });
   return { schemaVersion: foundationSchema.version, revision: 0, document };
 };
 
@@ -182,9 +243,19 @@ export class CanonicalEditorRuntime implements SmartEditorHandle {
   private readonly renderFormulaHtml: boolean;
   private htmlChangeTimer: number | null = null;
   private pendingHtmlDocument: PersistedEditorDocument["document"] | null = null;
+  private readOnly = false;
+  /** Set only while executeOperations commits with `focus: false` - see the subscribe callback in mount(). */
+  private holdDomSelection = false;
+  /** The validated `imageMetadataAttributes` allowlist. Hosts that call parseCanonicalListHtml themselves should pass this same list. */
+  readonly imageMetadataAttributes: readonly string[];
 
   constructor(options: CanonicalEditorRuntimeOptions = {}) {
-    const envelope = envelopeFrom(options.initialValue);
+    const allowlist = normalizeImageMetadataAllowlist(options.imageMetadataAttributes);
+    if (allowlist.rejected.length && isDevelopment()) {
+      console.warn(`[Smart RTE] imageMetadataAttributes: ignored invalid or excess names: ${allowlist.rejected.join(", ")}. Names must match data-[a-z0-9-]+, must not start with data-smart-, be at most 40 characters, and at most 10 names are kept.`);
+    }
+    this.imageMetadataAttributes = allowlist.names;
+    const envelope = envelopeFrom(options.initialValue, this.imageMetadataAttributes);
     // "full" (the default) intentionally passes no schema/commands/etc., so
     // FoundationEditor's own defaulting (`options.schema || foundationSchema`)
     // applies - every existing consumer who never sets `preset` is
@@ -237,9 +308,12 @@ export class CanonicalEditorRuntime implements SmartEditorHandle {
     this.unmount();
     this.root = root;
     this.renderer = createSubtreeRenderer(root, { contentVisibility: this.contentVisibility });
-    this.pipeline = createInputPipeline(this.editor, this.renderer, root, { onClipboardDiagnostic: this.onClipboardDiagnostic });
+    this.pipeline = createInputPipeline(this.editor, this.renderer, root, { onClipboardDiagnostic: this.onClipboardDiagnostic, imageMetadataAttributes: this.imageMetadataAttributes });
     this.unsubscribe = this.editor.subscribe((transaction, state) => {
-      this.renderer?.render(this.editor.document, this.editor.selection);
+      // A commit that must not take focus (a host panel calling insertImage)
+      // also must not move the browser selection into the editor: in real
+      // browsers that alone moves focus to the contenteditable.
+      this.renderer?.render(this.editor.document, this.editor.selection, { syncDomSelection: !this.holdDomSelection });
       this.onChange?.({ revision: state.revision, documentChanged: sameOperations(transaction), transaction });
       if (sameOperations(transaction)) this.scheduleHtmlChange(state.document);
     });
@@ -306,7 +380,7 @@ export class CanonicalEditorRuntime implements SmartEditorHandle {
     if (!operations.length) return;
     const beforeSelection = this.editor.selection;
     let selection = createTransactionMap(operations).mapSelection(beforeSelection);
-    if (opts.selectionOwnerId || opts.preserveSelectionById) {
+    if (opts.selectionOwnerId || opts.preserveSelectionById || opts.selectNodeId) {
       const beforeDocument = this.editor.document;
       const preview = applyOperations(beforeDocument, operations);
       const beforeCellAnchor = beforeSelection.type === "cell" ? cellIdAt(beforeDocument, beforeSelection.anchor) : null;
@@ -332,7 +406,14 @@ export class CanonicalEditorRuntime implements SmartEditorHandle {
         if (!owner) return null;
         return { path, offset: Math.min(forcedId ? opts.selectionOffset ?? 0 : pos.offset, inlineWidth(owner)) };
       };
-      if (preservedCellSelection) {
+      if (opts.selectNodeId) {
+        const path = pathOfNode(preview, opts.selectNodeId);
+        if (path?.length) {
+          const parentPath = path.slice(0, -1);
+          const index = path[path.length - 1];
+          selection = { type: "node", anchor: { path: parentPath, offset: index }, head: { path: parentPath, offset: index + 1 } };
+        }
+      } else if (preservedCellSelection) {
         // The cell selection was mapped above; do not reinterpret its
         // structural endpoints as a text selection.
       } else if (opts.selectionOwnerId) {
@@ -344,21 +425,82 @@ export class CanonicalEditorRuntime implements SmartEditorHandle {
         if (anchor && head) selection = { ...beforeSelection, anchor, head };
       }
     }
-    this.editor.transact((builder) => {
-      builder.operations.push(...operations);
-      builder.setSelection(selection);
-    }, {
-      source: "toolbar",
-      addToHistory: opts.addToHistory ?? true,
-      ...(opts.historyGroup ? { historyGroup: opts.historyGroup } : {}),
-    });
+    this.holdDomSelection = opts.focus === false;
+    try {
+      this.editor.transact((builder) => {
+        builder.operations.push(...operations);
+        builder.setSelection(selection);
+      }, {
+        source: "toolbar",
+        addToHistory: opts.addToHistory ?? true,
+        ...(opts.historyGroup ? { historyGroup: opts.historyGroup } : {}),
+      });
+    } finally {
+      this.holdDomSelection = false;
+    }
     // Skipped for a non-history (preview) operation: focusing the main
     // editor surface would steal keyboard/pointer focus away from whatever
     // UI is driving the preview (e.g. ColorPickerPopover's native color
     // input mid-drag) on every single preview frame - breaking Escape-to-
     // cancel and, in a real browser, potentially interrupting the drag
     // itself. A real, history-eligible commit still focuses as before.
-    if (opts.addToHistory ?? true) this.focus();
+    if ((opts.addToHistory ?? true) && opts.focus !== false) this.focus();
+  }
+
+  /** Mirrors the component's `readOnly` prop so host-facing APIs (insertImage) can refuse writes. Does not itself change the editing surface. */
+  setReadOnly(readOnly: boolean): void { this.readOnly = readOnly; }
+  isReadOnly(): boolean { return this.readOnly; }
+
+  insertImage(input: InsertImageInput, opts: InsertImageOptions = {}): InsertImageResult {
+    if (this.readOnly) return { ok: false, reason: "read_only" };
+    const attrs = this.imageAttrsFrom(input);
+    if (!attrs) return { ok: false, reason: "invalid_image" };
+    const nodeId = createNodeId();
+    // An unusable caret position (none yet, or one that can't take a block
+    // here) falls back to appending - still a successful insert.
+    const plan = (opts.position !== "end" ? planBlockAtomInsertion(this.editor, "block_image", attrs, nodeId, "selection") : null)
+      || planBlockAtomInsertion(this.editor, "block_image", attrs, nodeId, "end");
+    if (!plan) return { ok: false, reason: "no_valid_position" };
+    this.executeOperations(plan.operations, { selectNodeId: nodeId, focus: opts.focus === true });
+    return { ok: true, nodeId };
+  }
+
+  /** Builds and validates block_image attrs from host input, or null if they would be invalid. */
+  private imageAttrsFrom(input: InsertImageInput): Record<string, unknown> | null {
+    if (!input || typeof input !== "object") return null;
+    const decorative = input.decorative === true;
+    const alt = typeof input.alt === "string" ? input.alt : decorative ? "" : null;
+    const src = typeof input.src === "string" ? sanitizeAtomSource(input.src, { kind: "image" }) : null;
+    if (alt === null || !src) return null;
+    const dimension = (value: unknown) => value === undefined || (typeof value === "number" && Number.isFinite(value) && value > 0 && value <= 100_000);
+    if (!dimension(input.width) || !dimension(input.height)) return null;
+    if (input.align !== undefined && input.align !== "left" && input.align !== "center" && input.align !== "right") return null;
+    const caption = normalizeImageCaption(input.caption);
+    const metadata = input.metadata && typeof input.metadata === "object"
+      ? filterImageMetadata((name) => (input.metadata as Record<string, unknown>)[name], this.imageMetadataAttributes)
+      : undefined;
+    const attrs: Record<string, unknown> = {
+      src, alt, status: "ready",
+      ...(decorative ? { decorative: true } : {}),
+      ...(input.width !== undefined ? { width: input.width } : {}),
+      ...(input.height !== undefined ? { height: input.height } : {}),
+      ...(input.align ? { align: input.align } : {}),
+      ...(caption ? { caption } : {}),
+      ...(metadata ? { metadata } : {}),
+    };
+    const spec = this.editor.schema.nodes.block_image;
+    if (!spec) return null;
+    const schemaValid = Object.entries(attrs).every(([name, value]) => spec.attributes?.[name]?.validate?.(value) ?? true);
+    const declaration = atomDeclarations.find((entry) => entry.type === "block_image");
+    return schemaValid && declaration?.validate(attrs) ? attrs : null;
+  }
+
+  getSectionContext(opts?: SectionContextOptions): SectionContext {
+    return sectionContextOf(this.editor.document, this.editor.selection, opts);
+  }
+
+  listImages(): DocumentImageInfo[] {
+    return listDocumentImages(this.editor.document);
   }
   createCheckpoint(): SmartEditorCheckpoint {
     return {

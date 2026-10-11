@@ -8,6 +8,7 @@ import type { SmartDocument, SmartElementNode, SmartMark, SmartNode } from "../t
 import { occupancyGridFor } from "../table/grid.js";
 import { atomToHtml, atomToMarkdown } from "../atom/formats.js";
 import { sanitizeAtomSource } from "../atom/security.js";
+import { filterImageMetadata, normalizeImageCaption, normalizeImageMetadataAllowlist } from "../atom/imageExtras.js";
 import { foundationListStyleForPresetDepth, isFoundationSmartListPreset } from "./presets.js";
 
 type HtmlAttribute = { name: string; value: string };
@@ -48,6 +49,13 @@ const imageStyleAndLicenseAttrs = (node: HtmlNode): Record<string, string | numb
 
 /** See serializeCanonicalListHtml's own doc comment for why this is a module-scoped flag rather than a threaded parameter. */
 let renderFormulaHtmlMode = false;
+/** parseCanonicalListHtml's `imageMetadataAttributes` option - module-scoped for the same reason as renderFormulaHtmlMode, restored in `finally`. Empty (the default) collects nothing, matching pre-1.2 behaviour. */
+let imageMetadataAllowlist: readonly string[] = [];
+const parsedImageMetadata = (node: HtmlNode): { metadata?: Record<string, string> } => {
+  if (!imageMetadataAllowlist.length) return {};
+  const metadata = filterImageMetadata((name) => attr(node, name), imageMetadataAllowlist);
+  return metadata ? { metadata } : {};
+};
 
 const serializeInline = (node: SmartNode): string => {
   if (!isTextNode(node)) {
@@ -418,7 +426,14 @@ const parseBlock = (node: HtmlNode): SmartElementNode | null => {
       // third-party block-level image paste, not just this app's own.
       ...(attr(node, "data-smart-href") ? { href: attr(node, "data-smart-href") } : {}),
       ...(attr(node, "data-smart-target") ? { target: attr(node, "data-smart-target") } : {}),
+      // atomToHtml has always written data-smart-align for a block image,
+      // but this branch never read it back, so an aligned image lost its
+      // alignment on every HTML save -> reload (docs/bugs/
+      // block-image-align-lost-on-html-reload.md). Same allowed values as
+      // the schema's own align validator.
+      ...(["left", "center", "right"].includes(attr(node, "data-smart-align") || "") ? { align: attr(node, "data-smart-align") } : {}),
       ...imageStyleAndLicenseAttrs(node),
+      ...parsedImageMetadata(node),
     } };
   }
   if (declaredAtom === "block_formula") return { type: "block_formula", id: generatedId(node, "formula"), attrs: { source: attr(node, "data-smart-formula") || rawText(node), notation: attr(node, "data-smart-notation") === "mathml" ? "mathml" : "latex" } };
@@ -449,6 +464,7 @@ const parseBlock = (node: HtmlNode): SmartElementNode | null => {
       return { type: "block_image", id: generatedId(node, "image"), attrs: {
         src, alt: attr(node, "alt") || "", status: "ready",
         ...(width !== null ? { width } : {}), ...(height !== null ? { height } : {}),
+        ...parsedImageMetadata(node),
       } };
     }
   }
@@ -661,9 +677,49 @@ const GENERIC_INLINE_TAGS = ["span", "strong", "b", "em", "i", "u", "s", "strike
  * block image - so it's tried as a block first and only folded into the
  * inline run if that doesn't apply.
  */
-const parseMixedBlockContent = (nodes: readonly HtmlNode[], blockTags: readonly string[]): SmartElementNode[] => {
+const isWhitespaceText = (node: HtmlNode) => node.nodeName === "#text" && !(node.value || "").trim();
+const isImageSource = (node: HtmlNode) => node.tagName === "img"
+  || node.tagName === "a" && elementChildren(node).length === 1 && elementChildren(node)[0].tagName === "img"
+    && (node.childNodes || []).every((child) => child.tagName || isWhitespaceText(child));
+
+/**
+ * A captioned figure - exactly one image source (`<img>`, `<a><img></a>`, or
+ * this app's own `img[data-smart-type="block_image"]`) plus at most one
+ * `<figcaption>`, in either order, ignoring whitespace - becomes ONE
+ * block_image with `caption`. The image itself goes through parseBlock, so
+ * every existing attribute/width/license rule applies unchanged; the
+ * caption is the figcaption's plain text (marks and links flattened).
+ * Returns null for any other figure shape (several images, a table, no
+ * image, stray text) so the caller falls back to the transparent-container
+ * path. Deliberately does NOT depend on atomToHtml's data-smart-figure
+ * marker - third-party figures never carry it.
+ */
+const parseFigure = (node: HtmlNode): SmartElementNode | null => {
+  const significant = (node.childNodes || []).filter((child) => !isWhitespaceText(child) && !isEditorUiNode(child));
+  const images = significant.filter(isImageSource);
+  const captions = significant.filter((child) => child.tagName === "figcaption");
+  if (images.length !== 1 || captions.length > 1 || images.length + captions.length !== significant.length) return null;
+  const image = parseBlock(images[0]);
+  if (!image || image.type !== "block_image") return null;
+  const caption = captions.length ? normalizeImageCaption(rawText(captions[0])) : undefined;
+  return caption ? { ...image, attrs: { ...image.attrs, caption } } : image;
+};
+
+/** A figcaption that has no image to attach to keeps its text as an ordinary paragraph instead of an "[Unsupported: figcaption]" placeholder. */
+const figcaptionParagraph = (node: HtmlNode): SmartElementNode | null => {
+  const children = (node.childNodes || []).flatMap((child) => textWithMarks(child));
+  return children.some((child) => !isTextNode(child) || child.text.trim() !== "")
+    ? { type: "paragraph", id: generatedId(node, "p"), children }
+    : null;
+};
+
+const parseMixedBlockContent = (nodes: readonly HtmlNode[], blockTags: readonly string[], insideUnrecognizedFigure = false): SmartElementNode[] => {
   const result: SmartElementNode[] = [];
   let inlineRun: HtmlNode[] = [];
+  // Index (in `result`) of a block_image that a directly following
+  // <figcaption> sibling may still attach to - see the figcaption branch
+  // below. Cleared by anything other than whitespace in between.
+  let captionTarget = -1;
   const flushInlineRun = () => {
     if (!inlineRun.length) return;
     const children = inlineRun.flatMap((node) => textWithMarks(node));
@@ -678,10 +734,14 @@ const parseMixedBlockContent = (nodes: readonly HtmlNode[], blockTags: readonly 
     const hasContent = children.some((child) => !isTextNode(child) || child.text.trim() !== "");
     if (hasContent) result.push({ type: "paragraph", id: createNodeId(), children });
   };
+  const pushParsed = (parsed: SmartElementNode | null) => {
+    if (!parsed) return;
+    result.push(parsed);
+    if (parsed.type === "block_image" && parsed.attrs?.caption === undefined) captionTarget = result.length - 1;
+  };
   const pushBlock = (node: HtmlNode) => {
     flushInlineRun();
-    const parsed = parseBlock(node);
-    if (parsed) result.push(parsed);
+    pushParsed(parseBlock(node));
   };
   nodes.forEach((node) => {
     // Matches textWithMarks's own first check - a UI-only element (e.g. a
@@ -691,7 +751,36 @@ const parseMixedBlockContent = (nodes: readonly HtmlNode[], blockTags: readonly 
     // dropped like every other reparse path already does for these.
     if (isEditorUiNode(node)) return;
     const tag = node.tagName;
+    const target = captionTarget;
+    if (!isWhitespaceText(node)) captionTarget = -1;
     if (!tag) { inlineRun.push(node); return; }
+    if (tag === "figcaption") {
+      // Legacy repair: before 1.2, a <figure> was unwrapped and its
+      // <figcaption> survived only as a verbatim "unknown" node, so every
+      // save wrote `<img ...><figcaption>...</figcaption>` as loose
+      // siblings (docs/bugs/figure-wrapper-lost-on-save.md). A figcaption
+      // directly after a still-uncaptioned block image (whitespace aside)
+      // is re-attached as that image's caption. Not inside a figure this
+      // parser already declined to treat as one captioned image (e.g. two
+      // images): there the caption describes the whole group, so it stays
+      // a paragraph rather than being pinned to the last image.
+      flushInlineRun();
+      const caption = normalizeImageCaption(rawText(node));
+      const image = target >= 0 && target === result.length - 1 ? result[target] : null;
+      if (!insideUnrecognizedFigure && image?.type === "block_image" && caption) {
+        result[target] = { ...image, attrs: { ...image.attrs, caption } };
+      } else {
+        pushParsed(figcaptionParagraph(node));
+      }
+      return;
+    }
+    if (tag === "figure" && !attr(node, "data-smart-type")) {
+      const figure = parseFigure(node);
+      if (figure) { flushInlineRun(); result.push(figure); return; }
+      flushInlineRun();
+      result.push(...parseMixedBlockContent(node.childNodes || [], blockTags, true));
+      return;
+    }
     // A bare third-party <div> (no data-smart-type) is genuinely
     // meaningless wrapping and should be unwrapped - but this app's own
     // round-tripped div-tagged atoms (block_formula, page_break; see
@@ -705,14 +794,14 @@ const parseMixedBlockContent = (nodes: readonly HtmlNode[], blockTags: readonly 
     // children back.
     if (TRANSPARENT_CONTAINER_TAGS.includes(tag) && !attr(node, "data-smart-type")) {
       flushInlineRun();
-      result.push(...parseMixedBlockContent(node.childNodes || [], blockTags));
+      result.push(...parseMixedBlockContent(node.childNodes || [], blockTags, insideUnrecognizedFigure));
       return;
     }
     if (blockTags.includes(tag)) return pushBlock(node);
     if (GENERIC_INLINE_TAGS.includes(tag)) {
       if (tag === "a") {
         const parsed = parseBlock(node);
-        if (parsed && parsed.type !== "unknown") { flushInlineRun(); result.push(parsed); return; }
+        if (parsed && parsed.type !== "unknown") { flushInlineRun(); pushParsed(parsed); return; }
       }
       inlineRun.push(node);
       return;
@@ -723,13 +812,31 @@ const parseMixedBlockContent = (nodes: readonly HtmlNode[], blockTags: readonly 
   return result;
 };
 
-export const parseCanonicalListHtml = (html: string): SmartDocument => {
-  const fragment = parseFragment(html) as unknown as HtmlNode;
-  const wrapper = elementChildren(fragment).find((node) => attr(node, "data-smart-document") === "true");
-  const source = wrapper || fragment;
-  const rootBlockTags = ["p", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "blockquote", "pre", "table", "hr", "img", "video", "audio"];
-  const children = parseMixedBlockContent(source.childNodes || [], rootBlockTags);
-  return { type: "doc", id: attr(source, "data-smart-id") || createNodeId(), children: children.length ? children : [{ type: "paragraph", id: createNodeId(), children: [] }] };
+export interface ParseCanonicalListHtmlOptions {
+  /**
+   * Host-defined `data-*` attributes to keep from each block image as
+   * `attrs.metadata` (atom/imageExtras.ts). Invalid names are ignored.
+   * Omitted or empty (the default): nothing is collected, exactly as
+   * before this option existed. A host that persists HTML and reloads it
+   * through this function directly must pass the same list it gives the
+   * editor, or the metadata is dropped on that path.
+   */
+  readonly imageMetadataAttributes?: readonly string[];
+}
+
+export const parseCanonicalListHtml = (html: string, options: ParseCanonicalListHtmlOptions = {}): SmartDocument => {
+  const previous = imageMetadataAllowlist;
+  imageMetadataAllowlist = normalizeImageMetadataAllowlist(options.imageMetadataAttributes).names;
+  try {
+    const fragment = parseFragment(html) as unknown as HtmlNode;
+    const wrapper = elementChildren(fragment).find((node) => attr(node, "data-smart-document") === "true");
+    const source = wrapper || fragment;
+    const rootBlockTags = ["p", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "blockquote", "pre", "table", "hr", "img", "video", "audio"];
+    const children = parseMixedBlockContent(source.childNodes || [], rootBlockTags);
+    return { type: "doc", id: attr(source, "data-smart-id") || createNodeId(), children: children.length ? children : [{ type: "paragraph", id: createNodeId(), children: [] }] };
+  } finally {
+    imageMetadataAllowlist = previous;
+  }
 };
 
 const plainText = (node: SmartElementNode) => (node.children || []).map((child) => isTextNode(child) ? child.text : child.type === "hard_break" ? "\n" : "").join("");

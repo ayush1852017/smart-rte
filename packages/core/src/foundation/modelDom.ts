@@ -224,7 +224,8 @@ export class FoundationModelDomMapping implements ModelDomMapping {
     if (!element) return null;
     if (!this.isInlineOwner(model)) {
       const children = this.modelDomChildren(element);
-      return pos.offset <= children.length ? { node: element, offset: pos.offset } : null;
+      if (pos.offset > children.length) return null;
+      return { node: element, offset: this.blockBoundaryDomOffset(element, children, pos.offset) };
     }
     let remaining = pos.offset;
     const domChildren = this.modelDomChildren(element);
@@ -255,8 +256,42 @@ export class FoundationModelDomMapping implements ModelDomMapping {
     };
   }
 
+  /**
+   * Model offsets between block children count model children only; a
+   * renderer projection sitting between blocks (a block image's caption,
+   * a table's caption/colgroup, a checklist control) must not shift them.
+   * Offset k maps to just before the k-th model child. The end offset maps
+   * past the last model child and past any image caption trailing it, so a
+   * caret "after the image" lands below its caption, not between the two.
+   */
+  private blockBoundaryDomOffset(element: HTMLElement, children: readonly Node[], offset: number): number {
+    const all = [...element.childNodes] as Node[];
+    if (offset < children.length) return all.indexOf(children[offset]);
+    if (!children.length) return 0;
+    let index = all.indexOf(children[children.length - 1]) + 1;
+    while (index < all.length && this.isImageCaptionProjection(all[index])) index += 1;
+    return index;
+  }
+
+  private isImageCaptionProjection(node: Node | null | undefined): node is Element {
+    return node instanceof Element && node.getAttribute(SMART_PROJECTION_ATTRIBUTE) === "image-caption";
+  }
+
+  /** A DOM point inside (or on) a block image's caption projection reads as the boundary right after that image. */
+  private captionBoundaryPos(node: Node): SmartPos | null {
+    const element = node.nodeType === node.ELEMENT_NODE ? node as Element : node.parentElement;
+    const caption = element?.closest(`[${SMART_PROJECTION_ATTRIBUTE}="image-caption"]`);
+    if (!caption || !this.root?.contains(caption)) return null;
+    const imageId = caption.getAttribute("data-smart-caption-for");
+    const imagePath = imageId ? this.pathById.get(imageId) : undefined;
+    if (!imagePath?.length) return null;
+    return { path: imagePath.slice(0, -1), offset: imagePath[imagePath.length - 1] + 1 };
+  }
+
   domToPos(node: Node, offset: number): SmartPos | null {
     if (!this.root || !this.document || this.isEditorUiNode(node)) return null;
+    const captionPos = this.captionBoundaryPos(node);
+    if (captionPos) return captionPos;
     const owner = this.domToNode(node);
     if (!owner) return null;
     if (isTextNode(owner.node)) return null;
@@ -265,14 +300,17 @@ export class FoundationModelDomMapping implements ModelDomMapping {
     const element = this.byId.get(owner.nodeId);
     if (!path || !element) return null;
     if (!this.isInlineOwner(ownerNode)) {
+      const children = this.modelDomChildren(element);
       if (node !== element) {
         const direct = node.nodeType === node.ELEMENT_NODE ? node as Element : node.parentElement;
         const child = direct?.closest(`[${SMART_NODE_ID_ATTRIBUTE}]`);
-        const children = [...element.children].filter((candidate) => !this.isEditorUiNode(candidate));
-        const index = child ? children.indexOf(child as HTMLElement) : -1;
+        const index = child ? children.indexOf(child) : -1;
         return index >= 0 ? { path: [...path], offset: index + (offset > 0 ? 1 : 0) } : null;
       }
-      return { path: [...path], offset };
+      // A raw DOM offset counts projections too; count only model children
+      // before it (see blockBoundaryDomOffset for the inverse).
+      const all = [...element.childNodes] as Node[];
+      return { path: [...path], offset: children.filter((child) => all.indexOf(child) < offset).length };
     }
     if (node === element) {
       const direct = this.modelDomChildren(element);

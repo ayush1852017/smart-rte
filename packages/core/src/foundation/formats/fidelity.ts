@@ -16,7 +16,8 @@ export type FidelityFeature =
   | "formulas"
   | "special-characters"
   | "page-break"
-  | "line-height";
+  | "line-height"
+  | "image-captions";
 
 export interface FormatFidelityCapability {
   level: FidelityLevel;
@@ -126,7 +127,7 @@ export const builtInFormatFidelity: readonly FeatureFidelityContract[] = [
   {
     feature: "images-media",
     formats: {
-      html: capability("semantic", "Images, audio, and video round-trip; host-only metadata may be lossy."),
+      html: capability("semantic", "Images, audio, and video round-trip. Host-defined block-image metadata (`data-*` attributes) is exported as stored, but on import is kept only for names in the `imageMetadataAttributes` allowlist passed to the parser; anything else is dropped."),
       markdown: capability("lossy", "Inline and block images round-trip as ![alt](src) (SS2.3: fixed a real silent-data-loss bug - markdownInlineText/markdownBlock's fallback for any atom node was an empty string, deleting images with no trace; images are now routed through atomToMarkdown/parsed back via a real image AST case). Audio and video degrade to a readable [video: url](url) link on export - the link and URL survive, but re-import produces a generic link, not a video/audio atom."),
       docx: capability("semantic", "Data-URL PNG/JPEG/GIF images embed as native Word media relationships; remote or unsupported sources fall back to a portable text marker recovered on import (SS2.1, re-verified). No canonical DOCX projection exists yet for video/audio (block_image only)."),
       pdf: capability("lossy", "Export is visual; semantic media import is unsupported."),
@@ -166,6 +167,15 @@ export const builtInFormatFidelity: readonly FeatureFidelityContract[] = [
       markdown: capability("unsupported", "Markdown has no line-spacing concept at all. The paragraph's own text is preserved in full (line-height is metadata about how it's displayed, not content) - only the spacing value itself is dropped, matching this project's non-destructive-fallback discipline (nothing else about the paragraph is lost)."),
       docx: capability("lossy", "Word's native \"multiple\" line spacing (`w:spacing w:line=\"...\" w:lineRule=\"auto\"`) is emitted on export - Word itself displays the correct spacing when the file is opened. Confirmed empirically (format.test.ts) that mammoth's HTML conversion (this package's own DOCX import path) drops the spacing value entirely on re-import - export fidelity is real, import fidelity is not, the same asymmetry already documented for page-break."),
       pdf: capability("full", "This package's actual 'Save as PDF' is a real browser print of the same HTML export, so it inherits the html row's real, correctly-spaced layout exactly - verified against the real print document's computed styles, not assumed."),
+    },
+  },
+  {
+    feature: "image-captions",
+    formats: {
+      html: capability("full", "A captioned block image exports as <figure data-smart-figure=\"true\"><img ...><figcaption>text</figcaption></figure> with every image attribute still on the <img>; any <figure> holding one image plus one <figcaption> (third-party or our own) imports back as one captioned block_image. Uncaptioned images export unchanged. Captions are plain text: marks and links inside an imported figcaption are flattened."),
+      markdown: capability("lossy", "Exported as an italic line directly under the image (`![alt](src)` then `*caption*`). Markdown has no caption syntax, so re-import yields an image followed by an italic paragraph, not a caption."),
+      docx: capability("lossy", "Exported as a paragraph in Word's built-in Caption style (plus direct italic 9pt formatting, since this exporter writes no styles.xml) directly after the image paragraph. DOCX import does not reconstruct the caption: mammoth places images inline inside paragraphs, so the caption returns as an ordinary paragraph."),
+      pdf: capability("full", "'Save as PDF' prints the HTML export, so the <figcaption> prints under the image exactly as in the html row."),
     },
   },
 ] as const;

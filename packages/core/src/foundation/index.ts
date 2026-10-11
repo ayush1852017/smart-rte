@@ -37,3 +37,4 @@ export * from "./comments/index.js";
 export * from "./suggestions/index.js";
 export * from "./plugin/index.js";
 export * from "./collab/index.js";
+export * from "./query/index.js";

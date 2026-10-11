@@ -1,6 +1,6 @@
 # Images and horizontal rules pasted from generic web pages render as [Unsupported: ...]
 
-**Status:** Fixed
+**Status:** Fixed (figcaption follow-up also fixed 2026-10-11)
 **Area:** clipboard / HTML import / list/formats.ts parser / atom schema
 **First reported:** 2026-08-26 (pasted "Codex prompt," reported alongside the color picker gaps)
 **Related files:** `packages/core/src/foundation/list/formats.ts` (`parseBlock`, `TRANSPARENT_CONTAINER_TAGS`), `packages/core/src/foundation/atom/schema.ts` (new `divider` node type), `packages/core/src/foundation/atom/formats.ts`, `packages/core/src/foundation/surface/renderer.ts`, `packages/react/e2e/fixtures/web-image-only-clipboard.html` (new real fixture), `docs/bugs/html-import-span-and-div-wrapped-content-lost.md` (the precedent this is the same class as)
@@ -52,9 +52,19 @@ After the fix above was committed, the user reported pasting `<hr>` and an image
 
 **Regression coverage added**: the `mediaAtomSelected` e2e test above. Full suites re-verified after this follow-up: core 703/703 (unchanged), react 130/130 (unchanged), lint clean, full e2e 458 passed / 7 skipped / 3 failed (2 are the pre-existing documented Firefox seeding flake; the third was the new regression test's own fixture using an unreachable fake image URL, which made the image non-actionable on WebKit specifically - fixed by switching to an inline `data:` URI so the image loads instantly with no network dependency; passes clean on all 3 browsers since).
 
+## Follow-up (2026-10-11): the deferred `<figcaption>` gap is fixed
+
+The figcaption gap left open above was closed as part of the 1.2.0 image-captions feature, not as a standalone fix. `block_image` gained a plain-text `caption` attribute (`atom/schema.ts`, `atom/imageExtras.ts`), and `list/formats.ts`'s `parseMixedBlockContent` now:
+- parses a `<figure>` holding exactly one image source (`<img>`, `<a><img></a>`, or this app's own `img[data-smart-type="block_image"]`) plus at most one `<figcaption>` into ONE captioned `block_image` (`parseFigure`), still building the image via `parseBlock` so every existing attribute rule applies;
+- falls back to the old transparent-container path for any other figure shape (several images, a table, stray text), with that figure's figcaption becoming a **paragraph** rather than being pinned to the last image;
+- turns any figcaption with no image to attach to into a paragraph (text kept, semantics dropped), so `[Unsupported: figcaption]` can no longer appear from HTML import;
+- repairs the flattened `<img>` + sibling `<figcaption>` that earlier versions saved (see [figure-wrapper-lost-on-save](figure-wrapper-lost-on-save.md)).
+
+Applies at the document root and inside blockquote/li/td, all of which route through `parseMixedBlockContent`. Regression coverage: `packages/core/src/foundation/atom/imageCaptions.test.ts` ("image caption HTML parsing" block) and `packages/react/e2e/image-captions.spec.ts` ("pasting a web page's <figure> keeps the image and its caption…", all 3 browsers). Note for anyone re-reading the original fix above: `figure` is still in `TRANSPARENT_CONTAINER_TAGS`, but `parseMixedBlockContent` now checks for a recognisable captioned figure *before* that branch.
+
 ## Related/similar issues
 
 - [html-import-span-and-div-wrapped-content-lost](html-import-span-and-div-wrapped-content-lost.md) - the direct precedent: a recognizable real-world HTML shape with no parser case, found via real content, not incidentally.
 - [pasted-image-size-dropped-on-paste](pasted-image-size-dropped-on-paste.md) - a different (already-fixed) image-parsing gap found via the same general "does the parser handle this real shape" methodology, reused here (style-wins-over-attribute width/height parsing) for the new bare-`<img>`/`<a>`-wrapped cases.
-- **Known, explicitly out-of-scope remaining gap**: `<figcaption>` still has no block-level parse case of its own (falls to `unknown`) - the image inside a `<figure>` no longer disappears, but its caption text still shows as a placeholder. Not fixed in this pass; revisit if reported.
+- ~~**Known, explicitly out-of-scope remaining gap**: `<figcaption>` still has no block-level parse case of its own (falls to `unknown`)~~ - **Fixed 2026-10-11 (1.2.0, image captions feature)**: see the follow-up section below and [figure-wrapper-lost-on-save](figure-wrapper-lost-on-save.md).
 - **Not investigated in this pass**: `<picture>`/`<source>` (responsive image variants) and lazy-load `data-src`-only patterns, both named as hypotheses in the original report. Neither was present in the real capture actually obtained during this investigation, so neither is confirmed to be broken or fixed - the confirmed root cause (bare block-level `<img>`/`<a>`, `<figure>` wrapping) is independent of either hypothesis and was verified against real captured evidence instead.

@@ -1,5 +1,6 @@
 import type { AttributeSpec, NodeSpec } from "../types.js";
 import { normalizeLinkInput } from "../security/urlPolicy.js";
+import { isValidImageCaption, isValidImageMetadata } from "./imageExtras.js";
 
 const optionalString: AttributeSpec = { validate: (value) => typeof value === "string" };
 const requiredString: AttributeSpec = { required: true, validate: (value) => typeof value === "string" };
@@ -39,6 +40,24 @@ const imageAttrs = {
   licenseDescription: optionalString, licenseSourceUrl: optionalString,
   licenseType: optionalString, licenseVersion: optionalString, licenseAttribution: optionalString,
 };
+/**
+ * block_image only (atom/imageExtras.ts explains why the inline `image`
+ * stays unchanged). `caption` is plain text; `metadata` is a host-defined
+ * map of allowlisted `data-*` attributes, shape-checked here and
+ * allowlist-checked at every entry point. Both are absent - never "" or {} -
+ * when unset, so a pre-1.2 document exports byte-identically.
+ */
+const blockImageAttrs = {
+  ...imageAttrs,
+  caption: { validate: isValidImageCaption },
+  metadata: { validate: isValidImageMetadata },
+};
+/** The schema otherwise ignores unknown attributes; these two are explicitly rejected on the inline image so repair() strips them instead of carrying block-only data on an inline node. */
+const inlineImageAttrs = {
+  ...imageAttrs,
+  caption: { validate: () => false },
+  metadata: { validate: () => false },
+};
 const formulaAttrs = {
   source: requiredString,
   notation: { required: true, default: "latex", validate: (value: unknown) => value === "latex" || value === "mathml" },
@@ -48,8 +67,8 @@ const mediaAttrs = { src: requiredString, poster: optionalString, width: dimensi
 
 /** Inline and block variants are distinct because schema groups are static. */
 export const atomNodeSpecs: readonly NodeSpec[] = [
-  { type: "image", group: "inline", atomic: true, selectable: true, marks: "", attributes: imageAttrs },
-  { type: "block_image", group: "block", atomic: true, selectable: true, marks: "", attributes: imageAttrs },
+  { type: "image", group: "inline", atomic: true, selectable: true, marks: "", attributes: inlineImageAttrs },
+  { type: "block_image", group: "block", atomic: true, selectable: true, marks: "", attributes: blockImageAttrs },
   { type: "formula", group: "inline", atomic: true, selectable: true, marks: "", attributes: formulaAttrs },
   { type: "block_formula", group: "block", atomic: true, selectable: true, marks: "", attributes: formulaAttrs },
   { type: "video", group: "block", atomic: true, selectable: true, marks: "", attributes: mediaAttrs },

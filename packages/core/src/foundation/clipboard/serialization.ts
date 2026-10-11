@@ -12,7 +12,11 @@ interface NativeClipboardEnvelope {
 const nodeText = (node: SmartNode): string => {
   if (isTextNode(node)) return node.text;
   if (node.type === "hard_break") return "\n";
-  if (node.type === "image" || node.type === "block_image") return String(node.attrs?.alt || "");
+  if (node.type === "image" || node.type === "block_image") {
+    const alt = String(node.attrs?.alt || "");
+    const caption = node.type === "block_image" && typeof node.attrs?.caption === "string" ? node.attrs.caption : "";
+    return caption ? (alt ? `${alt} - ${caption}` : caption) : alt;
+  }
   if (node.type === "formula" || node.type === "block_formula") return String(node.attrs?.source || "");
   const separator = node.type === "table_cell" ? "\t" : node.type === "paragraph" || node.type === "heading"
     || node.type === "code_block" || node.type === "list_item" || node.type === "table_row" ? "\n" : "";

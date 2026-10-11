@@ -62,7 +62,7 @@ export const parseClipboardPayload = (
   const normalized = normalizer.normalize(sanitized);
   const parsed = detection.source === "native" && payload.native
     ? parseNativeClipboardDocument(payload.native)
-    : parseCanonicalListHtml(normalized.html);
+    : parseCanonicalListHtml(normalized.html, { imageMetadataAttributes: options.imageMetadataAttributes });
   const repaired = repair({ ...parsed, id: parsed.id || createNodeId() }, options.schema ?? foundationSchema);
   return { source: detection.source, document: repaired.doc, repairs: [...normalized.repairs, ...repaired.repairs] };
 };

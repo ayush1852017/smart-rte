@@ -8,3 +8,4 @@ export * from "./persistence.js";
 export * from "./lifecycle.js";
 export * from "./selection.js";
 export * from "./formats.js";
+export * from "./imageExtras.js";

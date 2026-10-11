@@ -9,6 +9,7 @@ import { createNodeId } from "../identity.js";
 import type { SmartElementNode } from "../types.js";
 import { sanitizeLinkHref, sanitizeLinkTarget } from "../security/urlPolicy.js";
 import { sanitizeAtomSource } from "./security.js";
+import { isValidImageMetadataName, normalizeImageCaption } from "./imageExtras.js";
 
 const escape = (value: unknown) => String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 const attr = (name: string, value: unknown) => value === undefined ? "" : ` ${name}="${escape(value)}"`;
@@ -26,6 +27,15 @@ const renderFormulaToHtml = (source: string): string => {
   }
 };
 
+/** Host metadata (atom/imageExtras.ts) as plain escaped `data-*` attributes, in stored order. Only `block_image` carries it; the stored map is already shape-validated by the schema. */
+const imageMetadataAttributes = (node: SmartElementNode): string => {
+  const metadata = node.type === "block_image" ? node.attrs?.metadata : undefined;
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return "";
+  return Object.entries(metadata as Record<string, unknown>)
+    .filter(([name, value]) => isValidImageMetadataName(name) && typeof value === "string")
+    .map(([name, value]) => attr(name, value)).join("");
+};
+
 export const atomToHtml = (node: SmartElementNode, options?: { renderFormulaHtml?: boolean }): string => {
   if (node.type === "image" || node.type === "block_image") {
     const src = sanitizeAtomSource(String(node.attrs?.src || ""), { kind: "image", allowBlobPreview: node.attrs?.status === "pending" }) || "";
@@ -35,16 +45,24 @@ export const atomToHtml = (node: SmartElementNode, options?: { renderFormulaHtml
     // running the live surface renderer's own style logic against it
     // wouldn't see visual rounding either way, same as align today; that's
     // a deliberate, pre-existing scope boundary this doesn't change.
-    const img = `<img data-smart-id="${escape(node.id)}" data-smart-type="${node.type}" src="${escape(src)}" alt="${escape(node.attrs?.alt)}"${dimensions(node)}${attr("data-smart-status", node.attrs?.status || "ready")}${node.attrs?.decorative === true ? ' data-smart-decorative="true"' : ""}${attr("data-smart-align", node.attrs?.align)}${attr("data-smart-radius", node.attrs?.borderRadius)}${attr("data-smart-license-description", node.attrs?.licenseDescription)}${attr("data-smart-license-source-url", node.attrs?.licenseSourceUrl)}${attr("data-smart-license-type", node.attrs?.licenseType)}${attr("data-smart-license-version", node.attrs?.licenseVersion)}${attr("data-smart-license-attribution", node.attrs?.licenseAttribution)}${attr("data-smart-href", node.attrs?.href)}${attr("data-smart-target", node.attrs?.target)}>`;
+    const img = `<img data-smart-id="${escape(node.id)}" data-smart-type="${node.type}" src="${escape(src)}" alt="${escape(node.attrs?.alt)}"${dimensions(node)}${attr("data-smart-status", node.attrs?.status || "ready")}${node.attrs?.decorative === true ? ' data-smart-decorative="true"' : ""}${attr("data-smart-align", node.attrs?.align)}${attr("data-smart-radius", node.attrs?.borderRadius)}${attr("data-smart-license-description", node.attrs?.licenseDescription)}${attr("data-smart-license-source-url", node.attrs?.licenseSourceUrl)}${attr("data-smart-license-type", node.attrs?.licenseType)}${attr("data-smart-license-version", node.attrs?.licenseVersion)}${attr("data-smart-license-attribution", node.attrs?.licenseAttribution)}${attr("data-smart-href", node.attrs?.href)}${attr("data-smart-target", node.attrs?.target)}${imageMetadataAttributes(node)}>`;
     // A real <a> wrapper, unlike the live surface renderer's plain data
     // attributes on the bare <img> - see surface/renderer.ts's own
     // reasoning (stable-element-per-id constraint that doesn't apply to
     // this string-based export) and modelDom.ts's identical choice for the
     // one-shot clipboard/print DOM builder.
     const linkHref = sanitizeLinkHref(typeof node.attrs?.href === "string" ? node.attrs.href : undefined);
-    if (!linkHref) return img;
-    const target = sanitizeLinkTarget(typeof node.attrs?.target === "string" ? node.attrs.target : undefined);
-    return `<a href="${escape(linkHref)}"${target ? ` target="${escape(target)}"` : ""}>${img}</a>`;
+    const target = linkHref ? sanitizeLinkTarget(typeof node.attrs?.target === "string" ? node.attrs.target : undefined) : undefined;
+    const linked = linkHref ? `<a href="${escape(linkHref)}"${target ? ` target="${escape(target)}"` : ""}>${img}</a>` : img;
+    // A captioned block image becomes a real <figure>/<figcaption> - the
+    // accessible caption for any static HTML consumer. Every attribute stays
+    // on the <img> itself, so a pre-1.2 parser (which unwraps <figure> as a
+    // transparent container) still reads the image correctly. The link, if
+    // any, wraps only the <img>. data-smart-figure is a debugging marker;
+    // list/formats.ts's parser never depends on it, since third-party
+    // figures don't carry it. Uncaptioned output is unchanged.
+    const caption = node.type === "block_image" && typeof node.attrs?.caption === "string" ? node.attrs.caption : "";
+    return caption ? `<figure data-smart-figure="true">${linked}<figcaption>${escape(caption)}</figcaption></figure>` : linked;
   }
   if (node.type === "formula" || node.type === "block_formula") {
     const tag = node.type === "formula" ? "span" : "div";
@@ -83,7 +101,13 @@ export const atomFromHtmlElement = (rawElement: Element): SmartElementNode | nul
   // (which still carries every attribute, including data-smart-href,
   // directly) before parsing, matching what a single element's own
   // attributes already fully describe.
-  const element = rawElement.tagName === "A" && rawElement.children.length === 1 ? rawElement.children[0] : rawElement;
+  // A captioned block image exports as <figure>(<a>)<img><figcaption>; the
+  // image element still carries every attribute, so unwrap to it and read
+  // the caption from the figcaption.
+  const figureImage = rawElement.tagName === "FIGURE" ? rawElement.querySelector(":scope > img, :scope > a > img") : null;
+  const figureCaption = figureImage ? normalizeImageCaption(rawElement.querySelector(":scope > figcaption")?.textContent) : undefined;
+  const unwrapped = figureImage || rawElement;
+  const element = unwrapped.tagName === "A" && unwrapped.children.length === 1 ? unwrapped.children[0] : unwrapped;
   const declared = element.getAttribute("data-smart-type");
   const type = declared || (element.tagName === "IMG" ? "image" : element.tagName.toLowerCase());
   const id = element.getAttribute("data-smart-id") || createNodeId();
@@ -105,6 +129,7 @@ export const atomFromHtmlElement = (rawElement: Element): SmartElementNode | nul
       ...(element.getAttribute("data-smart-license-type") ? { licenseType: element.getAttribute("data-smart-license-type")! } : {}),
       ...(element.getAttribute("data-smart-license-version") ? { licenseVersion: element.getAttribute("data-smart-license-version")! } : {}),
       ...(element.getAttribute("data-smart-license-attribution") ? { licenseAttribution: element.getAttribute("data-smart-license-attribution")! } : {}),
+      ...(type === "block_image" && figureCaption ? { caption: figureCaption } : {}),
     } };
   }
   if (type === "formula" || type === "block_formula") {
@@ -131,8 +156,16 @@ export const atomFromHtmlElement = (rawElement: Element): SmartElementNode | nul
  * genuinely honest `unsupported`, not a round-trippable format: nothing
  * parses this comment back into a page_break node on import.
  */
+const escapeMarkdownText = (value: string) => value.replace(/[\\`*_[\]<>]/g, (character) => `\\${character}`);
+
 export const atomToMarkdown = (node: SmartElementNode): string => {
-  if (node.type === "image" || node.type === "block_image") return `![${String(node.attrs?.alt || "")}](${String(node.attrs?.src || "")})`;
+  if (node.type === "image" || node.type === "block_image") {
+    const image = `![${String(node.attrs?.alt || "")}](${String(node.attrs?.src || "")})`;
+    // Markdown has no caption syntax; an italic line straight after the
+    // image is the common convention. Not parsed back into a caption.
+    const caption = node.type === "block_image" && typeof node.attrs?.caption === "string" ? node.attrs.caption : "";
+    return caption ? `${image}\n*${escapeMarkdownText(caption)}*` : image;
+  }
   if (node.type === "formula" || node.type === "block_formula") return node.type === "formula" ? `$${String(node.attrs?.source || "")}$` : `$$\n${String(node.attrs?.source || "")}\n$$`;
   // Media is unsupported in Markdown. Preserve a readable link instead of dropping content.
   if (node.type === "video" || node.type === "audio") return `[${node.type}: ${String(node.attrs?.src || "")}](${String(node.attrs?.src || "")})`;

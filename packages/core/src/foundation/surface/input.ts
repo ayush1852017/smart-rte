@@ -591,7 +591,13 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
       this.renderer.render(this.editor.document, this.editor.selection);
       return;
     }
-    const target = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-smart-atomic]") : null;
+    // A block image's caption is a renderer projection after the <img>, not
+    // part of it; clicking the caption selects its image, the same as
+    // clicking the image itself.
+    const caption = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-smart-projection="image-caption"]') : null;
+    const captionOwner = caption?.getAttribute("data-smart-caption-for");
+    const target = captionOwner ? this.renderer.mapping.nodeToDom(captionOwner)
+      : event.target instanceof Element ? event.target.closest<HTMLElement>("[data-smart-atomic]") : null;
     const mapped = target ? this.renderer.mapping.domToNode(target) : null;
     if (!mapped || isTextNode(mapped.node) || this.editor.schema.nodes[mapped.node.type]?.selectable !== true) return;
     const range = this.editor.positions.rangeOf(mapped.nodeId);
@@ -692,7 +698,7 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
     }
     const payload = this.payloadFromTransfer(event.clipboardData);
     try {
-      const parsed = parseClipboardPayload(payload, { ownerDocument: this.ownerDocument, schema: this.editor.schema });
+      const parsed = parseClipboardPayload(payload, { ownerDocument: this.ownerDocument, schema: this.editor.schema, imageMetadataAttributes: this.options.imageMetadataAttributes });
       this.options.onClipboardDiagnostic?.(reportParsedClipboard(payload, parsed));
       const fragment = remintClipboardFragmentIds(parsed.document, createNodeId);
       const result = insertClipboardFragment(this.editor.document, this.editor.selection, fragment, {
@@ -757,7 +763,7 @@ export class FoundationInputPipeline implements CanonicalInputPipeline {
       this.commitClipboard({ ...insertion, operations: [...deletion.operations, ...insertion.operations] }, "drop");
       return;
     }
-    const parsed = parseClipboardPayload(this.payloadFromTransfer(event.dataTransfer), { ownerDocument: this.ownerDocument, schema: this.editor.schema });
+    const parsed = parseClipboardPayload(this.payloadFromTransfer(event.dataTransfer), { ownerDocument: this.ownerDocument, schema: this.editor.schema, imageMetadataAttributes: this.options.imageMetadataAttributes });
     const fragment = remintClipboardFragmentIds(parsed.document, createNodeId);
     const result = insertClipboardFragment(this.editor.document, targetSelection, fragment, {
       schema: this.editor.schema, positions: this.editor.positions, idFactory: createNodeId,

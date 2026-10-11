@@ -18,6 +18,7 @@ import {
   moveListItems,
   moveTableColumnCommand,
   moveTableRowCommand,
+  normalizeImageCaption,
   setTableCellAttributesCommand,
   setTableColumnWidthCommand,
   setTableRowHeightCommand,
@@ -102,6 +103,7 @@ import type { EditorCapabilityPreset } from "../capabilityPresets.js";
 import { resolveToolbarTools, type ToolbarTools } from "../toolbarTools.js";
 import { exportDocxDocument, importStyledDocxDocument, importPdfDocument } from "smartrte-core/foundation";
 import { printSmartDocumentAsPdf } from "../adapters/pdfPrint.js";
+import { planBlockAtomInsertion, type BlockAtomType } from "../insertion.js";
 import {
   CanonicalEditorRuntime,
   type SmartEditorChange,
@@ -132,6 +134,14 @@ export interface CanonicalAuthorityEditorProps {
    */
   renderFormulaHtml?: boolean;
   onClipboardDiagnostic?: (report: ClipboardDiagnosticReport) => void;
+  /**
+   * Host-defined `data-*` attributes that block images keep as metadata
+   * through loading, paste, file import and `insertImage` - see
+   * canonicalEditorRuntime.ts's CanonicalEditorRuntimeOptions for the
+   * rules. Construction-time only, same contract as `preset`. Default:
+   * none.
+   */
+  imageMetadataAttributes?: readonly string[];
   /** Host-owned upload/search/remove boundary for canonical media insertion. */
   mediaProvider?: MediaProvider;
   /** Replaceable picker; the default only selects a local file. Used for video/audio, and for images when mediaManager is false. */
@@ -270,6 +280,7 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
   onChange,
   onHtmlChange,
   onClipboardDiagnostic,
+  imageMetadataAttributes,
   mediaProvider,
   mediaPicker: MediaPicker = DefaultMediaPicker,
   mediaManager = true,
@@ -348,7 +359,7 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
   const [tableSizePopover, setTableSizePopover] = useState<{ x: number; y: number } | null>(null);
   const [tableBorderPopover, setTableBorderPopover] = useState<{ x: number; y: number; scope: TableGridScope; initial: BorderDraft } | null>(null);
   const [blockquoteBorderPopover, setBlockquoteBorderPopover] = useState<{ x: number; y: number; blockId: string; initial: BlockquoteBorderDraft } | null>(null);
-  const [mediaDetailsPopover, setMediaDetailsPopover] = useState<{ x: number; y: number; scope: ResolvedScope; initial: MediaDetailsDraft } | null>(null);
+  const [mediaDetailsPopover, setMediaDetailsPopover] = useState<{ x: number; y: number; scope: ResolvedScope; initial: MediaDetailsDraft; showCaption: boolean; focusField?: "caption" } | null>(null);
   const borderPreviewCheckpointRef = useRef<SmartEditorCheckpoint | null>(null);
   const blockquoteBorderPreviewCheckpointRef = useRef<SmartEditorCheckpoint | null>(null);
   const [formulaLibraryPopover, setFormulaLibraryPopover] = useState<{ x: number; y: number } | null>(null);
@@ -369,10 +380,13 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
   // "is this the same link" identity check. Cleared implicitly the moment
   // selection.head differs from this value.
   const [linkOverlayDismissedAt, setLinkOverlayDismissedAt] = useState<{ path: number[]; offset: number } | null>(null);
-  if (!runtimeRef.current) runtimeRef.current = new CanonicalEditorRuntime({ initialValue: defaultValue, preset, renderFormulaHtml, onChange, onHtmlChange, onClipboardDiagnostic });
+  if (!runtimeRef.current) runtimeRef.current = new CanonicalEditorRuntime({ initialValue: defaultValue, preset, renderFormulaHtml, onChange, onHtmlChange, onClipboardDiagnostic, imageMetadataAttributes });
   const runtime = runtimeRef.current;
   const [, setEditorTick] = useState(0);
   runtime.setCallbacks(onChange, onHtmlChange);
+  // Kept in step on every render (like setCallbacks) so host-facing runtime
+  // APIs such as insertImage refuse writes the moment the prop flips.
+  runtime.setReadOnly(readOnly);
   useImperativeHandle(forwardedRef, () => runtime, [runtime]);
 
   useEffect(() => {
@@ -1353,64 +1367,11 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
     runtime.focus();
   };
 
-  const insertBlockAtom = (type: "block_image" | "video" | "audio" | "divider" | "page_break", attrs: Record<string, unknown>, nodeId: string): boolean => {
-    const declaration = atomDeclarations.find((entry) => entry.type === type)!;
-    const selection = runtime.editor.selection;
-    let parentId: string | undefined;
-    let index: number | undefined;
-    const resolved = runtime.editor.resolve({ pos: selection.head });
-    // A selected atom's own parent is only a legal insertion point for a
-    // *block* atom (image/video/audio/table etc., whose parent is the
-    // document root or a table cell). An inline atom (formula, inline image)
-    // lives inside a paragraph - inserting a block atom there would nest a
-    // block inside a paragraph, which insertAtom's schema validation rejects,
-    // silently no-opping. Fall through to the generic "insert after the
-    // current block" logic below for that case instead.
-    const selectedBlockAtom = (() => {
-      if (selection.type !== "node") return false;
-      const scope = atomScope();
-      const atomType = scope.kind === "atomic-node" ? findNode(runtime.editor.document, scope.nodeId)?.type : undefined;
-      return atomType ? atomDeclarations.find((entry) => entry.type === atomType)?.group === "block" : false;
-    })();
-    if (selection.type === "cell") {
-      // A cell range resolves at the active cell's content boundary. Block
-      // atoms belong inside that cell, never as invalid siblings of the row.
-      parentId = resolved.nodeId;
-      index = resolved.pos.offset;
-    } else if (resolved.kind === "structural" && resolved.pos.path.length === selection.anchor.path.length
-      && resolved.pos.path.every((part, pathIndex) => part === selection.anchor.path[pathIndex])) {
-      // A browser may expose a clicked block atom as a structural text range
-      // (the atom occupies one unit). Keep insertion in that same parent.
-      parentId = resolved.parent.id;
-      index = Math.max(selection.anchor.offset, selection.head.offset);
-    } else if (selectedBlockAtom) {
-      parentId = resolved.parent.id;
-      index = resolved.pos.offset;
-    } else {
-      const location = runtime.editor.positions.positionOf(resolved.nodeId);
-      parentId = location?.parent.id;
-      index = location ? location.pos.offset + 1 : undefined;
-    }
-    if (!parentId || index === undefined) return false;
-    const operations = insertAtom(runtime.editor.document, atomScope(), {
-      declaration, nodeId, parentId, index, attrs,
-    }, blockContext());
-    if (!operations.length) return false;
-    // Block atoms cannot contain a caret. Keep an editable paragraph after a
-    // media node inserted at the end of its container (document root or table
-    // cell), and place the caret there so the next keystroke has a legal owner.
-    const parent = findNode(runtime.editor.document, parentId);
-    const contentRange = runtime.editor.positions.contentRangeOf(parentId);
-    let selectionOwnerId: string | undefined;
-    if (parent?.children && index >= parent.children.length && contentRange) {
-      selectionOwnerId = createNodeId();
-      operations.push({
-        type: "insertNode",
-        pos: { path: [...contentRange.from.path], offset: index + 1 },
-        node: { type: "paragraph", id: selectionOwnerId, children: [] },
-      });
-    }
-    runtime.executeOperations(operations, selectionOwnerId ? { selectionOwnerId, selectionOffset: 0 } : {});
+  /** Insertion-point rules live in insertion.ts, shared with the host-facing runtime.insertImage. */
+  const insertBlockAtom = (type: BlockAtomType, attrs: Record<string, unknown>, nodeId: string): boolean => {
+    const plan = planBlockAtomInsertion(runtime.editor, type, attrs, nodeId);
+    if (!plan) return false;
+    runtime.executeOperations(plan.operations, plan.selectionOwnerId ? { selectionOwnerId: plan.selectionOwnerId, selectionOffset: 0 } : {});
     return true;
   };
 
@@ -1651,13 +1612,20 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
     setLinkPopover(null);
   };
 
-  const openMediaDetails = (scope: ResolvedScope, node: SmartElementNode, element?: HTMLElement) => {
+  const openMediaDetails = (scope: ResolvedScope, node: SmartElementNode, element?: HTMLElement, focusField?: "caption") => {
     if (scope.kind !== "atomic-node") return;
-    const rect = (element || selectedAtomElement)?.getBoundingClientRect();
+    const anchor = element || selectedAtomElement;
+    // A captioned image's caption sits right under it; open below that, not over it.
+    const caption = anchor?.nextElementSibling?.getAttribute("data-smart-projection") === "image-caption" ? anchor.nextElementSibling : null;
+    const rect = anchor?.getBoundingClientRect();
+    const bottom = caption?.getBoundingClientRect().bottom ?? rect?.bottom;
     setMediaDetailsPopover({
-      x: rect ? rect.left : 0, y: rect ? rect.bottom + 6 : 0, scope,
+      x: rect ? rect.left : 0, y: bottom !== undefined ? bottom + 6 : 0, scope,
+      showCaption: node.type === "block_image",
+      ...(focusField ? { focusField } : {}),
       initial: {
         alt: String(node.attrs?.alt || ""),
+        caption: typeof node.attrs?.caption === "string" ? node.attrs.caption : "",
         href: String(node.attrs?.href || ""),
         openInNewTab: node.attrs?.target === "_blank",
         width: typeof node.attrs?.width === "number" ? node.attrs.width : undefined,
@@ -1697,7 +1665,7 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
 
   const applyMediaDetails = (draft: MediaDetailsDraft) => {
     if (!mediaDetailsPopover) return;
-    const { scope } = mediaDetailsPopover;
+    const { scope, showCaption } = mediaDetailsPopover;
     if (scope.kind !== "atomic-node") { setMediaDetailsPopover(null); return; }
     const node = findNode(runtime.editor.document, scope.nodeId);
     const currentWidth = typeof node?.attrs?.width === "number" ? node.attrs.width : undefined;
@@ -1712,6 +1680,9 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
     runtime.executeOperations(updateAtom(runtime.editor.document, scope, {
       attrs: {
         alt: draft.alt,
+        // Same single updateAtom as every other field, so it's one history
+        // entry and travels through collaboration unchanged. Empty clears it.
+        ...(showCaption ? { caption: normalizeImageCaption(draft.caption) } : {}),
         href: draft.href || undefined,
         target: draft.href && draft.openInNewTab ? "_blank" : undefined,
         width: draft.width ?? currentWidth,
@@ -1754,16 +1725,16 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
   const runImport = async (file: File) => {
     if (/\.docx$/i.test(file.name) || file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
       const result = await importStyledDocxDocument(await file.arrayBuffer());
-      replaceCanonicalDocument(parseCanonicalListHtml(result.layoutHtml));
+      replaceCanonicalDocument(parseCanonicalListHtml(result.layoutHtml, { imageMetadataAttributes: runtime.imageMetadataAttributes }));
       return;
     }
     if (/\.pdf$/i.test(file.name) || file.type === "application/pdf") {
       const result = await importPdfDocument(await file.arrayBuffer());
-      replaceCanonicalDocument(parseCanonicalListHtml(result.layoutHtml));
+      replaceCanonicalDocument(parseCanonicalListHtml(result.layoutHtml, { imageMetadataAttributes: runtime.imageMetadataAttributes }));
       return;
     }
     const text = await file.text();
-    const document = /\.md(?:own)?$/i.test(file.name) ? parseCanonicalListMarkdown(text) : parseCanonicalListHtml(text);
+    const document = /\.md(?:own)?$/i.test(file.name) ? parseCanonicalListMarkdown(text) : parseCanonicalListHtml(text, { imageMetadataAttributes: runtime.imageMetadataAttributes });
     replaceCanonicalDocument(document);
   };
 
@@ -2383,6 +2354,8 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
       x={mediaDetailsPopover.x}
       y={mediaDetailsPopover.y}
       initial={mediaDetailsPopover.initial}
+      showCaption={mediaDetailsPopover.showCaption}
+      focusField={mediaDetailsPopover.focusField}
       onApply={applyMediaDetails}
       onCancel={() => { setMediaDetailsPopover(null); runtime.focus(); }}
     />}
@@ -2451,6 +2424,22 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
           window.open(href, "_blank", "noopener,noreferrer");
           return;
         }
+        // Clicking a rendered caption: input.ts has already selected its
+        // image (the caption is a projection, not part of the model); open
+        // Media details straight on the Caption field.
+        const captionTarget = (event.target as Element | null)?.closest<HTMLElement>('[data-smart-projection="image-caption"]');
+        const captionOwnerId = captionTarget?.getAttribute("data-smart-caption-for");
+        if (captionOwnerId) {
+          if (readOnly) return;
+          const captionImage = runtime.surface.renderer?.mapping.nodeToDom(captionOwnerId);
+          const captionNode = findNode(runtime.editor.document, captionOwnerId);
+          const captionScope = runtime.editor.resolveScope({ want: "atomic-node" }) as ResolvedScope;
+          setMediaContextMenu(null);
+          if (!captionImage || !captionNode || captionScope.kind !== "atomic-node" || captionScope.nodeId !== captionOwnerId) return;
+          setMediaResizeTarget({ nodeId: captionOwnerId });
+          openMediaDetails(captionScope, captionNode, captionImage, "caption");
+          return;
+        }
         const imageTarget = (event.target as Element | null)?.closest<HTMLElement>("[data-smart-type=\"image\"], [data-smart-type=\"block_image\"]");
         if (!imageTarget) return;
         setMediaContextMenu(null);
@@ -2472,7 +2461,10 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
         // like right-clicking nothing. Mirrors clickListener's own
         // atom-selection logic
         // exactly.
-        const atomTarget = (event.target as Element | null)?.closest<HTMLElement>("[data-smart-atomic]");
+        // A right-click on an image's caption projection acts on the image.
+        const captionOwnerId = (event.target as Element | null)?.closest<HTMLElement>('[data-smart-projection="image-caption"]')?.getAttribute("data-smart-caption-for");
+        const atomTarget = captionOwnerId ? runtime.surface.renderer?.mapping.nodeToDom(captionOwnerId) ?? null
+          : (event.target as Element | null)?.closest<HTMLElement>("[data-smart-atomic]");
         const mapped = atomTarget ? runtime.surface.renderer?.mapping.domToNode(atomTarget) : null;
         if (mapped && !isTextNode(mapped.node) && runtime.editor.schema.nodes[mapped.node.type]?.selectable === true) {
           const range = runtime.editor.positions.rangeOf(mapped.nodeId);
@@ -2486,7 +2478,7 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
             if (isImage) {
               const scope = runtime.editor.resolveScope({ want: "atomic-node" }) as ResolvedScope;
               setMediaResizeTarget({ nodeId: mapped.nodeId });
-              if (scope.kind === "atomic-node") openMediaDetails(scope, mapped.node, atomTarget || undefined);
+              if (scope.kind === "atomic-node") openMediaDetails(scope, mapped.node, atomTarget || undefined, captionOwnerId ? "caption" : undefined);
               return;
             }
             setMediaContextMenu({ x: event.clientX, y: event.clientY, nodeId: mapped.nodeId });

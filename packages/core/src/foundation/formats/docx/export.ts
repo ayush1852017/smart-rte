@@ -260,7 +260,17 @@ const blockXml = (block: SmartElementNode, context: DocxSerializationContext, li
       : blockXml(child, context, listLevel + 1))).join("");
   }
   if (block.type === "table") return tableXml(block, context);
-  if (block.type === "block_image") return paragraphXml([{ ...block, type: "image" } as SmartElementNode], block, context);
+  if (block.type === "block_image") {
+    const image = paragraphXml([{ ...block, type: "image" } as SmartElementNode], block, context);
+    const caption = typeof block.attrs?.caption === "string" ? block.attrs.caption : "";
+    if (!caption) return image;
+    // Word's built-in "Caption" paragraph style, aligned like the image.
+    // This package writes no styles.xml (headings reference Heading1-6 the
+    // same undefined way), so the run also carries the caption look
+    // directly - italic, 9pt - and reads as a caption even where the style
+    // id resolves to Normal.
+    return `${image}<w:p><w:pPr>${paragraphProperties(block, '<w:pStyle w:val="Caption"/>')}</w:pPr><w:r><w:rPr><w:i/><w:sz w:val="18"/></w:rPr><w:t xml:space="preserve">${xmlEscape(caption)}</w:t></w:r></w:p>`;
+  }
   if (block.type === "block_formula") return paragraphXml([{ ...block, type: "formula" } as SmartElementNode], block, context);
   // Previously fell through to the generic fallback below (an empty
   // paragraph, since a divider has neither title nor src) - a horizontal

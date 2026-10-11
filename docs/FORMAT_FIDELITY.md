@@ -25,3 +25,20 @@ Current priorities:
    formula objects; expand image-source support and improve formula typography
    without sacrificing canonical source round-trips.
 4. Keep PDF behavior explicitly heuristic and layout-oriented.
+
+## Image captions and host image metadata (1.2.0)
+
+Executable rows: `image-captions` and the HTML note on `images-media` in
+`packages/core/src/foundation/formats/fidelity.ts`.
+
+| Format | Captions | Host metadata (`imageMetadataAttributes`) |
+|---|---|---|
+| HTML | `full` - exported as `<figure data-smart-figure="true">(<a>)<img …><figcaption>…</figcaption></figure>`; any figure with one image and one figcaption imports as a captioned image. Legacy flattened `<img>` + sibling `<figcaption>` is repaired on import. Marks/links inside an imported figcaption are flattened to plain text. | Exported as plain escaped `data-*` attributes on the `<img>`; imported only for allowlisted names (none by default). |
+| Markdown | `lossy` - an italic line under the image; not parsed back into a caption. | Dropped (no attribute syntax). |
+| DOCX | `lossy` - a paragraph in Word's Caption style (plus direct italic 9pt formatting) after the image; import returns it as an ordinary paragraph. | Dropped. |
+| PDF | `full` - prints the HTML export's `<figcaption>`. | Not visible (attributes only). |
+| Plain-text clipboard | `alt - caption` (or just the caption for a decorative image). | Dropped. |
+
+Documents without captions or metadata export byte-identically to 1.1.x in
+every format above; `packages/core/src/foundation/atom/imageCaptions.test.ts`
+checks this against golden output generated from the 1.1.x source.
