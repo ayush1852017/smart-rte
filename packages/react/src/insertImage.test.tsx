@@ -133,6 +133,9 @@ describe("insertImage", () => {
     document.getSelection()?.selectAllChildren(panelInput.parentElement!.lastElementChild!);
     document.dispatchEvent(new Event("selectionchange"));
     expect(runtime.editor.selection.head).toEqual({ path: [1], offset: 1 });
+    // getSectionContext reads that same last-known caret while the panel has focus.
+    expect(runtime.getSectionContext().text).toBe("one\n\ntwo\n\nthree");
+    expect(runtime.editor.selection.head.path).toEqual([1]);
     runtime.insertImage(image);
     expect(document.activeElement).toBe(panelInput);
     expect(types(runtime.editor.document.children)).toEqual(["paragraph", "paragraph", "block_image", "paragraph"]);
@@ -149,8 +152,138 @@ describe("insertImage", () => {
       heading: { id: expect.any(String), level: 2, text: "Results" },
       text: "Growth was strong.\n\n[Figure: Chart]",
       truncated: false,
+      caretSetByUser: false,
     });
     expect(runtime.listImages()).toEqual([{ nodeId: expect.any(String), src: "https://example.com/a.png", alt: "A", caption: "Chart" }]);
+  });
+});
+
+describe("insertImage section positions (1.3.0)", () => {
+  const sectioned = "<p>Intro</p><h2>A</h2><p>a1</p><h3>A.1</h3><p>a2</p><h2>B</h2><p>b1</p>";
+  const headingId = (runtime: CanonicalEditorRuntime, text: string) => runtime.listSections().find((section) => section.text === text)!.headingId;
+  const texts = (runtime: CanonicalEditorRuntime) => (runtime.editor.document.children as SmartElementNode[]).map((node) =>
+    node.type === "block_image" ? `IMG:${node.attrs?.caption ?? ""}` : (node.children || []).map((child) => isTextNode(child) ? child.text : "").join(""));
+
+  it("lists sections like getSectionContext does", () => {
+    const runtime = new CanonicalEditorRuntime({ initialValue: `${sectioned}<blockquote><h2>Quoted</h2></blockquote>` });
+    expect(runtime.listSections()).toEqual([
+      { headingId: expect.any(String), level: 2, text: "A", index: 0 },
+      { headingId: expect.any(String), level: 3, text: "A.1", index: 1 },
+      { headingId: expect.any(String), level: 2, text: "B", index: 2 },
+    ]);
+  });
+
+  it("inserts at the end of a middle section, the last section and the intro without a user caret", () => {
+    const runtime = new CanonicalEditorRuntime({ initialValue: sectioned });
+    // A level-2 section spans its level-3 subsection: the image goes right before "B".
+    expect(runtime.insertImage({ ...image, caption: "end of A" }, { position: { sectionEnd: headingId(runtime, "A") } }).ok).toBe(true);
+    expect(texts(runtime)).toEqual(["Intro", "A", "a1", "A.1", "a2", "IMG:end of A", "B", "b1"]);
+    runtime.insertImage({ ...image, caption: "end of A.1" }, { position: { sectionEnd: headingId(runtime, "A.1") } });
+    // Also right before "B" (A.1 ends there too); normalisation keeps an
+    // editable paragraph between the two adjacent images.
+    expect(texts(runtime)).toEqual(["Intro", "A", "a1", "A.1", "a2", "IMG:end of A", "", "IMG:end of A.1", "B", "b1"]);
+    runtime.insertImage({ ...image, caption: "end of B" }, { position: { sectionEnd: headingId(runtime, "B") } });
+    // At the very end, an editable paragraph follows the image.
+    expect(texts(runtime).slice(-3)).toEqual(["b1", "IMG:end of B", ""]);
+    runtime.insertImage({ ...image, caption: "intro" }, { position: { sectionEnd: null } });
+    expect(texts(runtime).slice(0, 3)).toEqual(["Intro", "IMG:intro", "A"]);
+    // The selection-based default was never used: the caret was never placed.
+    expect(runtime.hasUserCaret()).toBe(false);
+  });
+
+  it("inserts directly after a named top-level block", () => {
+    const runtime = new CanonicalEditorRuntime({ initialValue: sectioned });
+    const a1 = (runtime.editor.document.children[2] as SmartElementNode).id;
+    const result = runtime.insertImage({ ...image, caption: "after a1" }, { position: { after: a1 } });
+    expect(result.ok).toBe(true);
+    expect(texts(runtime).slice(2, 4)).toEqual(["a1", "IMG:after a1"]);
+    expect(runtime.editor.selection).toMatchObject({ type: "node", anchor: { path: [], offset: 3 } });
+  });
+
+  it("refuses an unknown or non-top-level id instead of inserting somewhere else", () => {
+    const runtime = new CanonicalEditorRuntime({ initialValue: `${sectioned}<blockquote><h2>Quoted</h2><p>q</p></blockquote>` });
+    const before = runtime.getValue().document;
+    const quote = (runtime.editor.document.children as SmartElementNode[]).find((node) => node.type === "blockquote")!;
+    const nestedHeading = (quote.children![0] as SmartElementNode).id;
+    const nestedParagraph = (quote.children![1] as SmartElementNode).id;
+    const a1 = (runtime.editor.document.children[2] as SmartElementNode).id;
+    expect(runtime.insertImage(image, { position: { sectionEnd: "missing" } })).toEqual({ ok: false, reason: "no_valid_position" });
+    expect(runtime.insertImage(image, { position: { sectionEnd: nestedHeading } })).toEqual({ ok: false, reason: "no_valid_position" });
+    expect(runtime.insertImage(image, { position: { sectionEnd: a1 } })).toEqual({ ok: false, reason: "no_valid_position" });
+    expect(runtime.insertImage(image, { position: { after: "missing" } })).toEqual({ ok: false, reason: "no_valid_position" });
+    expect(runtime.insertImage(image, { position: { after: nestedParagraph } })).toEqual({ ok: false, reason: "no_valid_position" });
+    expect(runtime.getValue().document).toEqual(before);
+    // read_only and invalid input are still reported first.
+    runtime.setReadOnly(true);
+    expect(runtime.insertImage(image, { position: { sectionEnd: "missing" } })).toEqual({ ok: false, reason: "read_only" });
+  });
+
+  it("is one undo step", () => {
+    const runtime = new CanonicalEditorRuntime({ initialValue: sectioned });
+    const before = runtime.getValue().document;
+    runtime.insertImage(image, { position: { sectionEnd: headingId(runtime, "A") } });
+    expect(runtime.editor.undo()).toBe(true);
+    expect(runtime.getValue().document).toEqual(before);
+    expect(runtime.editor.redo()).toBe(true);
+    expect(texts(runtime)[5]).toBe(`IMG:${image.caption}`);
+  });
+});
+
+describe("hasUserCaret (1.3.0)", () => {
+  const press = (root: HTMLElement, type: string) => root.dispatchEvent(new Event(type, { bubbles: true, cancelable: true }));
+
+  it("is false after mount and becomes true on a click or key press inside the editor", () => {
+    for (const type of ["pointerdown", "mousedown", "touchstart", "keydown"]) {
+      const runtime = new CanonicalEditorRuntime({ initialValue: "<h2>A</h2><p>one</p>" });
+      const root = mounted(runtime);
+      expect(runtime.hasUserCaret()).toBe(false);
+      expect(runtime.getSectionContext().caretSetByUser).toBe(false);
+      press(root.firstElementChild as HTMLElement ?? root, type);
+      expect(runtime.hasUserCaret(), type).toBe(true);
+      expect(runtime.getSectionContext().caretSetByUser).toBe(true);
+      runtime.unmount();
+    }
+  });
+
+  it("ignores programmatic selection, focus() and insertImage, and input outside the editor", () => {
+    const runtime = new CanonicalEditorRuntime({ initialValue: "<p>one</p><p>two</p>" });
+    const root = mounted(runtime);
+    caretIn(runtime, [1], 1);
+    runtime.focus();
+    runtime.insertImage(image);
+    runtime.insertImage(image, { focus: true });
+    const outside = document.createElement("button");
+    document.body.appendChild(outside);
+    press(outside, "pointerdown");
+    press(outside, "keydown");
+    expect(runtime.hasUserCaret()).toBe(false);
+    press(root, "keydown");
+    expect(runtime.hasUserCaret()).toBe(true);
+    runtime.unmount();
+  });
+
+  it("resets on replaceValue and restoreVersion; a checkpoint restores the value it was taken with", () => {
+    const runtime = new CanonicalEditorRuntime({ initialValue: "<p>one</p>" });
+    const root = mounted(runtime);
+    const beforeClick = runtime.createCheckpoint();
+    press(root, "pointerdown");
+    const afterClick = runtime.createCheckpoint();
+    runtime.restoreCheckpoint(afterClick);
+    expect(runtime.hasUserCaret()).toBe(true);
+    runtime.restoreCheckpoint(beforeClick);
+    expect(runtime.hasUserCaret()).toBe(false);
+    press(root, "pointerdown");
+    // A checkpoint this runtime didn't create (e.g. deserialized) counts as a fresh load.
+    runtime.restoreCheckpoint(structuredClone(afterClick));
+    expect(runtime.hasUserCaret()).toBe(false);
+    press(root, "pointerdown");
+    const version = runtime.saveVersion();
+    runtime.restoreVersion(version);
+    expect(runtime.hasUserCaret()).toBe(false);
+    press(root, "pointerdown");
+    runtime.replaceValue(runtime.getValue());
+    expect(runtime.hasUserCaret()).toBe(false);
+    runtime.unmount();
   });
 });
 

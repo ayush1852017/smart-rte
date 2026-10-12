@@ -38,6 +38,14 @@ const renderFormulaInto = (element: HTMLElement, source: string): void => {
 };
 
 const atomTypes = new Set(["image", "block_image", "formula", "block_formula", "video", "audio", "divider", "page_break"]);
+/**
+ * Block media is moved by the React drag controller (pointer events, one
+ * moveNode), never by the browser's own image/element drag - which
+ * duplicates an unselected image in Chromium and silently fails in WebKit
+ * (docs/bugs/block-media-cannot-be-dragged.md). Inline images keep native
+ * behaviour, and text drag-and-drop is unaffected.
+ */
+const blockMediaTypes = new Set(["block_image", "block_formula", "video", "audio", "divider", "page_break"]);
 
 /**
  * atom/lifecycle.ts writes a specific upload-failure reason to
@@ -509,6 +517,7 @@ export class FoundationSubtreeRenderer implements CanonicalSubtreeRenderer {
     } else if (node.type === "unknown" || node.attrs?.atomic === true || atomTypes.has(node.type)) {
       element.contentEditable = "false";
       element.setAttribute("data-smart-atomic", "true");
+      if (blockMediaTypes.has(node.type)) element.setAttribute("draggable", "false");
       if (node.type === "unknown") element.textContent = `[Unsupported: ${String(node.attrs?.originalType || "unknown")}]`;
     } else {
       const childListDepth = node.type === "list" ? listDepth + 1 : listDepth;

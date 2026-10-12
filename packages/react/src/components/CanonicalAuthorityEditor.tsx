@@ -96,6 +96,7 @@ import { BlockquoteBorderPopover, type BlockquoteBorderDraft } from "./Blockquot
 import type { FormulaLibraryEntry } from "../formulaLibrary.js";
 import { TableResizeHandles } from "./TableResizeHandles.js";
 import { MediaOverlay } from "./MediaOverlay.js";
+import { MediaDragController } from "./MediaDragController.js";
 import { MediaDetailsPopover, type MediaDetailsDraft } from "./MediaDetailsPopover.js";
 import { ContextMenu, type ContextMenuItem } from "./ContextMenu.js";
 import { ToolbarButton, ToolbarDropdown, ToolbarGroup, ToolbarMenuItem, MobileMoreMenu } from "./ToolbarPrimitives.js";
@@ -402,6 +403,12 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
   }, [runtime, onRuntime]);
 
   useEffect(() => runtime.editor.subscribe(() => setEditorTick((value) => value + 1)), [runtime]);
+  // The drag controller attaches listeners to the surface element itself, so it needs it as state, not just a ref.
+  const [surfaceElement, setSurfaceElement] = useState<HTMLDivElement | null>(null);
+  useEffect(() => setSurfaceElement(rootRef.current), []);
+  // While block media is being dragged its MediaOverlay hides; it comes back on the moved node afterwards.
+  const [mediaDragging, setMediaDragging] = useState(false);
+  const overlayBeforeDragRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!commentProvider) {
@@ -2275,7 +2282,7 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
         runtime.focus();
       }}
     />}
-    {!readOnly && mediaResizeTarget && mediaResizeTarget.nodeId === selectedAtomId && mediaAtomSelected && selectedAtomElement && <MediaOverlay
+    {!readOnly && !mediaDragging && mediaResizeTarget && mediaResizeTarget.nodeId === selectedAtomId && mediaAtomSelected && selectedAtomElement && <MediaOverlay
       atomElement={selectedAtomElement}
       alt={typeof selectedAtomNode?.attrs?.alt === "string" ? selectedAtomNode.attrs.alt : ""}
       width={typeof selectedAtomNode?.attrs?.width === "number" ? selectedAtomNode.attrs.width : undefined}
@@ -2289,7 +2296,7 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
       onDelete={() => undefined}
       onDismiss={() => setMediaResizeTarget(null)}
     />}
-    {!readOnly && mediaContextMenu && (mediaAtomSelected || actionOnlyAtomSelected) && selectedAtomElement && <MediaOverlay
+    {!readOnly && !mediaDragging && mediaContextMenu && (mediaAtomSelected || actionOnlyAtomSelected) && selectedAtomElement && <MediaOverlay
       atomElement={selectedAtomElement}
       alt={typeof selectedAtomNode?.attrs?.alt === "string" ? selectedAtomNode.attrs.alt : ""}
       width={typeof selectedAtomNode?.attrs?.width === "number" ? selectedAtomNode.attrs.width : undefined}
@@ -2529,6 +2536,25 @@ export const CanonicalAuthorityEditor = forwardRef<SmartEditorHandle, CanonicalA
         }
       }}
       style={{ minHeight, maxHeight, overflow: "auto" }}
+    />
+    {/* After the surface in DOM order, so Tab moves from a selected image to its drag handle. */}
+    <MediaDragController
+      runtime={runtime}
+      root={surfaceElement}
+      enabled={!readOnly}
+      disabledReason={trackChangesEnabled ? "Moves can't be recorded as suggestions. Turn off Show edits to move media." : undefined}
+      selectedNodeId={selectedAtomId}
+      onDraggingChange={(dragging, nodeId) => {
+        if (dragging) {
+          overlayBeforeDragRef.current = mediaResizeTarget?.nodeId === nodeId ? nodeId : null;
+          setMediaContextMenu(null);
+        }
+        setMediaDragging(dragging);
+      }}
+      onMoved={(nodeId) => {
+        if (overlayBeforeDragRef.current === nodeId) setMediaResizeTarget({ nodeId });
+        overlayBeforeDragRef.current = null;
+      }}
     />
   </section>;
 });

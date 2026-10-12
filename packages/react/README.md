@@ -19,6 +19,8 @@ It pairs with [`smartrte-core`](https://www.npmjs.com/package/smartrte-core), a 
 - [Imperative handle](#imperative-handle-ref)
 - [Image captions](#image-captions)
 - [Inserting images from your app](#inserting-images-from-your-app)
+- [Moving images and other media](#moving-images-and-other-media)
+- [Upgrading to 1.3.0](#upgrading-to-130)
 - [Upgrading to 1.2.0](#upgrading-to-120)
 - [Import & export formats](#import--export-formats)
 - [Theming](#theming)
@@ -260,6 +262,9 @@ interface SmartEditorHandle {
   insertImage(input: InsertImageInput, opts?: InsertImageOptions): InsertImageResult;
   getSectionContext(opts?: { maxChars?: number }): SectionContext;
   listImages(): DocumentImageInfo[];
+  // 1.3.0
+  listSections(): DocumentSection[];
+  hasUserCaret(): boolean;
 }
 ```
 
@@ -305,7 +310,11 @@ interface InsertImageInput {
   metadata?: Record<string, string>;   // only names in imageMetadataAttributes are kept
 }
 interface InsertImageOptions {
-  position?: "selection" | "end";      // default "selection"; falls back to "end" if there's no usable caret
+  position?:                           // default "selection"
+    | "selection"                      // after the block at the last caret (like the toolbar); falls back to "end" if there's no usable caret
+    | "end"                            // appended to the document
+    | { sectionEnd: string | null }    // 1.3.0: end of the section this top-level heading starts; null = before the first heading
+    | { after: string };               // 1.3.0: directly after this top-level block
   focus?: boolean;                     // default false
 }
 type InsertImageResult = { ok: true; nodeId: string } | { ok: false; reason: "read_only" | "invalid_image" | "no_valid_position" };
@@ -329,6 +338,42 @@ const images = ref.current!.listImages(); // [{ nodeId, src, alt, caption?, meta
 ```
 
 Both are read-only and work in `readOnly` mode. The same logic is available without React as `getSectionContext(document, selection)` and `listDocumentImages(document)` from `smartrte-core/foundation`.
+
+**Inserting into the right section (1.3.0).** A side panel often generates a figure *for a section*, while the user's caret is somewhere else, or was never placed at all (it then defaults to the start of the document). `listSections()` lists the document's sections. `insertImage`'s `sectionEnd` position appends to one of them, and `hasUserCaret()` tells you whether the caret is a real user choice:
+
+```ts
+const editor = ref.current!;
+// Use the user's caret if they placed one; otherwise target the section the panel is about.
+const results = editor.listSections().find((section) => section.text === "Results");
+const position = editor.hasUserCaret() || !results ? "selection" : { sectionEnd: results.headingId };
+const result = editor.insertImage({ src, alt, caption: "Figure 2: Results" }, { position });
+```
+
+- **Sections:** they follow the same rules as `getSectionContext`. Only top-level headings start a section; a heading inside a table, list or blockquote doesn't.
+- **`sectionEnd`:** inserts right before the next top-level heading of the same or a higher level (a smaller or equal number), or at the end of the document. `{ sectionEnd: null }` targets the part before the first heading.
+- **`{ after: nodeId }`:** inserts directly after a top-level block.
+- **Unknown ids:** an unknown heading or block id returns `{ ok: false, reason: "no_valid_position" }` instead of inserting somewhere else.
+- **`hasUserCaret()`:** becomes true when the user clicks, taps or presses a key in the editor. Your own selection changes, `focus()` and `insertImage` don't set it, and `replaceValue`/`restoreVersion` reset it. `getSectionContext()` also returns it as `caretSetByUser`.
+
+## Moving images and other media
+
+Block media (images with their captions, video, audio, block formulas, dividers and page breaks) can be dragged to a new place: between blocks, or into a table cell, list item or blockquote. Inline images inside a line of text aren't draggable.
+
+- **Grab handle (⋮⋮):** appears at the media's top-left on hover and while it's selected. Drag it with a mouse, pen or finger.
+- **Direct drag:** press on the media itself and move more than a few pixels. A simple click still just selects it. On touch, press and hold for about half a second first, so scrolling never starts a drag.
+- **Keyboard:** select the media, press Tab to reach its handle, press Space or Enter to pick it up, use ↑/↓ to choose a position, then Enter to drop or Escape to cancel. A screen reader announces each step.
+- **While dragging:** a small thumbnail (at most 120×80) follows the pointer, the original stays in place dimmed, and a line shows where it will land. The editor auto-scrolls near its top and bottom edges. Escape, or dropping outside the editor, cancels.
+- **After the drop:** the media keeps its size, caption and every other attribute; it's the same node moved. The move is one undo step and fires `onChange`/`onHtmlChange` like any edit.
+- **When it's off:** read-only editors show no handle. While **Show edits** (track changes) is on, the handle is disabled with a tooltip, because a move can't be recorded as a suggestion. Toolbar **Move block up/down** still works on selected media.
+
+## Upgrading to 1.3.0
+
+1.3.0 is additive: no props, handle methods or exports were removed or renamed, and the saved HTML/JSON of existing documents is unchanged. Upgrade both packages together, because `smartrte-react@1.3.0` requires `smartrte-core@^1.3.0`.
+
+- **New on the handle:** `listSections()`, `hasUserCaret()`, `insertImage` positions `{ sectionEnd }` and `{ after }`, and `caretSetByUser` on `getSectionContext()`. Existing `"selection"`/`"end"` inserts behave exactly as in 1.2.0.
+- **On by default: media drag-and-drop**, with a grab handle on hover or selection. Nothing to configure. The handle and drag preview are themed with the existing `--srte-*` variables.
+- **Behaviour change:** rendered block media now carries `draggable="false"`. The browser's own image drag duplicated an unselected image in Chromium and did nothing in WebKit; dragging now goes through the editor. Dragging selected *text* is unchanged.
+- **New types:** `InsertImagePosition` and `DocumentSection` (from `smartrte-react`), and `blockDropTargets`/`planBlockMove`/`listSections`/`sectionEndIndex` in `smartrte-core/foundation` for non-React integrations.
 
 ## Upgrading to 1.2.0
 

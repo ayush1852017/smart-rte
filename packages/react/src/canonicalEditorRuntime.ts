@@ -5,6 +5,9 @@ import {
   filterImageMetadata,
   getSectionContext as sectionContextOf,
   listDocumentImages,
+  listSections as sectionsOf,
+  sectionEndIndex,
+  topLevelIndexOf,
   normalizeImageCaption,
   normalizeImageMetadataAllowlist,
   sanitizeAtomSource,
@@ -20,6 +23,7 @@ import {
   type ClipboardDiagnosticReport,
   type CanonicalSubtreeRenderer,
   type DocumentImageInfo,
+  type DocumentSection,
   type DocumentVersion,
   type FoundationEditor,
   type PersistedEditorDocument,
@@ -63,9 +67,13 @@ export interface SmartEditorHandle {
   /** Inserts a block image from the host app (e.g. a side panel) at the last caret position. Never throws for bad input: see InsertImageResult. */
   insertImage(input: InsertImageInput, opts?: InsertImageOptions): InsertImageResult;
   /** The section around the last caret position: nearest top-level heading above it and that section's plain text. Allowed in read-only mode. */
-  getSectionContext(opts?: SectionContextOptions): SectionContext;
+  getSectionContext(opts?: SectionContextOptions): SectionContext & { caretSetByUser: boolean };
   /** Every block and inline image, in document order. */
   listImages(): DocumentImageInfo[];
+  /** Every top-level heading, in order - the sections getSectionContext and insertImage's `sectionEnd` use. */
+  listSections(): DocumentSection[];
+  /** True once the user has placed the caret (pointer, touch or keyboard) since the document was last loaded or replaced. */
+  hasUserCaret(): boolean;
 }
 
 export interface InsertImageInput {
@@ -83,9 +91,19 @@ export interface InsertImageInput {
   metadata?: Record<string, string>;
 }
 
+export type InsertImagePosition =
+  /** After the block at the last caret position, like the toolbar (default). Falls back to "end" if that caret can't take a block. */
+  | "selection"
+  /** Appended to the document. */
+  | "end"
+  /** At the end of the section this top-level heading starts (before the next top-level heading of the same or higher level); `null` is the part before the first heading. */
+  | { sectionEnd: string | null }
+  /** Directly after this top-level block. */
+  | { after: string };
+
 export interface InsertImageOptions {
-  /** "selection" (default) inserts after the block at the last caret position, like the toolbar; "end" appends to the document. */
-  position?: "selection" | "end";
+  /** Default "selection". An unknown `sectionEnd`/`after` id returns `no_valid_position` rather than inserting elsewhere. */
+  position?: InsertImagePosition;
   /** Default false: the host's own panel keeps focus. */
   focus?: boolean;
 }
@@ -150,6 +168,9 @@ export interface CanonicalEditorRuntimeOptions {
    */
   imageMetadataAttributes?: readonly string[];
 }
+
+/** Input that places a caret inside the editor - see hasUserCaret(). */
+const USER_CARET_EVENTS = ["pointerdown", "mousedown", "touchstart", "keydown"] as const;
 
 const isDevelopment = () => {
   const global = globalThis as typeof globalThis & { process?: { env?: { NODE_ENV?: string } } };
@@ -246,6 +267,11 @@ export class CanonicalEditorRuntime implements SmartEditorHandle {
   private readOnly = false;
   /** Set only while executeOperations commits with `focus: false` - see the subscribe callback in mount(). */
   private holdDomSelection = false;
+  /** See hasUserCaret(). */
+  private userCaret = false;
+  private readonly markUserCaret = () => { this.userCaret = true; };
+  /** hasUserCaret() as it was when each of this runtime's checkpoints was taken. A WeakMap so the checkpoint object stays the public, serializable shape. */
+  private readonly checkpointUserCaret = new WeakMap<SmartEditorCheckpoint, boolean>();
   /** The validated `imageMetadataAttributes` allowlist. Hosts that call parseCanonicalListHtml themselves should pass this same list. */
   readonly imageMetadataAttributes: readonly string[];
 
@@ -307,6 +333,11 @@ export class CanonicalEditorRuntime implements SmartEditorHandle {
     if (this.root === root && this.pipeline && this.renderer) return;
     this.unmount();
     this.root = root;
+    // hasUserCaret: transaction sources can't tell user selection from
+    // programmatic selection (DOM selection sync and atom clicks both
+    // report "api"), so track the input events that place a caret instead.
+    // Capture phase, so an input handler that stops propagation still counts.
+    for (const type of USER_CARET_EVENTS) root.addEventListener(type, this.markUserCaret, true);
     this.renderer = createSubtreeRenderer(root, { contentVisibility: this.contentVisibility });
     this.pipeline = createInputPipeline(this.editor, this.renderer, root, { onClipboardDiagnostic: this.onClipboardDiagnostic, imageMetadataAttributes: this.imageMetadataAttributes });
     this.unsubscribe = this.editor.subscribe((transaction, state) => {
@@ -320,6 +351,7 @@ export class CanonicalEditorRuntime implements SmartEditorHandle {
   }
 
   unmount(): void {
+    if (this.root) for (const type of USER_CARET_EVENTS) this.root.removeEventListener(type, this.markUserCaret, true);
     this.unsubscribe?.();
     this.unsubscribe = null;
     this.pipeline?.destroy();
@@ -366,6 +398,7 @@ export class CanonicalEditorRuntime implements SmartEditorHandle {
         }
       }
     }
+    this.userCaret = false;
     this.editor.replaceState(doc, { selection });
   }
 
@@ -456,10 +489,24 @@ export class CanonicalEditorRuntime implements SmartEditorHandle {
     const attrs = this.imageAttrsFrom(input);
     if (!attrs) return { ok: false, reason: "invalid_image" };
     const nodeId = createNodeId();
-    // An unusable caret position (none yet, or one that can't take a block
-    // here) falls back to appending - still a successful insert.
-    const plan = (opts.position !== "end" ? planBlockAtomInsertion(this.editor, "block_image", attrs, nodeId, "selection") : null)
-      || planBlockAtomInsertion(this.editor, "block_image", attrs, nodeId, "end");
+    const position = opts.position ?? "selection";
+    let plan;
+    if (typeof position === "object" && position) {
+      // A host-named place: resolve it to a document-root index, and fail
+      // rather than silently insert somewhere the host didn't ask for.
+      const document = this.editor.document;
+      const rootIndex = "sectionEnd" in position
+        ? sectionEndIndex(document, position.sectionEnd)
+        : "after" in position && typeof position.after === "string"
+          ? (() => { const index = topLevelIndexOf(document, position.after); return index === null ? null : index + 1; })()
+          : null;
+      plan = rootIndex === null ? null : planBlockAtomInsertion(this.editor, "block_image", attrs, nodeId, { rootIndex });
+    } else {
+      // An unusable caret position (none yet, or one that can't take a block
+      // here) falls back to appending - still a successful insert.
+      plan = (position !== "end" ? planBlockAtomInsertion(this.editor, "block_image", attrs, nodeId, "selection") : null)
+        || planBlockAtomInsertion(this.editor, "block_image", attrs, nodeId, "end");
+    }
     if (!plan) return { ok: false, reason: "no_valid_position" };
     this.executeOperations(plan.operations, { selectNodeId: nodeId, focus: opts.focus === true });
     return { ok: true, nodeId };
@@ -495,22 +542,35 @@ export class CanonicalEditorRuntime implements SmartEditorHandle {
     return schemaValid && declaration?.validate(attrs) ? attrs : null;
   }
 
-  getSectionContext(opts?: SectionContextOptions): SectionContext {
-    return sectionContextOf(this.editor.document, this.editor.selection, opts);
+  getSectionContext(opts?: SectionContextOptions): SectionContext & { caretSetByUser: boolean } {
+    return { ...sectionContextOf(this.editor.document, this.editor.selection, opts), caretSetByUser: this.userCaret };
   }
 
   listImages(): DocumentImageInfo[] {
     return listDocumentImages(this.editor.document);
   }
+
+  listSections(): DocumentSection[] {
+    return sectionsOf(this.editor.document);
+  }
+
+  hasUserCaret(): boolean { return this.userCaret; }
   createCheckpoint(): SmartEditorCheckpoint {
-    return {
+    const checkpoint: SmartEditorCheckpoint = {
       envelope: this.getValue(),
       selection: this.editor.selection,
       ...(this.editor.storedMarks?.length ? { storedMarks: [...structuredClone(this.editor.storedMarks)] } : {}),
       savedRevision: this.savedRevision,
     };
+    this.checkpointUserCaret.set(checkpoint, this.userCaret);
+    return checkpoint;
   }
   restoreCheckpoint(checkpoint: SmartEditorCheckpoint): void {
+    // The caret comes back with the checkpoint's selection, so whether the
+    // user placed it does too (the component restores checkpoints to cancel
+    // colour/border previews mid-edit). A checkpoint from elsewhere, e.g.
+    // deserialized, resets it like any other document load.
+    this.userCaret = this.checkpointUserCaret.get(checkpoint) ?? false;
     this.editor.replaceState(checkpoint.envelope, {
       selection: checkpoint.selection,
       storedMarks: checkpoint.storedMarks,

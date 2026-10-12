@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.3.0
+
+Additive release; depends on `smartrte-core@1.3.0`. No existing prop, handle method or export changed.
+
+- **Section-aware insertion:**
+  - `insertImage` takes `position: { sectionEnd: headingId | null }`, which inserts at the end of that section (before the next top-level heading of the same or higher level; `null` means before the first heading), or `position: { after: nodeId }` for directly after a top-level block. An unknown id returns `{ ok: false, reason: "no_valid_position" }` instead of inserting elsewhere. `"selection"` and `"end"` behave exactly as in 1.2.0.
+  - New handle methods `listSections()` and `hasUserCaret()`. `hasUserCaret()` is true once the user clicks, taps or types in the editor; programmatic selection, `focus()` and `insertImage` don't set it, and `replaceValue`/`restoreVersion` reset it. Restoring a checkpoint brings back the value it had when the checkpoint was taken.
+  - `getSectionContext()` also returns `caretSetByUser`.
+  - New exported types: `InsertImagePosition`, `DocumentSection` and `ParseCanonicalListHtmlOptions`.
+- **Drag-and-drop for block media** (`MediaDragController`): images (with captions), video, audio, block formulas, dividers and page breaks.
+  - **Starting a drag:** a grab handle (⋮⋮, on hover or selection) for mouse, pen, touch and keyboard. Direct drag on the media works too, past a 6px threshold; on touch, after a 450ms long press.
+  - **While dragging:** a ≤120×80 thumbnail follows the pointer, the original stays dimmed in place, and a drop line shows the target, with the target container highlighted inside table cells, list items and blockquotes. The editor auto-scrolls near its edges.
+  - **Cancelling:** Escape, `pointercancel`, dropping outside the editor or on the original position, or undo.
+  - **Dropping:** the drop is one `moveNode` (one undo step, same node, same size and caption), and the moved media is selected.
+  - **Keyboard:** Space or Enter on the focused handle picks the media up, ↑/↓ choose a position, Enter drops and Escape cancels. Each step is announced in a polite live region.
+  - **When it's off:** there's no handle in `readOnly`. The handle is disabled, with a tooltip saying why, while Show edits (track changes) is on, because moves can't be recorded as suggestions.
+- `CommentMarkers` and `StructuralSuggestionMarkers` no longer throw where `ResizeObserver` is missing (e.g. jsdom in a host's own tests).
+
 ## 1.2.0
 
 Additive release; depends on `smartrte-core@1.2.0`.

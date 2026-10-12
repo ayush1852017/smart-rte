@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.3.0
+
+Additive release. The document model and every exporter are unchanged: existing documents export byte-identically, and the 1.2.0 captionless golden test still passes.
+
+- **Section queries** (`query/sectionContext.ts`): `listSections(document)` lists top-level headings (`{ headingId, level, text, index }`). `sectionEndIndex(document, headingId | null)` gives the document-root index where content appended to that section belongs, which is just before the next top-level heading of the same or higher level; `null` means before the first heading. `topLevelIndexOf(document, nodeId)` is the third helper. All use the same section rules as `getSectionContext`. `SectionContext` gains an optional `caretSetByUser`, which the React handle fills in.
+- **Moving block media** (`atom/move.ts`): `isMovableBlockMedia`, `blockDropTargets(document, schema, nodeId)` and `planBlockMove(document, schema, nodeId, { parentId, index }, { idFactory })`.
+  - `blockDropTargets` lists every legal slot in visual order: the document root, table cells, list items and blockquotes, wherever the container's schema content expression accepts the node. The node's own slot and the slot right after it are excluded.
+  - `planBlockMove` returns a single `moveNode`, so the node keeps its id and attributes and undo is one step. When the move empties a table cell, list item or blockquote, it also adds an empty paragraph there.
+- **Renderer:** block media (`block_image`, `block_formula`, `video`, `audio`, `divider`, `page_break`) renders with `draggable="false"`, so the browser's own drag no longer starts. That drag duplicated unselected images in Chromium and did nothing in WebKit; see `docs/bugs/block-media-cannot-be-dragged.md`. Text drag-and-drop and inline images are unchanged.
+- **Collaboration note:** a dragged move is an ordinary `moveNode`. Concurrent text edits rebase cleanly. A concurrent structural change in the same child list raises the rebase's existing, documented `moveNode` conflict, as Move block up/down always has.
+
 ## 1.2.0
 
 All changes are additive: documents without captions or metadata export byte-identically to 1.1.x (HTML, clipboard HTML/plain text, Markdown, DOCX), checked against golden output from the 1.1.x source.

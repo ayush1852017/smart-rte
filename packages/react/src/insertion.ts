@@ -34,7 +34,9 @@ const findNode = (root: SmartNode, id: string): SmartElementNode | null => {
  * - caret inside a paragraph (or any text block) -> after that block;
  * - a selected block atom -> after it;
  * - a table cell selection -> inside the cell.
- * `position: "end"` appends to the document root instead.
+ * `position: "end"` appends to the document root instead, and
+ * `{ rootIndex }` inserts at that document-root child index (the host
+ * section/after-block positions resolve to one).
  *
  * Block atoms cannot hold a caret, so an atom placed at the end of its
  * container (document root or table cell) is followed by a new empty
@@ -47,7 +49,7 @@ export const planBlockAtomInsertion = (
   type: BlockAtomType,
   attrs: Record<string, unknown>,
   nodeId: string,
-  position: "selection" | "end" = "selection",
+  position: "selection" | "end" | { rootIndex: number } = "selection",
 ): BlockAtomInsertion | null => {
   const declaration = atomDeclarations.find((entry) => entry.type === type)!;
   const ctx = { schema: editor.schema, positions: editor.positions };
@@ -57,6 +59,10 @@ export const planBlockAtomInsertion = (
   if (position === "end") {
     parentId = editor.document.id;
     index = editor.document.children.length;
+  } else if (typeof position === "object") {
+    if (!Number.isInteger(position.rootIndex) || position.rootIndex < 0 || position.rootIndex > editor.document.children.length) return null;
+    parentId = editor.document.id;
+    index = position.rootIndex;
   } else {
     const selection = editor.selection;
     const resolved = editor.resolve({ pos: selection.head });

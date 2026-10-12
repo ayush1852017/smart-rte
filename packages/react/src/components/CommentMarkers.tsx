@@ -67,15 +67,17 @@ export function CommentMarkers({ positions, mapping, containerElement, threads, 
 
   useEffect(() => {
     recompute();
-    const observer = new ResizeObserver(recompute);
-    observer.observe(containerElement);
+    // Optional: jsdom (hosts' own test suites) has no ResizeObserver; the
+    // mutation/scroll/resize listeners below still keep markers placed.
+    const observer = typeof ResizeObserver === "function" ? new ResizeObserver(recompute) : null;
+    observer?.observe(containerElement);
     const mutationObserver = new MutationObserver(recompute);
     mutationObserver.observe(containerElement, { childList: true, subtree: true, characterData: true });
     const ownerWindow = containerElement.ownerDocument.defaultView;
     ownerWindow?.addEventListener("scroll", recompute, true);
     ownerWindow?.addEventListener("resize", recompute);
     return () => {
-      observer.disconnect();
+      observer?.disconnect();
       mutationObserver.disconnect();
       ownerWindow?.removeEventListener("scroll", recompute, true);
       ownerWindow?.removeEventListener("resize", recompute);

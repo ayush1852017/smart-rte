@@ -17,6 +17,24 @@ export interface SectionContext {
   text: string;
   /** True when `text` was cut to `maxChars`. */
   truncated: boolean;
+  /**
+   * Whether the user placed the caret this context was read from (1.3.0).
+   * Set by the editor handle's getSectionContext, which tracks user input;
+   * the pure function here cannot know and leaves it out. When false, the
+   * caret is the editor's default (document start), not a user choice.
+   */
+  caretSetByUser?: boolean;
+}
+
+/** A section of the document, started by a top-level heading (1.3.0). */
+export interface DocumentSection {
+  /** The top-level heading's node id. */
+  headingId: string;
+  level: HeadingLevel;
+  /** The heading's plain text. */
+  text: string;
+  /** 0-based order among top-level headings. */
+  index: number;
 }
 
 export interface SectionContextOptions {
@@ -104,6 +122,50 @@ export const getSectionContext = (
     text: truncated ? full.slice(0, maxChars) : full,
     truncated,
   };
+};
+
+/**
+ * Every top-level heading in document order - the same headings
+ * getSectionContext treats as section starts. Headings nested inside
+ * tables, lists or blockquotes don't start a section.
+ */
+export const listSections = (document: SmartDocument): DocumentSection[] => {
+  const sections: DocumentSection[] = [];
+  document.children.forEach((block) => {
+    if (isTextNode(block) || block.type !== "heading") return;
+    sections.push({ headingId: block.id, level: headingLevel(block), text: inlineText(block), index: sections.length });
+  });
+  return sections;
+};
+
+/**
+ * The document-root child index at which content appended to a section
+ * belongs: just before the next top-level heading of the same or higher
+ * level (a smaller or equal number), or the end of the document if there
+ * is none. `null` means the preamble - the part before the first top-level
+ * heading - which ends at the first heading of any level. Returns null when
+ * `headingId` isn't a top-level heading.
+ */
+export const sectionEndIndex = (document: SmartDocument, headingId: string | null): number | null => {
+  const blocks = document.children;
+  let start = -1;
+  let level = 6;
+  if (headingId !== null) {
+    start = blocks.findIndex((block) => !isTextNode(block) && block.type === "heading" && block.id === headingId);
+    if (start < 0) return null;
+    level = headingLevel(blocks[start] as SmartElementNode);
+  }
+  for (let index = start + 1; index < blocks.length; index += 1) {
+    const block = blocks[index];
+    if (!isTextNode(block) && block.type === "heading" && headingLevel(block) <= level) return index;
+  }
+  return blocks.length;
+};
+
+/** The document-root child index of a top-level block, or null if `nodeId` isn't a direct child of the document. */
+export const topLevelIndexOf = (document: SmartDocument, nodeId: string): number | null => {
+  const index = document.children.findIndex((block) => !isTextNode(block) && block.id === nodeId);
+  return index < 0 ? null : index;
 };
 
 /** Every inline `image` and `block_image`, in document order. */

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SmartDocument, SmartElementNode, SmartSelection } from "../types.js";
-import { getSectionContext, listDocumentImages } from "./sectionContext.js";
+import { getSectionContext, listDocumentImages, listSections, sectionEndIndex, topLevelIndexOf } from "./sectionContext.js";
 
 const text = (value: string) => ({ type: "text" as const, text: value });
 const p = (id: string, value: string): SmartElementNode => ({ type: "paragraph", id, children: [text(value)] });
@@ -65,5 +65,60 @@ describe("listDocumentImages", () => {
       { nodeId: "inline", src: "https://x.test/i.png", alt: "Inline" },
       { nodeId: "img2", src: "https://x.test/2.png", alt: "Two" },
     ]);
+  });
+});
+
+describe("listSections", () => {
+  it("lists top-level headings in order with level, text and index; nested headings don't count", () => {
+    expect(listSections(document)).toEqual([
+      { headingId: "h1", level: 1, text: "Chapter", index: 0 },
+      { headingId: "h2a", level: 2, text: "Section A", index: 1 },
+      { headingId: "h2b", level: 2, text: "Section B", index: 2 },
+      { headingId: "h1b", level: 1, text: "Next chapter", index: 3 },
+    ]);
+  });
+
+  it("returns [] for a document without top-level headings", () => {
+    expect(listSections({ type: "doc", id: "d", children: [p("a", "A"), { type: "blockquote", id: "q", children: [h("n", 2, "Nested")] }] })).toEqual([]);
+  });
+});
+
+describe("sectionEndIndex", () => {
+  it("ends a section before the next top-level heading of the same or higher level", () => {
+    expect(sectionEndIndex(document, "h1")).toBe(11); // before "Next chapter", spanning both level-2 sections
+    expect(sectionEndIndex(document, "h2a")).toBe(9); // before "Section B"
+    expect(sectionEndIndex(document, "h2b")).toBe(11); // a higher-level heading ends it too
+    expect(sectionEndIndex(document, "h1b")).toBe(document.children.length); // last section: end of document
+  });
+
+  it("covers every level combination", () => {
+    const levels = [1, 2, 3, 4, 5, 6];
+    for (const first of levels) {
+      for (const next of levels) {
+        const doc: SmartDocument = { type: "doc", id: "d", children: [h("a", first, "A"), p("x", "x"), h("b", next, "B"), p("y", "y")] };
+        expect(sectionEndIndex(doc, "a"), `h${first} then h${next}`).toBe(next <= first ? 2 : 4);
+      }
+    }
+  });
+
+  it("null targets the preamble before the first heading of any level", () => {
+    expect(sectionEndIndex(document, null)).toBe(1);
+    expect(sectionEndIndex({ type: "doc", id: "d", children: [p("a", "A"), h("b", 6, "B")] }, null)).toBe(1);
+    expect(sectionEndIndex({ type: "doc", id: "d", children: [h("b", 3, "B"), p("a", "A")] }, null)).toBe(0);
+    expect(sectionEndIndex({ type: "doc", id: "d", children: [p("a", "A"), p("b", "B")] }, null)).toBe(2);
+  });
+
+  it("returns null for an unknown id, a nested heading, or a non-heading block", () => {
+    expect(sectionEndIndex(document, "missing")).toBeNull();
+    expect(sectionEndIndex(document, "nested")).toBeNull();
+    expect(sectionEndIndex(document, "a1")).toBeNull();
+  });
+});
+
+describe("topLevelIndexOf", () => {
+  it("finds direct children of the document only", () => {
+    expect(topLevelIndexOf(document, "img1")).toBe(5);
+    expect(topLevelIndexOf(document, "q1")).toBeNull();
+    expect(topLevelIndexOf(document, "missing")).toBeNull();
   });
 });

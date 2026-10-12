@@ -737,6 +737,109 @@ export const SRTE_DEFAULT_CSS = `
   margin-left: 8px;
   text-align: right;
 }
+/*
+ * Block media drag-and-drop (MediaDragController.tsx). The handle, preview,
+ * drop line and container highlight are position:fixed siblings of the
+ * surface (never inside it, so they never reach the model or selection).
+ */
+.srte-editor [contenteditable] [data-smart-atomic][draggable="false"] {
+  -webkit-touch-callout: none;
+}
+.srte-editor [contenteditable][data-srte-media-dragging],
+.srte-editor [contenteditable][data-srte-media-dragging] * {
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: grabbing;
+}
+.srte-editor [contenteditable] [data-srte-drag-source] {
+  opacity: 0.35;
+  outline: 2px dashed var(--srte-border);
+  outline-offset: 2px;
+}
+.srte-editor .srte-media-drag-handle {
+  z-index: 82;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  padding: 0;
+  border: 1px solid var(--srte-border);
+  border-radius: 6px;
+  background: var(--srte-menu-bg);
+  color: var(--srte-text-muted);
+  box-shadow: var(--srte-menu-shadow);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.srte-editor .srte-media-drag-handle:hover,
+.srte-editor .srte-media-drag-handle:focus-visible {
+  color: var(--srte-primary);
+  border-color: var(--srte-primary);
+}
+.srte-editor .srte-media-drag-handle:focus-visible {
+  outline: 2px solid var(--srte-ring);
+  outline-offset: 1px;
+}
+.srte-editor .srte-media-drag-handle[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+.srte-editor .srte-media-drag-preview {
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 120px;
+  padding: 3px;
+  border-radius: 8px;
+  background: var(--srte-menu-bg);
+  box-shadow: var(--srte-menu-shadow);
+  opacity: 0.9;
+  pointer-events: none;
+}
+.srte-editor .srte-media-drag-preview img {
+  border-radius: 6px;
+}
+.srte-editor .srte-media-drag-chip {
+  padding: 4px 8px;
+  color: var(--srte-menu-text);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.srte-editor .srte-media-drag-caption {
+  padding: 0 4px 2px;
+  color: var(--srte-text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.srte-editor .srte-media-drop-line {
+  z-index: 89;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--srte-primary);
+  pointer-events: none;
+}
+.srte-editor .srte-media-drop-container {
+  z-index: 88;
+  box-sizing: border-box;
+  border-radius: 4px;
+  background: var(--srte-accent-bg);
+  outline: 1px solid var(--srte-primary);
+  opacity: 0.35;
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .srte-editor .srte-media-drag-handle,
+  .srte-editor .srte-media-drag-preview {
+    transition: none;
+  }
+}
 .srte-editor [contenteditable] [data-smart-type="page_break"] {
   display: block;
   position: relative;
